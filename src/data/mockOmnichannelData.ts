@@ -1,0 +1,572 @@
+import { OmnichannelOrder } from '../types';
+
+export const INITIAL_OMNICHANNEL_ORDERS: OmnichannelOrder[] = [
+  // 1. Party Order (Bulk Catering for Corporate Tech Park Gym event - Kochi)
+  {
+    id: 'omni-101',
+    kitchenBranchId: 'kochi',
+    branchName: 'Kochi Central Headquarters',
+    channel: 'party_order',
+    channelOrderId: 'PTY-2026-0815-KOC',
+    orderDate: '2026-08-15',
+    orderTime: '12:30',
+    customerName: 'Kochi Infopark CultFit / Zerodha Wellness Event',
+    customerPhone: '+91 94471 23890',
+    deliveryAddress: 'Tower 2, 4th Floor Tech Commons, Infopark Phase 1, Kakkanad, Kochi',
+    landmarkPincode: 'Opp. Lulu Cyber Tower, 682042',
+    riderName: 'Kitchen Logistics Van #KL-07-CD-4421',
+    riderPhone: '+91 98460 55123',
+    vehicleNo: 'KL-07-CD-4421',
+    items: [
+      {
+        id: 'itm-1',
+        recipeId: 'cg-1',
+        dishName: 'Lemon Garlic Herb Chicken Grill (High Protein Box)',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Bulk Bento Box (350g)',
+        standardWebsitePrice: 280,
+        unitPrice: 240, // Discounted bulk party rate
+        quantity: 45,
+        lineTotal: 10800,
+        specialInstructions: 'Individual eco-boxes, lemon wedge & extra chimichurri dip on side'
+      },
+      {
+        id: 'itm-2',
+        recipeId: 'kl-1',
+        dishName: 'Kerala Style Grilled Fish (Keto Macro Balanced)',
+        category: 'Seafood & Fish',
+        portionSize: 'Bulk Bento Box (350g)',
+        standardWebsitePrice: 320,
+        unitPrice: 290, // Bulk party rate
+        quantity: 20,
+        lineTotal: 5800,
+        specialInstructions: 'Boneless seer fish fillets with grilled veggies'
+      },
+      {
+        id: 'itm-3',
+        recipeId: 'yo-1',
+        dishName: 'Greek Yogurt Berry Crunch Cups (Party Cups)',
+        category: 'Desserts, Snacks & Bites',
+        portionSize: '150g Mini Cups',
+        standardWebsitePrice: 160,
+        unitPrice: 130, // Bulk party rate
+        quantity: 65,
+        lineTotal: 8450,
+        specialInstructions: 'Keep chilled in dry ice container until service'
+      }
+    ],
+    itemsSubtotal: 25050,
+    packagingCharge: 850,
+    deliveryCharge: 600,
+    gstAmount: 1325,
+    discountAmount: 1000,
+    grossAmount: 26825,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 26825,
+    partyDetails: {
+      occasion: 'Corporate Wellness & Fitness Seminar (65 Guests)',
+      guestCount: 65,
+      eventDate: '2026-08-15',
+      eventTimeSlot: '01:00 PM - 03:00 PM',
+      venueAddress: 'Tower 2, 4th Floor Tech Commons, Infopark Phase 1, Kakkanad',
+      contactPerson: 'Arjun Menon (HR Director)',
+      contactPhone: '+91 94471 23890',
+      cateringStyle: 'Individual Bento Boxes',
+      setupRequired: true,
+      dietarySplit: {
+        vegCount: 15,
+        nonVegCount: 45,
+        veganOrKetoCount: 5
+      },
+      advancePaid: 15000,
+      balanceDue: 11825,
+      specialNotes: 'Live counter warmers provided by kitchen team. Complete setup by 12:45 PM sharp.'
+    },
+    kitchenStatus: 'in_prep',
+    paymentStatus: 'advance_paid',
+    paymentMethod: 'Bank Transfer / NEFT',
+    loggedByStaff: 'MD Admin Portal',
+    internalNotes: 'Client requested invoice with GSTIN. Advance of ₹15,000 received via HDFC NEFT.',
+    createdAt: '2026-08-14T18:30:00.000Z'
+  },
+
+  // 2. Trivandrum Technopark Party Order
+  {
+    id: 'omni-102-tvm',
+    kitchenBranchId: 'trivandrum',
+    branchName: 'Trivandrum Cloud Kitchen',
+    channel: 'party_order',
+    channelOrderId: 'PTY-2026-0815-TVM',
+    orderDate: '2026-08-15',
+    orderTime: '13:00',
+    customerName: 'Allianz Services Technopark Phase 3 Tech Gala',
+    customerPhone: '+91 94470 88219',
+    deliveryAddress: 'Ganga Building, 6th Floor, Technopark Phase 3, Kazhakkoottam, Trivandrum',
+    landmarkPincode: 'Near UST Global Campus, 695583',
+    riderName: 'Trivandrum Fleet Van #KL-01-BK-3391',
+    riderPhone: '+91 94470 99001',
+    vehicleNo: 'KL-01-BK-3391',
+    items: [
+      {
+        id: 'itm-tvm-1',
+        recipeId: 'cg-1',
+        dishName: 'Lemon Garlic Herb Chicken Grill (High Protein Box)',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Bulk Bento Box (350g)',
+        standardWebsitePrice: 280,
+        unitPrice: 245,
+        quantity: 50,
+        lineTotal: 12250,
+        specialInstructions: 'Individual eco packaging with labeled dietary tags'
+      },
+      {
+        id: 'itm-tvm-2',
+        recipeId: 'qr-1',
+        dishName: 'Mediterranean Tri-Color Quinoa Power Bowl',
+        category: 'Quinoa & Rice Bowls',
+        portionSize: 'Bulk Bento Box (350g)',
+        standardWebsitePrice: 290,
+        unitPrice: 250,
+        quantity: 25,
+        lineTotal: 6250,
+        specialInstructions: '100% Vegan prep'
+      }
+    ],
+    itemsSubtotal: 18500,
+    packagingCharge: 600,
+    deliveryCharge: 400,
+    gstAmount: 975,
+    discountAmount: 475,
+    grossAmount: 20000,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 20000,
+    partyDetails: {
+      occasion: 'Technopark Fitness Challenge Felicitation (75 Guests)',
+      guestCount: 75,
+      eventDate: '2026-08-15',
+      eventTimeSlot: '01:00 PM - 03:00 PM',
+      venueAddress: 'Ganga Building, Technopark Phase 3, Kazhakkoottam',
+      contactPerson: 'Siddharth Nair',
+      contactPhone: '+91 94470 88219',
+      cateringStyle: 'Individual Bento Boxes',
+      setupRequired: true,
+      dietarySplit: {
+        vegCount: 25,
+        nonVegCount: 50,
+        veganOrKetoCount: 0
+      },
+      advancePaid: 12000,
+      balanceDue: 8000,
+      specialNotes: 'Delivery to 6th Floor Reception at 12:45 PM.'
+    },
+    kitchenStatus: 'in_prep',
+    paymentStatus: 'advance_paid',
+    paymentMethod: 'Bank Transfer / NEFT',
+    loggedByStaff: 'Trivandrum Front Desk',
+    internalNotes: 'Advance payment verified by Trivandrum Ops Divya K.',
+    createdAt: '2026-08-14T20:00:00.000Z'
+  },
+
+  // 3. Kozhikode Cyberpark Corporate Lunch Order
+  {
+    id: 'omni-103-clt',
+    kitchenBranchId: 'kozhikode',
+    branchName: 'Kozhikode Cloud Kitchen',
+    channel: 'party_order',
+    channelOrderId: 'PTY-2026-0815-CLT',
+    orderDate: '2026-08-15',
+    orderTime: '12:45',
+    customerName: 'Cyberpark Malabar Fintech Innovations',
+    customerPhone: '+91 94960 77123',
+    deliveryAddress: 'Sahya Building, Cyberpark Campus, Nellikkode, Kozhikode',
+    landmarkPincode: 'Mavoor Road Bypass, 673016',
+    riderName: 'Logistics Fleet Jaseem P.',
+    riderPhone: '+91 94960 88990',
+    vehicleNo: 'KL-11-AV-9012',
+    items: [
+      {
+        id: 'itm-clt-1',
+        recipeId: 'cg-2',
+        dishName: 'Air-Fried Crispy Pepper Chicken Salad Bowl',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Standard Box (380g)',
+        standardWebsitePrice: 280,
+        unitPrice: 250,
+        quantity: 35,
+        lineTotal: 8750
+      },
+      {
+        id: 'itm-clt-2',
+        recipeId: 'yo-1',
+        dishName: 'Greek Yogurt Berry Crunch Cups',
+        category: 'Desserts, Snacks & Bites',
+        portionSize: '150g Mini Cups',
+        standardWebsitePrice: 160,
+        unitPrice: 135,
+        quantity: 35,
+        lineTotal: 4725
+      }
+    ],
+    itemsSubtotal: 13475,
+    packagingCharge: 400,
+    deliveryCharge: 300,
+    gstAmount: 708,
+    discountAmount: 383,
+    grossAmount: 14500,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 14500,
+    partyDetails: {
+      occasion: 'Quarterly Team Sprint & Nutrition Review (35 Staff)',
+      guestCount: 35,
+      eventDate: '2026-08-15',
+      eventTimeSlot: '12:45 PM - 02:00 PM',
+      venueAddress: 'Sahya Building, Cyberpark Campus, Kozhikode',
+      contactPerson: 'Fahad Mohammed',
+      contactPhone: '+91 94960 77123',
+      cateringStyle: 'Individual Bento Boxes',
+      setupRequired: false,
+      dietarySplit: {
+        vegCount: 8,
+        nonVegCount: 27,
+        veganOrKetoCount: 0
+      },
+      advancePaid: 10000,
+      balanceDue: 4500
+    },
+    kitchenStatus: 'ready_packed',
+    paymentStatus: 'advance_paid',
+    paymentMethod: 'UPI / GPay / PhonePe',
+    loggedByStaff: 'Kozhikode Ops Farooq',
+    internalNotes: 'Picked up by Jaseem for delivery to Sahya tower.',
+    createdAt: '2026-08-15T04:15:00.000Z'
+  },
+
+  // 4. Swiggy Lunch Order (Kochi)
+  {
+    id: 'omni-102',
+    kitchenBranchId: 'kochi',
+    branchName: 'Kochi Central Headquarters',
+    channel: 'swiggy',
+    channelOrderId: 'SWIG-9428-A',
+    orderDate: '2026-08-15',
+    orderTime: '13:10',
+    customerName: 'Rahul Varma',
+    customerPhone: '+91 98471 99201',
+    deliveryAddress: 'Flat 4B, Skyline Ivy League, Edappally, Kochi',
+    landmarkPincode: 'Near Lulu Mall, 682024',
+    riderName: 'Sujith (Swiggy Delivery Partner)',
+    riderPhone: '+91 97455 11029',
+    vehicleNo: 'KL-07-BM-9182',
+    items: [
+      {
+        id: 'itm-4',
+        recipeId: 'cg-2',
+        dishName: 'Air-Fried Crispy Pepper Chicken Salad Bowl',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Single Bowl (380g)',
+        standardWebsitePrice: 280,
+        unitPrice: 330, // Swiggy marked up price
+        quantity: 2,
+        lineTotal: 660,
+        specialInstructions: 'Dressing on the side, extra crispy air-fried chicken'
+      },
+      {
+        id: 'itm-5',
+        recipeId: 'ds-1',
+        dishName: 'High-Protein Sugar-Free Peanut Butter Brownie',
+        category: 'Desserts, Snacks & Bites',
+        portionSize: 'Single Bar (90g)',
+        standardWebsitePrice: 120,
+        unitPrice: 150, // Swiggy price
+        quantity: 2,
+        lineTotal: 300,
+        specialInstructions: 'Warm slightly before boxing'
+      }
+    ],
+    itemsSubtotal: 960,
+    packagingCharge: 40,
+    deliveryCharge: 0,
+    gstAmount: 50,
+    discountAmount: 50,
+    grossAmount: 1000,
+    aggregatorCommissionPct: 20,
+    aggregatorCommissionAmount: 200,
+    platformFeeDeducted: 10,
+    netPayoutRevenue: 790,
+    kitchenStatus: 'ready_packed',
+    paymentStatus: 'paid_online',
+    paymentMethod: 'Swiggy Pay',
+    loggedByStaff: 'Swiggy Live POS Terminal',
+    internalNotes: 'Order OTP verified with delivery partner Sujith. Pick-up ready at counter 1.',
+    createdAt: '2026-08-15T07:40:00.000Z'
+  },
+
+  // 5. Zomato Dinner Order (Kochi)
+  {
+    id: 'omni-103',
+    kitchenBranchId: 'kochi',
+    branchName: 'Kochi Central Headquarters',
+    channel: 'zomato',
+    channelOrderId: 'ZOM-8145-K',
+    orderDate: '2026-08-15',
+    orderTime: '13:25',
+    customerName: 'Meera Nambiar',
+    customerPhone: '+91 99951 88321',
+    deliveryAddress: 'Villa 12, Sobha Silver Sand, Panampilly Nagar, Kochi',
+    landmarkPincode: 'Near South Indian Bank, 682036',
+    riderName: 'Akhil R. (Zomato Valet)',
+    riderPhone: '+91 95670 44812',
+    vehicleNo: 'KL-07-CQ-1088',
+    items: [
+      {
+        id: 'itm-6',
+        recipeId: 'qr-1',
+        dishName: 'Mediterranean Tri-Color Quinoa Power Bowl',
+        category: 'Quinoa & Rice Bowls',
+        portionSize: 'Single Bowl (350g)',
+        standardWebsitePrice: 290,
+        unitPrice: 340, // Zomato marked up price
+        quantity: 1,
+        lineTotal: 340,
+        specialInstructions: 'Extra roasted chickpeas, no onion'
+      },
+      {
+        id: 'itm-7',
+        recipeId: 'sm-1',
+        dishName: 'Avocado Spinach Green Detox Smoothie',
+        category: 'Sandwiches & Smoothies',
+        portionSize: '350ml Glass Bottle',
+        standardWebsitePrice: 180,
+        unitPrice: 210, // Zomato price
+        quantity: 1,
+        lineTotal: 210,
+        specialInstructions: 'Cold pressed, zero sugar'
+      }
+    ],
+    itemsSubtotal: 550,
+    packagingCharge: 30,
+    deliveryCharge: 0,
+    gstAmount: 29,
+    discountAmount: 0,
+    grossAmount: 609,
+    aggregatorCommissionPct: 18,
+    aggregatorCommissionAmount: 109.62,
+    platformFeeDeducted: 8,
+    netPayoutRevenue: 491.38,
+    kitchenStatus: 'received',
+    paymentStatus: 'paid_online',
+    paymentMethod: 'Zomato Pay',
+    loggedByStaff: 'Zomato Merchant Webhook',
+    internalNotes: 'Customer added dietary note: Allergic to raw peanuts.',
+    createdAt: '2026-08-15T07:55:00.000Z'
+  },
+
+  // 6. Walk-in / Cloud Kitchen Counter Takeaway (Kochi)
+  {
+    id: 'omni-104',
+    kitchenBranchId: 'kochi',
+    branchName: 'Kochi Central Headquarters',
+    channel: 'walk_in_pos',
+    channelOrderId: 'POS-2026-042',
+    orderDate: '2026-08-15',
+    orderTime: '12:15',
+    customerName: 'Dr. Vivek Shenoy',
+    customerPhone: '+91 97441 66290',
+    deliveryAddress: 'Direct Takeaway at Kitchen Counter (Vyttila Hub)',
+    landmarkPincode: '682019',
+    items: [
+      {
+        id: 'itm-8',
+        recipeId: 'cg-3',
+        dishName: 'Tandoori Spiced Grilled Chicken Breast with Roasted Sweet Potato',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Regular Meal Plate (400g)',
+        standardWebsitePrice: 310,
+        unitPrice: 300, // Direct counter rate
+        quantity: 2,
+        lineTotal: 600,
+        specialInstructions: 'Packed in separate eco heat-retaining containers'
+      },
+      {
+        id: 'itm-9',
+        recipeId: 'ds-2',
+        dishName: 'Cold Brew Protein Iced Latte (Sugar-Free)',
+        category: 'Desserts, Snacks & Bites',
+        portionSize: '300ml Cup',
+        standardWebsitePrice: 150,
+        unitPrice: 140,
+        quantity: 2,
+        lineTotal: 280,
+        specialInstructions: 'With almond milk'
+      }
+    ],
+    itemsSubtotal: 880,
+    packagingCharge: 20,
+    deliveryCharge: 0,
+    gstAmount: 45,
+    discountAmount: 0,
+    grossAmount: 945,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 945,
+    kitchenStatus: 'completed',
+    paymentStatus: 'paid_online',
+    paymentMethod: 'UPI / GPay / PhonePe',
+    loggedByStaff: 'Front Desk Cashier',
+    internalNotes: 'Customer paid via GPay QR at counter. Order delivered hot.',
+    createdAt: '2026-08-15T06:45:00.000Z'
+  },
+
+  // 7. Direct Phone / WhatsApp Party Order (Kochi Marine Drive)
+  {
+    id: 'omni-105',
+    kitchenBranchId: 'kochi',
+    branchName: 'Kochi Central Headquarters',
+    channel: 'party_order',
+    channelOrderId: 'PTY-2026-0816',
+    orderDate: '2026-08-16',
+    orderTime: '19:00',
+    customerName: 'Sanjay & Divya Thomas - Birthday Fitness Feast',
+    customerPhone: '+91 98950 12099',
+    deliveryAddress: 'Sea Spray Apartments, Marine Drive, Kochi',
+    landmarkPincode: 'Near High Court Junction, 682031',
+    riderName: 'Logistics Van Driver Biju',
+    riderPhone: '+91 94470 33819',
+    items: [
+      {
+        id: 'itm-10',
+        dishName: 'Custom Live Caesar Salad Bar with Air-Fried Chicken & Sourdough Croutons',
+        category: 'Salads',
+        portionSize: 'Buffet Setup (30 Servings)',
+        standardWebsitePrice: 300,
+        unitPrice: 220, // Special party rate
+        quantity: 30,
+        lineTotal: 6600,
+        specialInstructions: 'Includes 3 dressings: Greek Yogurt Ranch, Lemon Herb Vinaigrette, Parmesan Caesar'
+      },
+      {
+        id: 'itm-11',
+        dishName: 'Air-Fried Malabar Spiced Paneer & Mushroom Skewers',
+        category: 'Proteins & Grills',
+        portionSize: '30 Platters (4 skewers each)',
+        standardWebsitePrice: 240,
+        unitPrice: 190,
+        quantity: 30,
+        lineTotal: 5700,
+        specialInstructions: 'Served warm with mint dip'
+      },
+      {
+        id: 'itm-12',
+        dishName: 'Mini Avocado Dark Chocolate Protein Mousse Pots',
+        category: 'Desserts, Snacks & Bites',
+        portionSize: '30 Glass Pots',
+        standardWebsitePrice: 160,
+        unitPrice: 120,
+        quantity: 30,
+        lineTotal: 3600,
+        specialInstructions: 'Garnished with toasted almonds and fresh berries'
+      }
+    ],
+    itemsSubtotal: 15900,
+    packagingCharge: 600,
+    deliveryCharge: 500,
+    gstAmount: 850,
+    discountAmount: 850,
+    grossAmount: 17000,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 17000,
+    partyDetails: {
+      occasion: '30th Birthday Fitness Celebration (30 Guests)',
+      guestCount: 30,
+      eventDate: '2026-08-16',
+      eventTimeSlot: '07:00 PM - 10:00 PM',
+      venueAddress: 'Rooftop Lounge, Sea Spray Apartments, Marine Drive, Kochi',
+      contactPerson: 'Sanjay Thomas',
+      contactPhone: '+91 98950 12099',
+      cateringStyle: 'Buffet / Bulk Chafing Trays',
+      setupRequired: true,
+      dietarySplit: {
+        vegCount: 12,
+        nonVegCount: 15,
+        veganOrKetoCount: 3
+      },
+      advancePaid: 10000,
+      balanceDue: 7000,
+      specialNotes: 'Setup delivery by 6:00 PM. Two serving staff required for live salad assembly.'
+    },
+    kitchenStatus: 'received',
+    paymentStatus: 'advance_paid',
+    paymentMethod: 'UPI / GPay / PhonePe',
+    loggedByStaff: 'Operations Manager',
+    internalNotes: '₹10,000 advance received via GPay. Balance ₹7,000 on delivery.',
+    createdAt: '2026-08-14T14:20:00.000Z'
+  },
+
+  // 8. Direct WhatsApp Group Order (Trivandrum Kowdiar)
+  {
+    id: 'omni-106',
+    kitchenBranchId: 'trivandrum',
+    branchName: 'Trivandrum Cloud Kitchen',
+    channel: 'direct_phone_whatsapp',
+    channelOrderId: 'WA-2026-079-TVM',
+    orderDate: '2026-08-15',
+    orderTime: '12:00',
+    customerName: 'Trivandrum Golf Club Fitness Wing',
+    customerPhone: '+91 94470 55189',
+    deliveryAddress: 'Club Enclave, Kowdiar, Trivandrum',
+    landmarkPincode: 'Near Kowdiar Palace, 695003',
+    riderName: 'Delivery Fleet Agent Vipin',
+    riderPhone: '+91 94470 99001',
+    items: [
+      {
+        id: 'itm-13',
+        recipeId: 'cg-1',
+        dishName: 'Lemon Garlic Herb Chicken Grill',
+        category: 'Choice of Chicken – Air Fried',
+        portionSize: 'Standard Box',
+        standardWebsitePrice: 280,
+        unitPrice: 260,
+        quantity: 8,
+        lineTotal: 2080,
+        specialInstructions: 'High protein fitness boxes'
+      },
+      {
+        id: 'itm-14',
+        recipeId: 'qr-1',
+        dishName: 'Mediterranean Tri-Color Quinoa Bowl',
+        category: 'Quinoa & Rice Bowls',
+        portionSize: 'Standard Box',
+        standardWebsitePrice: 290,
+        unitPrice: 270,
+        quantity: 4,
+        lineTotal: 1080,
+        specialInstructions: 'Vegetarian'
+      }
+    ],
+    itemsSubtotal: 3160,
+    packagingCharge: 120,
+    deliveryCharge: 0,
+    gstAmount: 164,
+    discountAmount: 0,
+    grossAmount: 3444,
+    aggregatorCommissionPct: 0,
+    aggregatorCommissionAmount: 0,
+    platformFeeDeducted: 0,
+    netPayoutRevenue: 3444,
+    kitchenStatus: 'dispatched',
+    paymentStatus: 'paid_online',
+    paymentMethod: 'UPI / GPay / PhonePe',
+    loggedByStaff: 'Trivandrum WhatsApp Rep',
+    internalNotes: 'Daily recurring lunch group for Kowdiar golfers.',
+    createdAt: '2026-08-15T05:30:00.000Z'
+  }
+];

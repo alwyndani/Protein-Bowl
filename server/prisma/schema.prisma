@@ -1,0 +1,136 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleEnum {
+  CUSTOMER
+  MESS_CUSTOMER
+  SUPER_ADMIN
+  MD
+  NUTRITIONIST
+  TRAINER
+  CHEF
+  PROCUREMENT
+  DELIVERY
+  POS
+  BAKERY_FMCG
+  TEPACHE_ERP
+  SWIGGY_ZOMATO
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  passwordHash        String
+  phone               String?              @unique
+  status              UserStatus           @default(ACTIVE)
+  isEmailVerified     Boolean              @default(false)
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  deletedAt           DateTime?
+
+  roles               UserRoleAssignment[]
+  refreshTokens       RefreshToken[]
+  customerProfile     CustomerProfile?
+  employeeProfile     EmployeeProfile?
+
+  @@index([email])
+  @@index([phone])
+  @@map("users")
+}
+
+model UserRoleAssignment {
+  id                  String               @id @default(uuid())
+  userId              String
+  role                RoleEnum
+  assignedAt          DateTime             @default(now())
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([userId])
+  @@map("user_role_assignments")
+}
+
+model RefreshToken {
+  id                  String               @id @default(uuid())
+  tokenHash           String               @unique
+  userId              String
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  createdAt           DateTime             @default(now())
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+model KitchenBranch {
+  id                  String               @id @default(uuid())
+  code                String               @unique
+  name                String
+  address             String
+  city                String
+  latitude            Float?
+  longitude           Float?
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  employees           EmployeeProfile[]
+
+  @@map("kitchen_branches")
+}
+
+model CustomerProfile {
+  id                  String               @id @default(uuid())
+  userId              String               @unique
+  fullName            String
+  dob                 DateTime?
+  gender              String?
+  deliveryAddress     String?
+  referralCode        String               @unique
+  referredByCode      String?
+  walletBalance       Decimal              @default(0.00) @db.Decimal(10, 2)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([referralCode])
+  @@map("customer_profiles")
+}
+
+model EmployeeProfile {
+  id                  String               @id @default(uuid())
+  userId              String               @unique
+  employeeCode        String               @unique
+  fullName            String
+  designation         String
+  shiftTiming         String?
+  assignedBranchId    String?
+  isOnline            Boolean              @default(false)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
+
+  @@index([employeeCode])
+  @@map("employee_profiles")
+}

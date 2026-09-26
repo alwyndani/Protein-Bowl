@@ -1,0 +1,6 @@
+{
+  "name": "Protein Bowl",
+  "description": "Healthy Cloud Kitchen Enterprise, FMCG Bakery, Gut-Friendly Tepache Fermentation Brewery, and Kerala Homestyle Mess Portal for hostel & PG students with subscription passes, meal pausing/refunds, direct booking, dual-channel chef batch management, and Swiggy/Zomato portion reservation buffers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

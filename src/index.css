@@ -1,0 +1,172 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #0B5E2E;
+  --color-brand-secondary: #4CAF50;
+  --color-brand-accent: #6DBE45;
+  --color-brand-dark: #073B1D;
+  --color-brand-light: #F0F7F1;
+  --color-brand-canvas: #F8FAF6;
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-script: 'Caveat', cursive;
+}
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    background-color: #F8FAF6;
+    color: #1a2e22;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Force all form inputs, textareas, and selects to have dark readable text */
+  input,
+  select,
+  textarea {
+    color: #1c1917 !important;
+  }
+
+  /* Retain light text for inputs explicitly styled with dark backgrounds */
+  input.bg-stone-900,
+  input.bg-stone-950,
+  input.bg-black,
+  input.bg-emerald-900,
+  input.bg-slate-900,
+  input.bg-gray-900,
+  select.bg-stone-900,
+  select.bg-stone-950,
+  select.bg-black,
+  select.bg-emerald-900,
+  select.bg-slate-900,
+  select.bg-gray-900,
+  textarea.bg-stone-900,
+  textarea.bg-stone-950,
+  textarea.bg-black,
+  textarea.bg-emerald-900,
+  textarea.bg-slate-900,
+  textarea.bg-gray-900 {
+    color: #ffffff !important;
+  }
+
+  /* Handle WebKit Autofill text readability */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover, 
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  textarea:-webkit-autofill:hover,
+  textarea:-webkit-autofill:focus,
+  select:-webkit-autofill,
+  select:-webkit-autofill:hover,
+  select:-webkit-autofill:focus {
+    -webkit-text-fill-color: #1c1917 !important;
+    transition: background-color 5000s ease-in-out 0s;
+  }
+
+  /* Ensure input placeholders have high-contrast readable color */
+  input::placeholder,
+  textarea::placeholder {
+    color: #6b7280;
+    opacity: 1;
+  }
+}
+
+.font-script {
+  font-family: 'Caveat', cursive;
+}
+
+/* Clean Minimalist UI utilities */
+.minimal-card {
+  background-color: #ffffff;
+  border: 1px solid rgba(11, 94, 46, 0.08);
+  border-radius: 1rem;
+  box-shadow: 0 2px 12px -2px rgba(11, 94, 46, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease-in-out;
+}
+
+.minimal-card:hover {
+  box-shadow: 0 10px 25px -5px rgba(11, 94, 46, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.03);
+}
+
+.minimal-button-primary {
+  background-color: #0B5E2E;
+  color: #ffffff;
+  font-weight: 600;
+  border-radius: 9999px;
+  transition: all 0.15s ease-in-out;
+}
+.minimal-button-primary:hover {
+  background-color: #084924;
+  transform: translateY(-1px);
+}
+
+.minimal-button-secondary {
+  background-color: #F0F7F1;
+  color: #0B5E2E;
+  font-weight: 600;
+  border-radius: 9999px;
+  border: 1px solid rgba(11, 94, 46, 0.15);
+  transition: all 0.15s ease-in-out;
+}
+.minimal-button-secondary:hover {
+  background-color: #e2f0e4;
+  border-color: rgba(11, 94, 46, 0.3);
+}
+
+/* Custom scrollbars for clean tables & panels */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ========================================================================= */
+/* PRINT STYLES FOR DISPATCH & NUTRITION STICKER LABELS                     */
+/* ========================================================================= */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* Hide everything marked as no-print */
+  .no-print,
+  nav,
+  header,
+  footer,
+  aside,
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Force background colors and borders in printed stickers */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Page break rules for thermal and sheet labels */
+  .page-break-always {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .avoid-break-inside {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  @page {
+    margin: 6mm;
+  }
+}
+
+
