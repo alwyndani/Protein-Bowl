@@ -3,6 +3,7 @@ import { CustomerProfile, PlanType, DietaryPreference, RecipeItem, DietPlanReque
 import { ALL_RECIPES } from '../../data/recipeDatabase';
 import { calculateMDCostEngine } from '../../utils/costEngine';
 import { Calendar, Utensils, Sparkles, Check, ChevronRight, ShieldCheck, Heart, Sliders, ArrowRight, AlertCircle, Receipt } from 'lucide-react';
+import { DietService } from '../../services/dietService';
 import confetti from 'canvas-confetti';
 
 interface DietPlanBuilderProps {
@@ -66,41 +67,65 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
     addonSlots.length
   );
 
-  const handleFinalSubmit = () => {
-    confetti({ particleCount: 80, spread: 80 });
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    const newReq: DietPlanRequest = {
-      id: `req-${Date.now().toString().slice(-4)}`,
-      customerId: profile.id,
-      customerName: profile.name,
-      customerEmail: profile.email,
-      customerPhone: profile.phone,
-      bmi: profile.bmi,
-      goal: profile.goal,
-      targetCalories: profile.targetCalories,
-      planType,
-      durationDays,
-      preferredCategories: selectedCategories,
-      dietaryPreference,
-      cuisinePreference,
-      grainPreference,
-      spiceLevel,
-      allergiesExclusions,
-      customQuery: profile.customQuery,
-      addonSlots,
-      status: 'pending_review',
-      calculatedPrice: pricing.totalPayable,
-      pricingBreakdown: {
-        baseMealCost: pricing.dailyBaseCost * durationDays,
-        addonCost: pricing.dailyAddonCost * durationDays,
-        durationDiscount: pricing.discountAmount,
-        gstAmount: pricing.gstAmount,
-        totalPayable: pricing.totalPayable
-      },
-      createdAt: new Date().toISOString().split('T')[0]
-    };
+  const handleFinalSubmit = async () => {
+    setSubmitting(true);
+    setErrorMessage(null);
 
-    onSubmitRequest(newReq);
+    try {
+      const response = await DietService.submitRequest({
+        goal: profile.goal || 'Weight Loss & Lean Muscle',
+        notes: allergiesExclusions,
+        planType,
+        durationDays,
+        dietaryPreference,
+        cuisinePreference,
+        grainPreference,
+        spiceLevel,
+        allergiesExclusions,
+        customQuery: profile.customQuery,
+        addonSlots,
+        preferredCategories: selectedCategories,
+        calculatedPrice: pricing.totalPayable
+      });
+
+      confetti({ particleCount: 80, spread: 80 });
+
+      if (response && response.data) {
+        onSubmitRequest(response.data);
+      } else {
+        const fallbackReq: DietPlanRequest = {
+          id: `req-${Date.now().toString().slice(-4)}`,
+          customerId: profile.id,
+          customerName: profile.name,
+          customerEmail: profile.email,
+          customerPhone: profile.phone,
+          bmi: profile.bmi,
+          goal: profile.goal,
+          targetCalories: profile.targetCalories,
+          planType,
+          durationDays,
+          preferredCategories: selectedCategories,
+          dietaryPreference,
+          cuisinePreference,
+          grainPreference,
+          spiceLevel,
+          allergiesExclusions,
+          customQuery: profile.customQuery,
+          addonSlots,
+          status: 'pending_review',
+          calculatedPrice: pricing.totalPayable,
+          createdAt: new Date().toISOString().split('T')[0]
+        };
+        onSubmitRequest(fallbackReq);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to submit diet request. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -481,18 +506,27 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
             </div>
           </div>
 
+          {errorMessage && (
+            <div className="p-4 bg-red-950/80 border border-red-500/50 rounded-2xl text-red-200 text-xs font-semibold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           <div className="flex justify-between pt-4">
             <button
+              disabled={submitting}
               onClick={() => setStep(2)}
-              className="bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold px-5 py-2.5 rounded-xl text-sm"
+              className="bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold px-5 py-2.5 rounded-xl text-sm disabled:opacity-50"
             >
               Back
             </button>
             <button
+              disabled={submitting}
               onClick={handleFinalSubmit}
-              className="bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black px-8 py-3.5 rounded-xl text-base transition-all shadow-lg flex items-center gap-2 hover:scale-105"
+              className="bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black px-8 py-3.5 rounded-xl text-base transition-all shadow-lg flex items-center gap-2 hover:scale-105 disabled:opacity-50"
             >
-              <span>Submit Request to Dietician</span>
+              <span>{submitting ? 'Submitting Request...' : 'Submit Request to Dietician'}</span>
               <Sparkles className="w-5 h-5" />
             </button>
           </div>

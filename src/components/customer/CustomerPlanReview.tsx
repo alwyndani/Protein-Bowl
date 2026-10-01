@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { DietPlanRequest, CustomerProfile, RecipeItem, ComboOffer } from '../../types';
 import { INITIAL_RECIPES, INITIAL_COMBO_OFFERS } from '../../data/mockData';
+import { DietService } from '../../services/dietService';
 import { Sparkles, Check, RefreshCw, X, Calendar, Utensils, Flame, ChevronRight, AlertCircle, ShoppingBag } from 'lucide-react';
 
 interface CustomerPlanReviewProps {
@@ -199,7 +200,14 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
               Cancel
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  if (request.id) {
+                    await DietService.requestRevision(request.id, revisionNote);
+                  }
+                } catch (e) {
+                  console.error('Request revision API error:', e);
+                }
                 onRequestRevision(request.id, revisionNote);
                 setShowRevisionBox(false);
               }}
@@ -216,7 +224,7 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
         <div>
           <h4 className="font-bold text-stone-900 text-base">Satisfied with this Plan?</h4>
           <p className="text-xs text-stone-500">
-            Approve now to proceed to secure checkout & start kitchen prep!
+            Approve now to confirm your customized diet plan schedule with your dietician.
           </p>
         </div>
 
@@ -239,11 +247,20 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
 
           <button
             type="button"
-            onClick={() => onApproveAndCheckout(request)}
+            onClick={async () => {
+              try {
+                if (request.id) {
+                  await DietService.approvePlan(request.id, 'Approved by customer');
+                }
+              } catch (e) {
+                console.error('Approve plan API error:', e);
+              }
+              onApproveAndCheckout(request);
+            }}
             className="px-6 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm transition-all shadow-md flex items-center gap-2"
           >
             <Check className="w-4 h-4" />
-            <span>Approve & Proceed to Checkout</span>
+            <span>Approve & Confirm Diet Plan</span>
           </button>
         </div>
       </div>

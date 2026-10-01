@@ -14,7 +14,7 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
   return (
     <footer className="bg-emerald-950 text-stone-300 pt-12 pb-8 border-t-4 border-emerald-500">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 pb-10 border-b border-emerald-900/80">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10 pb-10 border-b border-emerald-900/80">
           
           {/* Column 1: Brand & Socials */}
           <div className="space-y-4">
@@ -54,27 +54,6 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
             </div>
           </div>
 
-          {/* Column 3: Quality Assurance & Pan-Kochi Customer Care */}
-          <div className="space-y-3 bg-stone-900/60 p-4 rounded-2xl border border-emerald-900/40">
-            <div className="flex items-center gap-2 text-emerald-400 font-extrabold text-xs uppercase tracking-wider">
-              <ShieldCheck className="w-4 h-4" />
-              <span>Certified Fresh Quality Assurance</span>
-            </div>
-            <p className="text-[11px] text-stone-400 leading-relaxed">
-              Every meal is prepared fresh in our clinical cleanroom kitchen under strict dietician supervision and delivered temperature-controlled across Kochi.
-            </p>
-            <div className="space-y-2 pt-1">
-              <div className="bg-emerald-950/80 border border-emerald-500/30 p-2.5 rounded-xl text-xs text-emerald-300 flex items-center justify-between font-medium">
-                <span>FSSAI License</span>
-                <span className="font-mono text-[11px] font-bold text-white">#11322007000456</span>
-              </div>
-              <div className="bg-stone-950/60 border border-stone-800 p-2.5 rounded-xl text-xs text-stone-300 flex items-center justify-between">
-                <span>Express Hotline</span>
-                <span className="font-bold text-amber-400">+91 98765 43210</span>
-              </div>
-            </div>
-          </div>
-
         </div>
 
         {/* Bottom Bar */}
@@ -91,16 +70,17 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
                 <span>SRS Document (.docx)</span>
               </button>
             )}
-            {!isCustomerRole && onOpenEmployeeLogin && (
+            {onOpenEmployeeLogin && (
               <a
                 href="#staff"
                 onClick={(e) => {
                   e.preventDefault();
                   onOpenEmployeeLogin();
                 }}
-                className="text-stone-500 hover:text-stone-300 transition-colors text-[11px]"
+                className="text-stone-400 hover:text-amber-400 transition-colors text-xs font-bold flex items-center gap-1 cursor-pointer"
               >
-                Staff Access
+                <Key className="w-3.5 h-3.5 text-amber-400" />
+                <span>Staff Access Portal</span>
               </a>
             )}
           </div>

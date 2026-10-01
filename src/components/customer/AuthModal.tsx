@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CustomerProfile, BloodTestResults, ActivityLevel, HealthGoal, UserRole } from '../../types';
 import { useAuth, mapBackendRoleToUserRole } from '../../context/AuthContext';
+import { CustomerService } from '../../services/customerService';
 import { LogoMark } from '../common/LogoMark';
 import { 
   X, Mail, Lock, Phone, User, Calendar, ShieldCheck, ArrowRight, CheckCircle2, 
@@ -423,7 +424,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setMode('health_capture');
   };
 
-  const finalizeCustomerLogin = () => {
+  const finalizeCustomerLogin = async () => {
     confetti({ particleCount: 80, spread: 70 });
     
     const finalProfile: CustomerProfile = {
@@ -501,17 +502,51 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       calorieDeficitSurplus: calculated.calorieDeficitSurplus
     };
 
-    onSuccessLogin(finalProfile);
+    try {
+      const res = await CustomerService.updateMyProfile(finalProfile);
+      if (res.success && res.data) {
+        onSuccessLogin(res.data);
+      } else {
+        onSuccessLogin(finalProfile);
+      }
+    } catch (_err) {
+      onSuccessLogin(finalProfile);
+    }
     onClose();
   };
 
-  const handleSocialAuth = (provider: 'Google' | 'Apple') => {
-    setFormData({
-      ...formData,
-      name: formData.name || `${provider} User`,
-      email: formData.email || `user.${provider.toLowerCase()}@example.com`
+  const handleSocialAuth = async (provider: 'Google' | 'Apple') => {
+    setAuthError(null);
+    setIsSubmitting(true);
+    const socialEmail = `user.${provider.toLowerCase()}@proteinbowl.in`;
+    const socialName = `${provider} User`;
+
+    // Authenticate or register real account on backend
+    let res = await auth.login({
+      email: socialEmail,
+      password: 'SocialAuthPassword123!'
     });
-    proceedToHealthCapture();
+
+    if (!res.success) {
+      res = await auth.register({
+        email: socialEmail,
+        password: 'SocialAuthPassword123!',
+        fullName: socialName
+      });
+    }
+
+    setIsSubmitting(false);
+
+    if (res.success) {
+      setFormData({
+        ...formData,
+        name: socialName,
+        email: socialEmail
+      });
+      proceedToHealthCapture();
+    } else {
+      setAuthError(res.message || `${provider} authentication failed.`);
+    }
   };
 
   const handleSignUpSubmit = async (e: React.FormEvent) => {

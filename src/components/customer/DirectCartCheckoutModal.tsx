@@ -36,7 +36,8 @@ interface DirectCartCheckoutModalProps {
   onUpdateQuantity: (id: string, delta: number) => void;
   onRemoveItem: (id: string) => void;
   onClearCart: () => void;
-  onOrderPlaced: (order: DirectGuestOrder, account: RetailCustomerAccount) => void;
+  onOrderPlaced?: (order: DirectGuestOrder, account: RetailCustomerAccount) => void;
+  onOrderConfirmed?: (order: DirectGuestOrder, account: RetailCustomerAccount) => void;
   existingAccounts?: RetailCustomerAccount[];
   onOpenTracking?: (orderId?: string, phone?: string) => void;
 }
@@ -56,6 +57,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
   onRemoveItem,
   onClearCart,
   onOrderPlaced,
+  onOrderConfirmed,
   existingAccounts = [],
   onOpenTracking
 }) => {
@@ -256,7 +258,10 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
       setConfirmedOrder(newOrder);
       setCreatedAccount(newAccount);
       setStep('success');
-      onOrderPlaced(newOrder, newAccount);
+      const callback = onOrderPlaced || onOrderConfirmed;
+      if (callback) {
+        callback(newOrder, newAccount);
+      }
       onClearCart();
     }, 700);
   };

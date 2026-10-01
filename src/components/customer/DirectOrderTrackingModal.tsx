@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Search, 
@@ -27,6 +27,7 @@ interface DirectOrderTrackingModalProps {
   orders: DirectGuestOrder[];
   accounts: RetailCustomerAccount[];
   initialSearchQuery?: string;
+  initialOrderNumber?: string;
   onReorderItems?: (items: DirectGuestOrder['items']) => void;
 }
 
@@ -36,10 +37,17 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
   orders,
   accounts,
   initialSearchQuery = '',
+  initialOrderNumber = '',
   onReorderItems
 }) => {
-  const [searchQuery, setSearchQuery] = useState(initialSearchQuery);
+  const [searchQuery, setSearchQuery] = useState(initialOrderNumber || initialSearchQuery);
   const [selectedOrder, setSelectedOrder] = useState<DirectGuestOrder | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSearchQuery(initialOrderNumber || initialSearchQuery);
+    }
+  }, [isOpen, initialOrderNumber, initialSearchQuery]);
 
   if (!isOpen) return null;
 
@@ -71,6 +79,13 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
   } as RetailCustomerAccount : null);
 
   const activeOrder = selectedOrder || matchedOrders[0] || null;
+
+  const handleTrackSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (matchedOrders.length > 0) {
+      setSelectedOrder(matchedOrders[0]);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto">
@@ -104,7 +119,7 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
         </div>
 
         {/* Search / Lookup Bar */}
-        <div className="p-4 bg-stone-950/70 border-b border-stone-800 flex flex-col sm:flex-row items-center gap-3">
+        <form onSubmit={handleTrackSubmit} className="p-4 bg-stone-950/70 border-b border-stone-800 flex flex-col sm:flex-row items-center gap-3">
           <div className="relative flex-1 w-full">
             <Search className="w-4 h-4 text-stone-500 absolute left-3.5 top-3" />
             <input
@@ -116,13 +131,12 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
             />
           </div>
           <button
-            type="button"
-            onClick={() => {}}
-            className="w-full sm:w-auto px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-stone-950 font-bold text-xs rounded-xl transition-colors shrink-0 shadow"
+            type="submit"
+            className="w-full sm:w-auto px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-stone-950 font-bold text-xs rounded-xl transition-colors shrink-0 shadow cursor-pointer"
           >
             Track Order
           </button>
-        </div>
+        </form>
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
@@ -140,7 +154,7 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
               </div>
               <button
                 onClick={onClose}
-                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-6 py-2.5 rounded-xl text-xs transition-all shadow-md"
+                className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-6 py-2.5 rounded-xl text-xs transition-all shadow-md cursor-pointer"
               >
                 Browse Menu & Shop
               </button>
@@ -350,7 +364,7 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
                             onReorderItems(activeOrder.items);
                             onClose();
                           }}
-                          className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow"
+                          className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-4 py-2.5 rounded-xl text-xs transition-all flex items-center gap-1.5 shadow cursor-pointer"
                         >
                           <ShoppingBag className="w-3.5 h-3.5" />
                           <span>Reorder This Basket</span>
@@ -360,7 +374,7 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
                       <button
                         type="button"
                         onClick={() => window.print()}
-                        className="bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold px-4 py-2.5 rounded-xl text-xs transition-colors flex items-center gap-1.5 border border-stone-700"
+                        className="bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold px-4 py-2.5 rounded-xl text-xs transition-colors flex items-center gap-1.5 border border-stone-700 cursor-pointer"
                       >
                         <Printer className="w-3.5 h-3.5" />
                         <span>Print Bill & Challan</span>

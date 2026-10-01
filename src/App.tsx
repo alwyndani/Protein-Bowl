@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth, mapBackendRoleToUserRole } from './context/AuthContext';
+import { CustomerService } from './services/customerService';
 import { 
   UserRole, 
   CustomerProfile, 
@@ -126,21 +127,21 @@ export function App() {
   const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
   const [omnichannelOrders, setOmnichannelOrders] = useState<OmnichannelOrder[]>(INITIAL_OMNICHANNEL_ORDERS);
 
-  // Synchronize authenticated backend user with app state
+  // Synchronize authenticated backend user with app state and load real customer biometrics
   useEffect(() => {
     if (auth.isAuthenticated && auth.user) {
       setIsLoggedIn(true);
       const mappedRole = mapBackendRoleToUserRole(auth.user.roles);
       setCurrentRole(mappedRole);
 
-      if (auth.user.customerProfile) {
-        setProfile((prev) => ({
-          ...prev,
-          name: auth.user!.customerProfile!.fullName || prev.name,
-          email: auth.user!.email || prev.email,
-          phone: auth.user!.phone || prev.phone
-        }));
-      }
+      // Fetch real persisted customer profile & biometrics from backend API
+      CustomerService.getMyProfile().then((res) => {
+        if (res.success && res.data) {
+          setProfile(res.data);
+        }
+      }).catch((_err) => {
+        // Fallback to local profile if API call fails
+      });
     } else if (!auth.isLoading && !auth.isAuthenticated) {
       setIsLoggedIn(false);
     }
@@ -269,6 +270,13 @@ export function App() {
   // Callback when user updates health profile
   const handleUpdateProfile = (updatedProfile: CustomerProfile) => {
     setProfile(updatedProfile);
+    CustomerService.updateMyProfile(updatedProfile).then((res) => {
+      if (res.success && res.data) {
+        setProfile(res.data);
+      }
+    }).catch((_err) => {
+      // Retain optimistic UI state if offline
+    });
     setActiveTab('plan_builder');
   };
 

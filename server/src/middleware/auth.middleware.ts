@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken, JwtAccessTokenPayload } from '../utils/jwt.js';
 import { AppError } from './error.middleware.js';
+import { RoleEnum } from '@prisma/client';
 
 declare global {
   namespace Express {
@@ -24,4 +25,21 @@ export function authenticateToken(req: Request, _res: Response, next: NextFuncti
   } catch (_err) {
     return next(new AppError('Invalid or expired access token', 401, 'INVALID_TOKEN'));
   }
+}
+
+export function requireRole(allowedRoles: RoleEnum[]) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+    }
+
+    const userRoles = req.user.roles || [];
+    const hasPermission = allowedRoles.some(role => userRoles.includes(role) || userRoles.includes('SUPER_ADMIN'));
+
+    if (!hasPermission) {
+      return next(new AppError('Access denied. Insufficient permissions for this resource.', 403, 'FORBIDDEN'));
+    }
+
+    next();
+  };
 }

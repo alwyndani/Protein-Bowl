@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CustomerProfile, BloodTestResults, ActivityLevel, HealthGoal } from '../../types';
 import { calculateHealthMetrics } from '../../utils/healthCalculator';
+import { CustomerService } from '../../services/customerService';
 import { 
   User, Activity, Stethoscope, Droplets, Apple, Scale, Clock, AlertTriangle, 
   Sparkles, CheckCircle2, Edit3, Save, RotateCcw, ShieldAlert, Heart, Calendar,
@@ -111,6 +112,15 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
     if (onUpdateProfile) {
       onUpdateProfile(finalProfile);
     }
+
+    CustomerService.updateMyProfile(finalProfile).then((res) => {
+      if (res.success && res.data && onUpdateProfile) {
+        onUpdateProfile(res.data);
+      }
+    }).catch((_err) => {
+      // Retain optimistic UI state if offline
+    });
+
     setIsEditing(false);
   };
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { CustomerProfile, ActivityLevel, HealthGoal, BloodTestResults } from '../../types';
 import { calculateMDCostEngine } from '../../utils/costEngine';
+import { CustomerService } from '../../services/customerService';
 import { 
   Activity, 
   HeartPulse, 
@@ -388,11 +389,19 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
     };
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const updated = getUpdatedProfileObj();
     onSaveProfile(updated);
     setSavedNotice(true);
     confetti({ particleCount: 50, spread: 60 });
+    try {
+      const res = await CustomerService.updateMyProfile(updated);
+      if (res.success && res.data) {
+        onSaveProfile(res.data);
+      }
+    } catch (_err) {
+      // Retain optimistic UI state
+    }
     setTimeout(() => setSavedNotice(false), 3000);
   };
 

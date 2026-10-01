@@ -46,6 +46,8 @@ model User {
   refreshTokens       RefreshToken[]
   customerProfile     CustomerProfile?
   employeeProfile     EmployeeProfile?
+  assignedDietRequests DietPlanRequest[]
+  auditLogs           AuditLog[]
 
   @@index([email])
   @@index([phone])
@@ -80,6 +82,25 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  role        String?
+  action      String
+  entity      String
+  entityId    String?
+  payload     Json?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
 model KitchenBranch {
   id                  String               @id @default(uuid())
   code                String               @unique
@@ -93,6 +114,12 @@ model KitchenBranch {
   updatedAt           DateTime             @updatedAt
 
   employees           EmployeeProfile[]
+  orders              Order[]
+  kots                KitchenOrderTicket[]
+  batches             KitchenBatch[]
+  inventoryItems      InventoryItem[]
+  posTransactions     POSTransaction[]
+  shifts              CashDrawerShift[]
 
   @@map("kitchen_branches")
 }
@@ -111,9 +138,119 @@ model CustomerProfile {
   updatedAt           DateTime             @updatedAt
 
   user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  healthBiometrics    HealthBiometrics?
+  addresses           CustomerAddress[]
+  dietPlanRequests    DietPlanRequest[]
+  dietPlans           DietPlan[]
+  workoutPlans        WorkoutPlan[]
+  orders              Order[]
+  subscriptions       Subscription[]
+  messAccount         MessAccount?
+  walletAccount       WalletAccount?
+  bottleReturns       BottleReturn[]
 
   @@index([referralCode])
   @@map("customer_profiles")
+}
+
+model CustomerAddress {
+  id                String          @id @default(uuid())
+  customerProfileId String
+  title             String          @default("Home")
+  addressLine1      String
+  addressLine2      String?
+  city              String
+  state             String          @default("Kerala")
+  postalCode        String
+  isDefault         Boolean         @default(false)
+  latitude          Float?
+  longitude         Float?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([customerProfileId])
+  @@map("customer_addresses")
+}
+
+model HealthBiometrics {
+  id                    String            @id @default(uuid())
+  customerProfileId     String            @unique
+  customerProfile       CustomerProfile   @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+
+  heightCm              Float
+  weightKg              Float
+  targetWeightKg        Float?
+  muscleMassKg          Float?
+  occupation            String?
+  workSchedule          String?
+  sleepDuration         Float?
+  wakeUpTime            String?
+  bedTime               String?
+
+  circumferences        Json?
+  limbCircumferences    Json?
+
+  goal                  String
+  primaryGoals          String[]          @default([])
+  activityLevel         String
+
+  hasExercise           Boolean           @default(false)
+  workoutTypes          String[]          @default([])
+  workoutFrequency      String?
+  workoutDuration       Int?
+  dailyStepCount        Int?
+  cardioSessions        Int?
+  strengthSessions      Int?
+
+  medicalConditions     String[]          @default([])
+  currentMedications    String?
+  supplements           String[]          @default([])
+  bloodTestResults      Json?
+
+  foodPreference        String?
+  allergies             String[]          @default([])
+  foodDislikes          String[]          @default([])
+  customQuery           String?
+
+  mealsPerDay           Int               @default(3)
+  mealTimings           Json?
+  waterIntakeL          Float?
+
+  digestiveHealth       String[]          @default([])
+  smoking               String?
+  alcohol               String?
+  tobacco               String?
+  stressLevel           Int?
+  sleepQuality          String?
+
+  isPregnant            Boolean?
+  isBreastfeeding       Boolean?
+  menstrualCycle        String?
+  isMenopause           Boolean?
+
+  planDurationDays      Int?
+  planFrequency         Int?
+  preferredSlot         String?
+  addonSlots            String[]          @default([])
+
+  bmi                   Float
+  bmiCategory           String
+  bmr                   Int
+  tdee                  Int
+  maintenanceCalories   Int
+  targetCalories        Int
+  macroTargets          Json
+  waterRequirementL     Float?
+  idealBodyWeightKg     Float?
+  leanBodyMassKg        Float?
+  calorieDeficitSurplus Int?
+
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  @@map("health_biometrics")
 }
 
 model EmployeeProfile {
@@ -130,7 +267,766 @@ model EmployeeProfile {
 
   user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
+  deliveries          DeliveryAssignment[]
+  hrmRecord           HRMEmployee?
 
   @@index([employeeCode])
   @@map("employee_profiles")
+}
+
+model DietPlanRequest {
+  id                  String          @id @default(uuid())
+  customerProfileId   String
+  goal                String
+  status              String          @default("SUBMITTED") // SUBMITTED, ASSIGNED, IN_REVIEW, PLAN_CREATED, REVISION_REQUESTED, COMPLETED, REJECTED, CANCELLED
+  nutritionistId      String?
+  notes               String?
+  planType            String?
+  durationDays        Int             @default(30)
+  dietaryPreference   String?
+  cuisinePreference   String?
+  grainPreference     String?
+  spiceLevel          String?
+  allergiesExclusions String?
+  customQuery         String?
+  addonSlots          String[]        @default([])
+  preferredCategories String[]        @default([])
+  calculatedPrice     Float?
+  revisionNotes       String?
+  claimedAt           DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  customerProfile     CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  assignedNutritionist User?          @relation(fields: [nutritionistId], references: [id])
+  dietPlans           DietPlan[]
+
+  @@index([customerProfileId])
+  @@index([nutritionistId])
+  @@index([status])
+  @@map("diet_plan_requests")
+}
+
+model DietPlan {
+  id                    String          @id @default(uuid())
+  requestId             String?
+  customerProfileId     String
+  nutritionistId        String?
+  name                  String
+  versionNumber         Int             @default(1)
+  parentPlanId          String?
+  isLatestVersion       Boolean         @default(true)
+  targetCalories        Int
+  proteinGrams          Int
+  carbsGrams            Int
+  fatGrams              Int
+  fiberGrams            Int             @default(30)
+  status                String          @default("DRAFT") // DRAFT, SUBMITTED, REVISED, APPROVED, REJECTED
+  startDate             DateTime        @default(now())
+  endDate               DateTime?
+  internalClinicalNotes String?
+  customerVisibleNotes  String?
+  customerFeedback      String?
+  notes                 String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+
+  customerProfile       CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  request               DietPlanRequest? @relation(fields: [requestId], references: [id])
+  parentPlan            DietPlan?        @relation("PlanVersions", fields: [parentPlanId], references: [id])
+  childPlans            DietPlan[]       @relation("PlanVersions")
+  days                  DietPlanDay[]
+  subscriptions         Subscription[]
+
+  @@index([customerProfileId])
+  @@index([requestId])
+  @@index([isLatestVersion])
+  @@map("diet_plans")
+}
+
+model DietPlanDay {
+  id          String         @id @default(uuid())
+  dietPlanId  String
+  dayNumber   Int
+  dayName     String
+  notes       String?
+
+  dietPlan    DietPlan       @relation(fields: [dietPlanId], references: [id], onDelete: Cascade)
+  meals       DietPlanMeal[]
+
+  @@map("diet_plan_days")
+}
+
+model DietPlanMeal {
+  id                String      @id @default(uuid())
+  dietPlanDayId     String
+  mealType          String      // BREAKFAST, MORNING_SNACK, LUNCH, EVENING_SNACK, DINNER
+  timingLabel       String?
+  recipeId          String?
+  recipeName        String
+  portionScale      Float       @default(1.0)
+  portionGrams      Int         @default(200)
+  portionSize       String?
+  calories          Int
+  protein           Int
+  carbs             Int
+  fat               Int
+  instructions      String?
+  customizationNote String?
+  slotRemarks       String?
+
+  dietPlanDay       DietPlanDay @relation(fields: [dietPlanDayId], references: [id], onDelete: Cascade)
+
+  @@map("diet_plan_meals")
+}
+
+model WorkoutPlan {
+  id                String          @id @default(uuid())
+  customerProfileId String
+  trainerId         String?
+  title             String
+  goal              String
+  durationWeeks     Int             @default(4)
+  status            String          @default("ACTIVE")
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  workoutDays       WorkoutDay[]
+
+  @@map("workout_plans")
+}
+
+model WorkoutDay {
+  id            String      @id @default(uuid())
+  workoutPlanId String
+  dayOfWeek     String
+  title         String
+  focusArea     String
+
+  workoutPlan   WorkoutPlan @relation(fields: [workoutPlanId], references: [id], onDelete: Cascade)
+  exercises     Exercise[]
+
+  @@map("workout_days")
+}
+
+model Exercise {
+  id           String     @id @default(uuid())
+  workoutDayId String
+  name         String
+  sets         Int
+  reps         String
+  restSeconds  Int        @default(60)
+  notes        String?
+  videoUrl     String?
+
+  workoutDay   WorkoutDay @relation(fields: [workoutDayId], references: [id], onDelete: Cascade)
+
+  @@map("exercises")
+}
+
+model Recipe {
+  id                String             @id @default(uuid())
+  code              String             @unique
+  title             String
+  description       String?
+  category          String
+  prepTimeMins      Int                @default(15)
+  cookTimeMins      Int                @default(15)
+  chefInstructions  String?
+  calories          Int
+  proteinGrams      Float
+  carbsGrams        Float
+  fatGrams          Float
+  fiberGrams        Float              @default(5)
+  costPerPortion    Decimal            @db.Decimal(10, 2)
+  isPublished       Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  ingredients       RecipeIngredient[]
+
+  @@map("recipes")
+}
+
+model Ingredient {
+  id               String             @id @default(uuid())
+  name             String             @unique
+  unit             String             @default("grams")
+  costPerUnit      Decimal            @db.Decimal(10, 4)
+  currentStock     Float              @default(0)
+  reorderLevel     Float              @default(1000)
+  caloriesPerUnit  Float              @default(0)
+  proteinPerUnit   Float              @default(0)
+  carbsPerUnit     Float              @default(0)
+  fatPerUnit       Float              @default(0)
+
+  recipes          RecipeIngredient[]
+  inventoryItems   InventoryItem[]
+
+  @@map("ingredients")
+}
+
+model RecipeIngredient {
+  id           String     @id @default(uuid())
+  recipeId     String
+  ingredientId String
+  quantity     Float
+  unit         String
+
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([recipeId, ingredientId])
+  @@map("recipe_ingredients")
+}
+
+model ProductCategory {
+  id          String    @id @default(uuid())
+  name        String    @unique
+  slug        String    @unique
+  description String?
+  image       String?
+  displayOrder Int       @default(0)
+
+  products    Product[]
+
+  @@map("product_categories")
+}
+
+model Product {
+  id              String           @id @default(uuid())
+  categoryId      String
+  name            String
+  slug            String           @unique
+  description     String
+  image           String?
+  isFMCG          Boolean          @default(false)
+  isTepache       Boolean          @default(false)
+  isPublished     Boolean          @default(true)
+  basePrice       Decimal          @db.Decimal(10, 2)
+  rating          Float            @default(4.8)
+  reviewsCount    Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  category        ProductCategory  @relation(fields: [categoryId], references: [id])
+  variants        ProductVariant[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id            String   @id @default(uuid())
+  productId     String
+  name          String
+  sku           String   @unique
+  price         Decimal  @db.Decimal(10, 2)
+  stockQuantity Int      @default(100)
+  calories      Int?
+  protein       Float?
+  carbs         Float?
+  fat           Float?
+
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_variants")
+}
+
+model Order {
+  id                String             @id @default(uuid())
+  orderNumber       String             @unique
+  customerProfileId String?
+  kitchenBranchId   String?
+  status            String             @default("PENDING") // PENDING, CONFIRMED, ACCEPTED, PREPARING, READY, DISPATCHED, DELIVERED, CANCELLED
+  orderType         String             @default("DIRECT")  // DIRECT, MESS, SUBSCRIPTION, POS
+  totalAmount       Decimal            @db.Decimal(10, 2)
+  discountAmount    Decimal            @default(0.00) @db.Decimal(10, 2)
+  taxAmount         Decimal            @default(0.00) @db.Decimal(10, 2)
+  deliveryFee       Decimal            @default(0.00) @db.Decimal(10, 2)
+  netAmount         Decimal            @db.Decimal(10, 2)
+  deliveryAddress   String?
+  paymentStatus     String             @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  paymentMethod     String?
+  isGuest           Boolean            @default(false)
+  guestEmail        String?
+  guestPhone        String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  customerProfile   CustomerProfile?   @relation(fields: [customerProfileId], references: [id])
+  kitchenBranch     KitchenBranch?     @relation(fields: [kitchenBranchId], references: [id])
+  items             OrderItem[]
+  payments          Payment[]
+  kot               KitchenOrderTicket?
+  delivery          DeliveryAssignment?
+
+  @@index([orderNumber])
+  @@index([customerProfileId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id            String   @id @default(uuid())
+  orderId       String
+  productId     String?
+  variantId     String?
+  recipeId      String?
+  itemTitle     String
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  quantity      Int
+  totalPrice    Decimal  @db.Decimal(10, 2)
+  customization Json?
+
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_items")
+}
+
+model Payment {
+  id                   String          @id @default(uuid())
+  orderId              String
+  customerProfileId    String?
+  gatewayTransactionId String?
+  amount               Decimal         @db.Decimal(10, 2)
+  currency             String          @default("INR")
+  status               String          @default("SUCCESS") // PENDING, SUCCESS, FAILED, REFUNDED
+  method               String          // CARD, UPI, NET_BANKING, WALLET, CASH
+  payload              Json?
+  createdAt            DateTime        @default(now())
+
+  order                Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model Subscription {
+  id                String          @id @default(uuid())
+  customerProfileId String
+  dietPlanId        String?
+  planType          String          // DAILY_MEAL, KERALA_MESS, WEEKLY_FITNESS
+  status            String          @default("ACTIVE") // ACTIVE, PAUSED, CANCELLED, EXPIRED
+  startDate         DateTime        @default(now())
+  endDate           DateTime?
+  autoRenew         Boolean         @default(true)
+  nextBillingDate   DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  dietPlan          DietPlan?       @relation(fields: [dietPlanId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model MessAccount {
+  id                 String             @id @default(uuid())
+  customerProfileId  String             @unique
+  studentIdCard      String?
+  collegeHostelName  String
+  roomNumber         String
+  isApproved         Boolean            @default(true)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  customerProfile    CustomerProfile    @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  subscriptions      MessSubscription[]
+
+  @@map("mess_accounts")
+}
+
+model MessSubscriptionPlan {
+  id                String             @id @default(uuid())
+  name              String
+  code              String             @unique
+  durationDays      Int
+  mealsPerDay       Int
+  basePrice         Decimal            @db.Decimal(10, 2)
+  active            Boolean            @default(true)
+
+  subscriptions     MessSubscription[]
+
+  @@map("mess_subscription_plans")
+}
+
+model MessSubscription {
+  id                 String               @id @default(uuid())
+  messAccountId      String
+  planId             String
+  status             String               @default("ACTIVE") // ACTIVE, PAUSED, CANCELLED, COMPLETED
+  startDate          DateTime             @default(now())
+  endDate            DateTime
+  totalMealsAllowed  Int
+  mealsRemaining     Int
+  totalPausesUsed    Int                  @default(0)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  messAccount        MessAccount          @relation(fields: [messAccountId], references: [id], onDelete: Cascade)
+  plan               MessSubscriptionPlan @relation(fields: [planId], references: [id])
+  dailyOrders        MessDailyOrder[]
+  pauseRequests      MealPauseRequest[]
+
+  @@map("mess_subscriptions")
+}
+
+model MessDailyOrder {
+  id                 String           @id @default(uuid())
+  messSubscriptionId String
+  date               DateTime         @db.Date
+  slot               String           // BREAKFAST, LUNCH, DINNER
+  status             String           @default("SCHEDULED") // SCHEDULED, PAUSED, CONSUMED, SKIPPED
+  gatePassCode       String?
+  consumedAt         DateTime?
+
+  messSubscription   MessSubscription @relation(fields: [messSubscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([messSubscriptionId, date, slot])
+  @@map("mess_daily_orders")
+}
+
+model MealPauseRequest {
+  id                 String           @id @default(uuid())
+  messSubscriptionId String
+  pauseDate          DateTime         @db.Date
+  slot               String
+  refundAmount       Decimal          @db.Decimal(10, 2)
+  status             String           @default("APPROVED") // PENDING, APPROVED, REJECTED
+  processedAt        DateTime         @default(now())
+
+  messSubscription   MessSubscription @relation(fields: [messSubscriptionId], references: [id], onDelete: Cascade)
+
+  @@map("meal_pause_requests")
+}
+
+model WalletAccount {
+  id                String              @id @default(uuid())
+  customerProfileId String              @unique
+  balance           Decimal             @default(0.00) @db.Decimal(10, 2)
+  currency          String              @default("INR")
+  updatedAt         DateTime            @updatedAt
+
+  customerProfile   CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  transactions      WalletTransaction[]
+
+  @@map("wallet_accounts")
+}
+
+model WalletTransaction {
+  id              String        @id @default(uuid())
+  walletAccountId String
+  amount          Decimal       @db.Decimal(10, 2)
+  type            String        // CREDIT_PAUSE_REFUND, DEBIT_MEAL, CREDIT_TOPUP, DEBIT_ORDER
+  referenceId     String?
+  description     String
+  balanceAfter    Decimal       @db.Decimal(10, 2)
+  createdAt       DateTime      @default(now())
+
+  walletAccount   WalletAccount @relation(fields: [walletAccountId], references: [id], onDelete: Cascade)
+
+  @@map("wallet_transactions")
+}
+
+model KitchenOrderTicket {
+  id          String        @id @default(uuid())
+  orderId     String        @unique
+  branchId    String
+  kotNumber   String        @unique
+  status      String        @default("QUEUED") // QUEUED, PREPARING, READY, SERVED
+  priority    String        @default("NORMAL")
+  itemsJson   Json
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  branch      KitchenBranch @relation(fields: [branchId], references: [id])
+
+  @@map("kitchen_order_tickets")
+}
+
+model KitchenBatch {
+  id             String        @id @default(uuid())
+  branchId       String
+  batchNumber    String        @unique
+  recipeId       String
+  targetQuantity Int
+  status         String        @default("PLANNED") // PLANNED, IN_PREPARATION, QUALITY_CHECK, COMPLETED
+  chefId         String?
+  createdAt      DateTime      @default(now())
+  completedAt    DateTime?
+
+  branch         KitchenBranch @relation(fields: [branchId], references: [id])
+
+  @@map("kitchen_batches")
+}
+
+model InventoryItem {
+  id              String          @id @default(uuid())
+  branchId        String
+  ingredientId    String?
+  name            String
+  sku             String
+  category        String
+  unit            String
+  quantityOnHand  Float           @default(0)
+  minReorderLevel Float           @default(50)
+  unitCost        Decimal         @db.Decimal(10, 2)
+  expiryDate      DateTime?
+  updatedAt       DateTime        @updatedAt
+
+  branch          KitchenBranch   @relation(fields: [branchId], references: [id])
+  ingredient      Ingredient?     @relation(fields: [ingredientId], references: [id])
+  stockMovements  StockMovement[]
+
+  @@map("inventory_items")
+}
+
+model StockMovement {
+  id              String        @id @default(uuid())
+  inventoryItemId String
+  type            String        // PURCHASE_RECEIPT, PRODUCTION_CONSUMPTION, WASTAGE, TRANSFER_IN, TRANSFER_OUT, POS_SALE
+  quantity        Float
+  unitCost        Decimal       @db.Decimal(10, 2)
+  referenceNumber String?
+  notes           String?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+
+  @@map("stock_movements")
+}
+
+model DeliveryAssignment {
+  id            String          @id @default(uuid())
+  orderId       String          @unique
+  driverId      String?
+  branchId      String?
+  status        String          @default("ASSIGNED") // ASSIGNED, PICKED_UP, IN_TRANSIT, DELIVERED, FAILED
+  pickupTime    DateTime?
+  deliveryTime  DateTime?
+  deliveryNotes String?
+  podImageUrl   String?
+  temperatureC  Float?
+  createdAt     DateTime        @default(now())
+
+  order         Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  driver        EmployeeProfile? @relation(fields: [driverId], references: [id])
+
+  @@map("delivery_assignments")
+}
+
+model POSTransaction {
+  id                String        @id @default(uuid())
+  branchId          String
+  cashierId         String?
+  transactionNumber String        @unique
+  totalAmount       Decimal       @db.Decimal(10, 2)
+  paymentMethod     String        // CASH, UPI, CARD, SPLIT
+  cashReceived      Decimal?      @db.Decimal(10, 2)
+  changeGiven       Decimal?      @db.Decimal(10, 2)
+  receiptUrl        String?
+  createdAt         DateTime      @default(now())
+
+  branch            KitchenBranch @relation(fields: [branchId], references: [id])
+
+  @@map("pos_transactions")
+}
+
+model CashDrawerShift {
+  id           String        @id @default(uuid())
+  branchId     String
+  cashierId    String
+  openingFloat Decimal       @db.Decimal(10, 2)
+  closingCash  Decimal?      @db.Decimal(10, 2)
+  expectedCash Decimal?      @db.Decimal(10, 2)
+  discrepancy  Decimal?      @db.Decimal(10, 2)
+  status       String        @default("OPEN") // OPEN, CLOSED
+  openedAt     DateTime      @default(now())
+  closedAt     DateTime?
+
+  branch       KitchenBranch @relation(fields: [branchId], references: [id])
+
+  @@map("cash_drawer_shifts")
+}
+
+model FMCGBatch {
+  id               String   @id @default(uuid())
+  batchCode        String   @unique
+  productName      String
+  quantityProduced Int
+  qcStatus         String   @default("PASSED") // PENDING, PASSED, FAILED
+  manufactureDate  DateTime @default(now())
+  expiryDate       DateTime
+  inspectorId      String?
+
+  @@map("fmcg_batches")
+}
+
+model DispatchChallan {
+  id            String   @id @default(uuid())
+  challanNumber String   @unique
+  partnerName   String
+  itemsJson     Json
+  dispatchDate  DateTime @default(now())
+  status        String   @default("DISPATCHED") // DISPATCHED, RECEIVED
+
+  @@map("dispatch_challans")
+}
+
+model TepacheTank {
+  id               String   @id @default(uuid())
+  tankCode         String   @unique
+  capacityLiters   Float
+  currentBatchCode String?
+  status           String   @default("FERMENTING") // FERMENTING, AGING, READY, CLEANING
+  phLevel          Float    @default(3.6)
+  brixLevel        Float    @default(8.5)
+  temperatureC     Float    @default(22.0)
+  updatedAt        DateTime @updatedAt
+
+  @@map("tepache_tanks")
+}
+
+model TepacheBrewBatch {
+  id          String    @id @default(uuid())
+  batchCode   String    @unique
+  tankId      String
+  recipeName  String
+  volumeLiters Float
+  brixInitial Float
+  brixFinal   Float?
+  phInitial   Float
+  phFinal     Float?
+  status      String    @default("FERMENTING") // BREWING, FERMENTING, BOTTLING, COMPLETED
+  startDate   DateTime  @default(now())
+  bottledDate DateTime?
+
+  @@map("tepache_brew_batches")
+}
+
+model BottleReturn {
+  id                    String          @id @default(uuid())
+  customerProfileId     String?
+  partnerName           String?
+  bottlesReturned       Int
+  depositRefundPerBottle Decimal        @default(10.00) @db.Decimal(10, 2)
+  totalRefund           Decimal         @db.Decimal(10, 2)
+  processedAt           DateTime        @default(now())
+
+  customerProfile       CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+
+  @@map("bottle_returns")
+}
+
+model AggregatorOrder {
+  id                String   @id @default(uuid())
+  platform          String   // SWIGGY, ZOMATO
+  aggregatorOrderId String   @unique
+  status            String
+  itemsJson         Json
+  grossAmount       Decimal  @db.Decimal(10, 2)
+  commissionAmount  Decimal  @db.Decimal(10, 2)
+  netPayout         Decimal  @db.Decimal(10, 2)
+  pickupOtp         String?
+  createdAt         DateTime @default(now())
+
+  @@map("aggregator_orders")
+}
+
+model HRMEmployee {
+  id                String          @id @default(uuid())
+  employeeProfileId String          @unique
+  department        String
+  joiningDate       DateTime        @default(now())
+  basicSalary       Decimal         @db.Decimal(10, 2)
+  allowances        Decimal         @default(0.00) @db.Decimal(10, 2)
+  bankAccount       String?
+  status            String          @default("ACTIVE")
+
+  employeeProfile   EmployeeProfile @relation(fields: [employeeProfileId], references: [id], onDelete: Cascade)
+  attendance        AttendanceRecord[]
+  payrolls          PayrollRecord[]
+
+  @@map("hrm_employees")
+}
+
+model AttendanceRecord {
+  id            String      @id @default(uuid())
+  employeeId    String
+  date          DateTime    @db.Date
+  checkIn       DateTime?
+  checkOut      DateTime?
+  status        String      @default("PRESENT") // PRESENT, ABSENT, LEAVE, HALF_DAY
+
+  employee      HRMEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, date])
+  @@map("attendance_records")
+}
+
+model PayrollRecord {
+  id          String      @id @default(uuid())
+  employeeId  String
+  monthYear   String
+  basicSalary Decimal     @db.Decimal(10, 2)
+  netSalary   Decimal     @db.Decimal(10, 2)
+  status      String      @default("PAID") // PENDING, PROCESSED, PAID
+  paidAt      DateTime?
+
+  employee    HRMEmployee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@map("payroll_records")
+}
+
+model FinancialTransaction {
+  id            String   @id @default(uuid())
+  voucherNumber String   @unique
+  branchId      String?
+  accountType   String   // INCOME, EXPENSE, ASSET, LIABILITY
+  amount        Decimal  @db.Decimal(10, 2)
+  category      String
+  description   String
+  referenceId   String?
+  createdAt     DateTime @default(now())
+
+  @@map("financial_transactions")
+}
+
+model CMSBanner {
+  id        String    @id @default(uuid())
+  title     String
+  imageUrl  String
+  linkUrl   String?
+  position  Int       @default(0)
+  isActive  Boolean   @default(true)
+  startDate DateTime?
+  endDate   DateTime?
+
+  @@map("cms_banners")
+}
+
+model CMSMedia {
+  id          String   @id @default(uuid())
+  title       String
+  mediaType   String   // IMAGE, VIDEO
+  url         String
+  category    String
+  isPublished Boolean  @default(true)
+
+  @@map("cms_media")
+}
+
+model MealPlanDefinition {
+  id            String   @id @default(uuid())
+  title         String   @unique
+  slug          String   @unique
+  goal          String
+  description   String
+  pricePerDay   Decimal  @db.Decimal(10, 2)
+  image         String?
+  includesList  String[] @default([])
+
+  @@map("meal_plan_definitions")
 }

@@ -36,6 +36,7 @@ import {
   MessageSquare,
   Sparkle
 } from 'lucide-react';
+import { DietService } from '../../services/dietService';
 import confetti from 'canvas-confetti';
 
 interface NutritionistDashboardProps {
@@ -427,9 +428,50 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
     confetti({ particleCount: 40, spread: 50 });
   };
 
-  // Send completed plan to client
-  const handleSendToClient = () => {
+  // Send completed plan to client via real API
+  const handleSendToClient = async () => {
     confetti({ particleCount: 80, spread: 90 });
+
+    try {
+      if (activeRequest && activeRequest.id) {
+        // Calculate day 1 totals to send as target summary
+        const day1 = weeklyPlan[0] || generateInitial7DayPlan()[0];
+        
+        await DietService.publishDietPlan({
+          requestId: activeRequest.id,
+          name: `Custom Diet Plan (${activeRequest.customerName || 'Client'})`,
+          targetCalories: activeRequest.targetCalories || day1.totalCalories || 1700,
+          proteinGrams: day1.totalProtein || 120,
+          carbsGrams: day1.totalCarbs || 160,
+          fatGrams: day1.totalFat || 45,
+          internalClinicalNotes: 'Clinical Internal Summary: PCOS & Metabolic Care. Low GI carbs & low sodium.',
+          customerVisibleNotes: dieticianNoteInput,
+          days: weeklyPlan.map((d) => ({
+            dayNumber: d.dayNumber,
+            dayName: d.dayName,
+            notes: `Day ${d.dayNumber} - ${d.totalCalories} kcal`,
+            meals: d.meals.flatMap((m) =>
+              (m.items || []).map((item) => ({
+                mealType: m.mealType,
+                timingLabel: m.timingLabel,
+                recipeId: item.recipeId,
+                recipeName: item.recipeName,
+                portionGrams: item.portionGrams || 200,
+                portionSize: item.portionSize,
+                calories: item.calories || 200,
+                protein: item.protein || 20,
+                carbs: item.carbs || 25,
+                fat: item.fat || 5,
+                customizationNote: item.customizationNote,
+                slotRemarks: m.slotRemarks
+              }))
+            )
+          }))
+        });
+      }
+    } catch (err) {
+      console.error('Publish diet plan API error:', err);
+    }
 
     const updatedReq: DietPlanRequest = {
       ...activeRequest,

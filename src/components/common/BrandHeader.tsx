@@ -308,11 +308,11 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
                 <span className="sm:hidden">Login</span>
               </button>
 
-              {!isCustomerRole && onOpenEmployeeLogin && (
+              {onOpenEmployeeLogin && (
                 <button
                   onClick={onOpenEmployeeLogin}
-                  className="hidden md:flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3 py-2 rounded-xl text-xs font-bold transition-all"
-                  title="Employee & Kerala Mess Portal Sign-in"
+                  className="hidden md:flex items-center gap-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Employee & Staff Portal Sign-in"
                 >
                   <Briefcase className="w-3.5 h-3.5 text-amber-400" />
                   <span>Staff Login</span>
