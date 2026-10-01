@@ -19,6 +19,7 @@ import mdRoutes from './modules/md/md.routes.js';
 import hrmRoutes from './modules/hrm/hrm.routes.js';
 import financeRoutes from './modules/finance/finance.routes.js';
 import cmsRoutes from './modules/cms/cms.routes.js';
+import recipeRoutes from './modules/recipe/recipe.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { ApiResponse } from './utils/apiResponse.js';
 
@@ -43,6 +44,7 @@ app.get('/api/v1/health', (_req, res) => {
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/products', productRoutes);
+app.use('/api/v1/recipes', recipeRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/mess', messRoutes);
 app.use('/api/v1/diets', dietRoutes);

@@ -427,26 +427,39 @@ model Exercise {
 }
 
 model Recipe {
-  id                String             @id @default(uuid())
-  code              String             @unique
-  title             String
-  description       String?
-  category          String
-  prepTimeMins      Int                @default(15)
-  cookTimeMins      Int                @default(15)
-  chefInstructions  String?
-  calories          Int
-  proteinGrams      Float
-  carbsGrams        Float
-  fatGrams          Float
-  fiberGrams        Float              @default(5)
-  costPerPortion    Decimal            @db.Decimal(10, 2)
-  isPublished       Boolean            @default(true)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  id                    String             @id @default(uuid())
+  code                  String             @unique
+  title                 String
+  description           String?
+  category              String
+  servingSize           String             @default("1 Portion")
+  servingGrams          Int                @default(200)
+  prepTimeMins          Int                @default(15)
+  cookTimeMins          Int                @default(15)
+  chefInstructions      String?
+  calories              Int
+  proteinGrams          Float
+  carbsGrams            Float
+  fatGrams              Float
+  fiberGrams            Float              @default(5)
+  dietaryTag            String             @default("non-veg")
+  cuisine               String             @default("Kerala Traditional")
+  flourGrainPreference  String?
+  spiceLevel            String?
+  image                 String?
+  rating                Float              @default(4.8)
+  prepSteps             Json?
+  costPerPortion        Decimal?           @db.Decimal(10, 2)
+  isPublished           Boolean            @default(true)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
-  ingredients       RecipeIngredient[]
+  ingredients           RecipeIngredient[]
 
+  @@index([category])
+  @@index([dietaryTag])
+  @@index([cuisine])
+  @@index([isPublished])
   @@map("recipes")
 }
 
@@ -454,7 +467,7 @@ model Ingredient {
   id               String             @id @default(uuid())
   name             String             @unique
   unit             String             @default("grams")
-  costPerUnit      Decimal            @db.Decimal(10, 4)
+  costPerUnit      Decimal?           @default(0.0000) @db.Decimal(10, 4)
   currentStock     Float              @default(0)
   reorderLevel     Float              @default(1000)
   caloriesPerUnit  Float              @default(0)

@@ -37,6 +37,7 @@ import {
   Sparkle
 } from 'lucide-react';
 import { DietService } from '../../services/dietService';
+import { RecipeService } from '../../services/recipeService';
 import confetti from 'canvas-confetti';
 
 interface NutritionistDashboardProps {

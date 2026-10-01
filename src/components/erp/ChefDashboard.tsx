@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ProductionBatch, RecipeItem, Order, DietaryPreference, KitchenBranchId, MessKitchenBatchSummary } from '../../types';
 import { INITIAL_PRODUCTION_BATCHES } from '../../data/mockData';
 import { ALL_RECIPES } from '../../data/recipeDatabase';
+import { RecipeService } from '../../services/recipeService';
 import { INITIAL_MESS_KITCHEN_BATCHES } from '../../data/mockKeralaMessData';
 import { DispatchLabelPrintModal, DispatchLabelItem, LabelTypeMode } from './DispatchLabelPrintModal';
 import { 
@@ -98,6 +99,18 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
   const [recipes, setRecipes] = useState<RecipeItem[]>(ALL_RECIPES);
   const [recipeSearch, setRecipeSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
+
+  React.useEffect(() => {
+    RecipeService.getStaffRecipes({ limit: 100 })
+      .then((res) => {
+        if (res.items && res.items.length > 0) {
+          setRecipes(res.items);
+        }
+      })
+      .catch((err) => {
+        console.warn('Chef Dashboard Recipe API fetch notice:', err);
+      });
+  }, []);
 
   // Modal State for Edit or Create Recipe
   const [showRecipeModal, setShowRecipeModal] = useState(false);

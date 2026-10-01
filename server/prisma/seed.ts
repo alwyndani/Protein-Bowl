@@ -1,5 +1,6 @@
 import { PrismaClient, RoleEnum } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { seedRecipes } from './seedRecipes';
 
 const prisma = new PrismaClient();
 
@@ -243,6 +244,9 @@ async function main() {
     update: {},
     create: { tankCode: 'TANK-01', capacityLiters: 500, status: 'FERMENTING', phLevel: 3.5, brixLevel: 8.2, temperatureC: 21.5 }
   });
+
+  // 7. 120 Recipe Catalog Import
+  await seedRecipes();
 
   console.log('🎉 Seeding completed successfully!');
 }

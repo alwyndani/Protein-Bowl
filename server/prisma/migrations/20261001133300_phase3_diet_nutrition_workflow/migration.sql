@@ -1,5 +1,5 @@
 -- DropIndex
-DROP INDEX "diet_plans_requestId_key";
+DROP INDEX IF EXISTS "diet_plans_requestId_key";
 
 -- AlterTable
 ALTER TABLE "diet_plan_meals" ADD COLUMN     "customizationNote" TEXT,

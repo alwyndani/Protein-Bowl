@@ -21,7 +21,7 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
 
   if (!recipe) return null;
 
-  const isChefOrMD = userRole === 'chef' || userRole === 'md';
+  const isChefOrAdmin = userRole === 'chef' || userRole === 'super_admin';
 
   const dietaryColors = {
     veg: 'bg-emerald-100 text-emerald-800 border-emerald-300',
@@ -42,7 +42,7 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
                 {recipe.dietaryTag}
               </span>
               <span className="text-xs font-semibold text-stone-500">{recipe.category}</span>
-              {isChefOrMD && (
+              {isChefOrAdmin && (
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-orange-100 text-orange-900 border border-orange-300 flex items-center gap-1">
                   <ChefHat className="w-3 h-3 text-orange-600" />
                   <span>Authorized Recipe View ({userRole.toUpperCase()})</span>
@@ -74,8 +74,8 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Navigation Tabs (Only if Chef or MD) */}
-        {isChefOrMD && (
+        {/* Modal Navigation Tabs (Only if Chef or Admin) */}
+        {isChefOrAdmin && (
           <div className="flex border-b border-stone-200 bg-stone-50 px-6 pt-2 gap-2">
             <button
               onClick={() => setActiveTab('nutrition')}
@@ -155,8 +155,8 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
           </div>
         )}
 
-        {/* Tab 2: Price Calculator (Chef & MD Only) */}
-        {isChefOrMD && activeTab === 'pricing' && (
+        {/* Tab 2: Price Calculator (Chef & Admin Only) */}
+        {isChefOrAdmin && activeTab === 'pricing' && (
           <div className="p-6 overflow-y-auto space-y-6">
             <IngredientPriceCalculator compact={true} />
           </div>

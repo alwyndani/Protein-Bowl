@@ -11,3 +11,14 @@ export function validateBody(schema: AnyZodObject) {
     }
   };
 }
+
+export function validateQuery(schema: AnyZodObject) {
+  return async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      req.query = await schema.parseAsync(req.query);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
