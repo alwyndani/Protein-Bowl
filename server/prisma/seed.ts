@@ -1,6 +1,8 @@
 import { PrismaClient, RoleEnum } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { seedRecipes } from './seedRecipes';
+import { seedRecipes } from './seedRecipes.js';
+import { seedProducts } from './seedProducts.js';
+
 
 const prisma = new PrismaClient();
 
@@ -247,6 +249,9 @@ async function main() {
 
   // 7. 120 Recipe Catalog Import
   await seedRecipes();
+
+  // 8. Commercial Product Catalog Import
+  await seedProducts();
 
   console.log('🎉 Seeding completed successfully!');
 }

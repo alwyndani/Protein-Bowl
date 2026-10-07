@@ -1,7 +1,8 @@
 import { PrismaClient } from '@prisma/client';
-import { ALL_RECIPES } from '../../src/data/recipeDatabase';
+import { ALL_RECIPES } from '../../src/data/recipeDatabase.js';
 
 const prisma = new PrismaClient();
+
 
 export async function seedRecipes() {
   console.log(`Starting 120-recipe database import from source dataset...`);
@@ -139,7 +140,7 @@ export async function seedRecipes() {
   }
 
   // Gather stats for recipes corresponding to source dataset
-  const sourceCodes = ALL_RECIPES.map((r) => r.id);
+  const sourceCodes = ALL_RECIPES.map((r: any) => r.id);
   const dbRecipes = await prisma.recipe.findMany({
     where: { code: { in: sourceCodes } },
     include: {

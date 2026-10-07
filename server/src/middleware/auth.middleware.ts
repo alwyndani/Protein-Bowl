@@ -43,3 +43,17 @@ export function requireRole(allowedRoles: RoleEnum[]) {
     next();
   };
 }
+
+export function requireCustomerRole(req: Request, _res: Response, next: NextFunction) {
+  if (!req.user) {
+    return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+  }
+
+  const userRoles = req.user.roles || [];
+  if (!userRoles.includes(RoleEnum.CUSTOMER)) {
+    return next(new AppError('Access denied. CUSTOMER role required.', 403, 'FORBIDDEN'));
+  }
+
+  next();
+}
+

@@ -28,6 +28,9 @@ import {
   Check
 } from 'lucide-react';
 import { DirectCartItem, DirectGuestOrder, RetailCustomerAccount } from '../../types';
+import { AddressService } from '../../services/addressService';
+import { OrderService } from '../../services/orderService';
+import { CartService } from '../../services/cartService';
 
 interface DirectCartCheckoutModalProps {
   isOpen: boolean;
@@ -158,113 +161,91 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
     setStep('payment');
   };
 
-  const handlePlaceFinalOrder = () => {
+  const handlePlaceFinalOrder = async () => {
     setIsSubmitting(true);
+    try {
+      // 1. Resolve or create customer address
+      let addressId = '';
+      const userAddresses = await AddressService.getAddresses().catch(() => []);
+      if (userAddresses && userAddresses.length > 0) {
+        addressId = userAddresses[0].id;
+      } else {
+        const createdAddr = await AddressService.createAddress({
+          title: 'Home',
+          addressLine1: deliveryAddress || 'Kochi Headquarters',
+          city: 'Kochi',
+          state: 'Kerala',
+          postalCode: pincode || '682030',
+          isDefault: true
+        });
+        addressId = createdAddr.id;
+      }
 
-    const hubObj = KERALA_FULFILLMENT_HUBS.find(h => h.id === selectedHub) || KERALA_FULFILLMENT_HUBS[0];
-    const orderNumber = `DIR-${Math.floor(100000 + Math.random() * 900000)}`;
+      // 2. Generate idempotency key
+      const idempotencyKey = `IK-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
-    const newOrder: DirectGuestOrder = {
-      id: `dir-ord-${Date.now()}`,
-      orderNumber,
-      orderType: tepacheBottleCount > 0 && cartItems.length === tepacheBottleCount 
-        ? 'tepache_drinks' 
-        : tepacheBottleCount > 0 
-          ? 'mixed_wellness' 
-          : 'packaged_bakery',
-      customerName,
-      customerPhone,
-      customerEmail: customerEmail || `${customerPhone}@nutrifit.in`,
-      deliveryAddress: fulfillmentMode === 'express_home_delivery' ? deliveryAddress : `Counter Pickup at ${hubObj.name}`,
-      landmark,
-      pincode: pincode || '682030',
-      fulfillmentHub: hubObj.name,
-      fulfillmentMode,
-      deliveryDate,
-      deliverySlot,
-      items: cartItems.map(i => ({
-        id: i.id,
-        name: i.name,
-        sku: i.sku,
-        category: i.category,
-        quantity: i.quantity,
-        unitPrice: i.price,
-        lineTotal: i.price * i.quantity,
-        sizeOrWeight: i.weightOrVolume,
-        storageType: i.storageType
-      })),
-      subtotal,
-      deliveryFee,
-      packagingFee,
-      gstAmount,
-      discountAmount: 0,
-      bottleDepositTotal,
-      grandTotal,
-      paymentMode,
-      paymentStatus: paymentMode === 'cash_on_delivery' ? 'pending_cod' : 'paid',
-      orderStatus: 'confirmed',
-      orderNotes,
-      coldChainRequired: coldChainPackaging || tepacheBottleCount > 0,
-      riderName: 'Cold Courier Rider Suresh M.',
-      riderPhone: '+91 98470 22334',
-      trackingUpdates: [
-        {
-          stage: 'Order Confirmed',
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          description: 'Payment verified & order assigned to Kerala Fulfillment Hub.',
-          completed: true
-        },
-        {
-          stage: 'Central Bakery / Cold Store Picked',
-          time: 'In Progress',
-          description: 'Small batch sourdough & chilled live probiotic bottles picked.',
-          completed: true
-        },
-        {
-          stage: 'Thermal Insulated Cold Packing',
-          time: 'Scheduled',
-          description: 'Packed in food-grade thermal cooler box with reusable gel chill pack.',
-          completed: false
-        },
-        {
-          stage: 'Dispatched for Delivery',
-          time: 'Scheduled for Slot',
-          description: `Cold van dispatch to ${deliveryAddress || hubObj.name}.`,
-          completed: false
-        }
-      ],
-      createdAt: new Date().toISOString()
-    };
+      // 3. Create real order transaction on backend
+      const realOrder = await OrderService.createOrder({
+        addressId,
+        paymentMethod: paymentMode === 'cash_on_delivery' ? 'COD' : 'ONLINE',
+        idempotencyKey
+      });
 
-    // Construct or update customer account
-    const accountId = matchedAccount ? matchedAccount.id : `retail-cust-${Date.now()}`;
-    const newAccount: RetailCustomerAccount = {
-      id: accountId,
-      phone: customerPhone,
-      name: customerName,
-      email: customerEmail || `${customerPhone}@nutrifit.in`,
-      defaultAddress: deliveryAddress,
-      landmark,
-      pincode,
-      hubPreference: selectedHub,
-      bottleDepositBalance: (matchedAccount?.bottleDepositBalance || 0) + bottleDepositTotal,
-      totalOrdersCount: (matchedAccount?.totalOrdersCount || 0) + 1,
-      orderIds: [...(matchedAccount?.orderIds || []), newOrder.id],
-      createdAt: matchedAccount?.createdAt || new Date().toISOString()
-    };
+      const hubObj = KERALA_FULFILLMENT_HUBS.find(h => h.id === selectedHub) || KERALA_FULFILLMENT_HUBS[0];
+      const newOrder: DirectGuestOrder = {
+        id: realOrder.id,
+        orderNumber: realOrder.orderNumber,
+        orderType: 'packaged_bakery',
+        customerName: customerName || 'Customer',
+        customerPhone: customerPhone || '',
+        customerEmail: customerEmail || '',
+        deliveryAddress: deliveryAddress || `Counter Pickup at ${hubObj.name}`,
+        landmark,
+        pincode: pincode || '682030',
+        fulfillmentHub: hubObj.name,
+        fulfillmentMode,
+        deliveryDate,
+        deliverySlot,
+        items: (realOrder.items || []).map((i: any) => ({
+          id: i.id,
+          name: i.itemTitle,
+          sku: i.sku || 'SKU-PROD',
+          category: 'Packaged',
+          quantity: i.quantity,
+          unitPrice: Number(i.unitPrice),
+          lineTotal: Number(i.totalPrice),
+          sizeOrWeight: i.variantName || 'Standard'
+        })),
+        subtotal: Number(realOrder.totalAmount),
+        deliveryFee: Number(realOrder.deliveryFee),
+        packagingFee: Number(realOrder.packagingFee),
+        gstAmount: Number(realOrder.taxAmount),
+        discountAmount: 0,
+        bottleDepositTotal: Number(realOrder.containerDepositTotal),
+        grandTotal: Number(realOrder.netAmount),
+        paymentMode,
+        paymentStatus: realOrder.paymentStatus,
+        orderStatus: realOrder.status,
+        orderNotes,
+        coldChainRequired: coldChainPackaging || tepacheBottleCount > 0,
+        createdAt: realOrder.createdAt || new Date().toISOString()
+      };
 
-    setTimeout(() => {
       setIsSubmitting(false);
       setConfirmedOrder(newOrder);
-      setCreatedAccount(newAccount);
       setStep('success');
       const callback = onOrderPlaced || onOrderConfirmed;
       if (callback) {
-        callback(newOrder, newAccount);
+        callback(newOrder, null as any);
       }
       onClearCart();
-    }, 700);
+      CartService.clearCart().catch(() => {});
+    } catch (err: any) {
+      setIsSubmitting(false);
+      alert(err?.message || 'Failed to place order. Please check that you are logged in as a customer.');
+    }
   };
+
 
   return (
     <div className="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto">

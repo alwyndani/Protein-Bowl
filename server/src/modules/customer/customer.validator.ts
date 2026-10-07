@@ -106,3 +106,18 @@ export const updateCustomerProfileSchema = z.object({
 });
 
 export type UpdateCustomerProfileDto = z.infer<typeof updateCustomerProfileSchema>;
+
+export const createAddressSchema = z.object({
+  title: z.string().default('Home'),
+  addressLine1: z.string().min(3, 'Address line 1 is required'),
+  addressLine2: z.string().optional().nullable(),
+  city: z.string().min(2, 'City is required'),
+  state: z.string().default('Kerala'),
+  postalCode: z.string().min(4, 'Postal code is required'),
+  isDefault: z.boolean().optional().default(false),
+  latitude: z.number().optional().nullable(),
+  longitude: z.number().optional().nullable(),
+});
+
+export const updateAddressSchema = createAddressSchema.partial();
+

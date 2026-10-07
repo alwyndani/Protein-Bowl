@@ -1,21 +1,38 @@
 import { ApiClient } from './apiClient';
 
+export interface CheckoutPreviewPayload {
+  addressId?: string;
+  deliveryInstructions?: string;
+}
+
 export interface CreateOrderPayload {
-  items: Array<{ productId?: string; variantId?: string; title: string; price: number; quantity: number }>;
-  deliveryAddress: string;
-  paymentMethod: string;
-  isGuest?: boolean;
-  guestEmail?: string;
-  guestPhone?: string;
-  branchId?: string;
+  addressId: string;
+  paymentMethod?: string;
+  deliveryInstructions?: string;
+  idempotencyKey?: string;
 }
 
 export class OrderService {
-  public static async createOrder(payload: CreateOrderPayload) {
-    return await ApiClient.request('/orders', {
+  public static async checkoutPreview(payload: CheckoutPreviewPayload = {}) {
+    const response = await ApiClient.request('/checkout/preview', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+    return response.data;
+  }
+
+  public static async createOrder(payload: CreateOrderPayload) {
+    const headers: Record<string, string> = {};
+    if (payload.idempotencyKey) {
+      headers['x-idempotency-key'] = payload.idempotencyKey;
+    }
+
+    const response = await ApiClient.request('/orders', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    return response.data;
   }
 
   public static async getMyOrders() {
@@ -23,15 +40,13 @@ export class OrderService {
     return response.data || [];
   }
 
-  public static async trackOrder(orderNumber: string) {
-    const response = await ApiClient.request(`/orders/track/${orderNumber}`);
+  public static async getOrderById(orderId: string) {
+    const response = await ApiClient.request(`/orders/${orderId}`);
     return response.data;
   }
 
-  public static async updateOrderStatus(orderId: string, status: string) {
-    return await ApiClient.request(`/orders/${orderId}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status })
-    });
+  public static async trackOrder(orderNumber: string) {
+    const response = await ApiClient.request(`/orders/${orderNumber}`);
+    return response.data;
   }
 }

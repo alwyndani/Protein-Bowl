@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { UpdateCustomerProfileDto } from './customer.validator.js';
 import { calculateBiometrics } from '../../utils/biometricsCalculator.js';
+import { AppError } from '../../middleware/error.middleware.js';
 
 const prisma = new PrismaClient();
 
@@ -308,5 +309,125 @@ export class CustomerService {
       idealBodyWeightKg: bio?.idealBodyWeightKg || defaultCalculations.idealBodyWeightKg,
       calorieDeficitSurplus: bio?.calorieDeficitSurplus || defaultCalculations.calorieDeficitSurplus
     };
+  }
+
+  /**
+   * Fetch active addresses for authenticated customer
+   */
+  async getCustomerAddresses(userId: string) {
+    const profile = await prisma.customerProfile.findUnique({ where: { userId } });
+    if (!profile) {
+      throw new AppError('Customer profile not found', 404, 'NOT_FOUND');
+    }
+
+    return await prisma.customerAddress.findMany({
+      where: { customerProfileId: profile.id, isActive: true },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
+  /**
+   * Create new address for authenticated customer
+   */
+  async createCustomerAddress(userId: string, data: any) {
+    const profile = await prisma.customerProfile.findUnique({ where: { userId } });
+    if (!profile) {
+      throw new AppError('Customer profile not found', 404, 'NOT_FOUND');
+    }
+
+    // If setting as default, update previous default addresses for this customer
+    if (data.isDefault) {
+      await prisma.customerAddress.updateMany({
+        where: { customerProfileId: profile.id, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+
+    // If this is the customer's first address, force default
+    const existingCount = await prisma.customerAddress.count({
+      where: { customerProfileId: profile.id, isActive: true },
+    });
+    const isDefault = data.isDefault !== undefined ? data.isDefault : existingCount === 0;
+
+    return await prisma.customerAddress.create({
+      data: {
+        customerProfileId: profile.id,
+        title: data.title || 'Home',
+        addressLine1: data.addressLine1,
+        addressLine2: data.addressLine2 || null,
+        city: data.city,
+        state: data.state || 'Kerala',
+        postalCode: data.postalCode,
+        isDefault,
+        isActive: true,
+        latitude: data.latitude || null,
+        longitude: data.longitude || null,
+      },
+    });
+  }
+
+  /**
+   * Update existing address owned by authenticated customer
+   */
+  async updateCustomerAddress(userId: string, addressId: string, data: any) {
+    const profile = await prisma.customerProfile.findUnique({ where: { userId } });
+    if (!profile) {
+      throw new AppError('Customer profile not found', 404, 'NOT_FOUND');
+    }
+
+    const existing = await prisma.customerAddress.findFirst({
+      where: { id: addressId, customerProfileId: profile.id, isActive: true },
+    });
+
+    if (!existing) {
+      throw new AppError('Customer address not found or access denied', 404, 'NOT_FOUND');
+    }
+
+    if (data.isDefault) {
+      await prisma.customerAddress.updateMany({
+        where: { customerProfileId: profile.id, isDefault: true },
+        data: { isDefault: false },
+      });
+    }
+
+    return await prisma.customerAddress.update({
+      where: { id: addressId },
+      data: {
+        title: data.title !== undefined ? data.title : existing.title,
+        addressLine1: data.addressLine1 !== undefined ? data.addressLine1 : existing.addressLine1,
+        addressLine2: data.addressLine2 !== undefined ? data.addressLine2 : existing.addressLine2,
+        city: data.city !== undefined ? data.city : existing.city,
+        state: data.state !== undefined ? data.state : existing.state,
+        postalCode: data.postalCode !== undefined ? data.postalCode : existing.postalCode,
+        isDefault: data.isDefault !== undefined ? data.isDefault : existing.isDefault,
+        latitude: data.latitude !== undefined ? data.latitude : existing.latitude,
+        longitude: data.longitude !== undefined ? data.longitude : existing.longitude,
+      },
+    });
+  }
+
+  /**
+   * Soft delete address owned by authenticated customer
+   */
+  async deleteCustomerAddress(userId: string, addressId: string) {
+    const profile = await prisma.customerProfile.findUnique({ where: { userId } });
+    if (!profile) {
+      throw new AppError('Customer profile not found', 404, 'NOT_FOUND');
+    }
+
+    const existing = await prisma.customerAddress.findFirst({
+      where: { id: addressId, customerProfileId: profile.id, isActive: true },
+    });
+
+    if (!existing) {
+      throw new AppError('Customer address not found or access denied', 404, 'NOT_FOUND');
+    }
+
+    await prisma.customerAddress.update({
+      where: { id: addressId },
+      data: { isActive: false, isDefault: false },
+    });
+
+    return { success: true, message: 'Address removed successfully' };
   }
 }

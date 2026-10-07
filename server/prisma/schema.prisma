@@ -143,6 +143,7 @@ model CustomerProfile {
   dietPlanRequests    DietPlanRequest[]
   dietPlans           DietPlan[]
   workoutPlans        WorkoutPlan[]
+  cart                Cart?
   orders              Order[]
   subscriptions       Subscription[]
   messAccount         MessAccount?
@@ -163,6 +164,7 @@ model CustomerAddress {
   state             String          @default("Kerala")
   postalCode        String
   isDefault         Boolean         @default(false)
+  isActive          Boolean         @default(true)
   latitude          Float?
   longitude         Float?
   createdAt         DateTime        @default(now())
@@ -455,6 +457,7 @@ model Recipe {
   updatedAt             DateTime           @updatedAt
 
   ingredients           RecipeIngredient[]
+  products              Product[]
 
   @@index([category])
   @@index([dietaryTag])
@@ -501,7 +504,8 @@ model ProductCategory {
   slug        String    @unique
   description String?
   image       String?
-  displayOrder Int       @default(0)
+  displayOrder Int      @default(0)
+  isActive    Boolean   @default(true)
 
   products    Product[]
 
@@ -511,6 +515,7 @@ model ProductCategory {
 model Product {
   id              String           @id @default(uuid())
   categoryId      String
+  recipeId        String?
   name            String
   slug            String           @unique
   description     String
@@ -518,62 +523,103 @@ model Product {
   isFMCG          Boolean          @default(false)
   isTepache       Boolean          @default(false)
   isPublished     Boolean          @default(true)
+  isActive        Boolean          @default(true)
   basePrice       Decimal          @db.Decimal(10, 2)
+  containerDeposit Decimal         @default(0.00) @db.Decimal(10, 2)
+  taxRate         Decimal          @default(0.0500) @db.Decimal(5, 4)
   rating          Float            @default(4.8)
   reviewsCount    Int              @default(0)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
   category        ProductCategory  @relation(fields: [categoryId], references: [id])
+  recipe          Recipe?          @relation(fields: [recipeId], references: [id])
   variants        ProductVariant[]
+  cartItems       CartItem[]
 
   @@map("products")
 }
 
 model ProductVariant {
-  id            String   @id @default(uuid())
-  productId     String
-  name          String
-  sku           String   @unique
-  price         Decimal  @db.Decimal(10, 2)
-  stockQuantity Int      @default(100)
-  calories      Int?
-  protein       Float?
-  carbs         Float?
-  fat           Float?
+  id               String     @id @default(uuid())
+  productId        String
+  name             String
+  sku              String     @unique
+  price            Decimal    @db.Decimal(10, 2)
+  containerDeposit Decimal?   @db.Decimal(10, 2)
+  stockQuantity    Int        @default(100)
+  isActive         Boolean    @default(true)
+  isDefault        Boolean    @default(false)
+  calories         Int?
+  protein          Float?
+  carbs            Float?
+  fat              Float?
 
-  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product          Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems        CartItem[]
 
   @@map("product_variants")
 }
 
-model Order {
-  id                String             @id @default(uuid())
-  orderNumber       String             @unique
-  customerProfileId String?
-  kitchenBranchId   String?
-  status            String             @default("PENDING") // PENDING, CONFIRMED, ACCEPTED, PREPARING, READY, DISPATCHED, DELIVERED, CANCELLED
-  orderType         String             @default("DIRECT")  // DIRECT, MESS, SUBSCRIPTION, POS
-  totalAmount       Decimal            @db.Decimal(10, 2)
-  discountAmount    Decimal            @default(0.00) @db.Decimal(10, 2)
-  taxAmount         Decimal            @default(0.00) @db.Decimal(10, 2)
-  deliveryFee       Decimal            @default(0.00) @db.Decimal(10, 2)
-  netAmount         Decimal            @db.Decimal(10, 2)
-  deliveryAddress   String?
-  paymentStatus     String             @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
-  paymentMethod     String?
-  isGuest           Boolean            @default(false)
-  guestEmail        String?
-  guestPhone        String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+model Cart {
+  id                String          @id @default(uuid())
+  customerProfileId String          @unique
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  customerProfile   CustomerProfile?   @relation(fields: [customerProfileId], references: [id])
-  kitchenBranch     KitchenBranch?     @relation(fields: [kitchenBranchId], references: [id])
-  items             OrderItem[]
-  payments          Payment[]
-  kot               KitchenOrderTicket?
-  delivery          DeliveryAssignment?
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  items             CartItem[]
+
+  @@map("carts")
+}
+
+model CartItem {
+  id        String          @id @default(uuid())
+  cartId    String
+  productId String
+  variantId String?
+  quantity  Int             @default(1)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  cart      Cart            @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@map("cart_items")
+}
+
+model Order {
+  id                     String             @id @default(uuid())
+  orderNumber            String             @unique
+  idempotencyKey         String?            @unique
+  customerProfileId      String?
+  kitchenBranchId        String?
+  status                 String             @default("PENDING") // PENDING, CONFIRMED, ACCEPTED, PREPARING, READY, DISPATCHED, DELIVERED, CANCELLED
+  orderType              String             @default("DIRECT")  // DIRECT, MESS, SUBSCRIPTION, POS
+  totalAmount            Decimal            @db.Decimal(10, 2)
+  discountAmount         Decimal            @default(0.00) @db.Decimal(10, 2)
+  taxAmount              Decimal            @default(0.00) @db.Decimal(10, 2)
+  deliveryFee            Decimal            @default(0.00) @db.Decimal(10, 2)
+  packagingFee           Decimal            @default(0.00) @db.Decimal(10, 2)
+  containerDepositTotal  Decimal            @default(0.00) @db.Decimal(10, 2)
+  netAmount              Decimal            @db.Decimal(10, 2)
+  deliveryAddress        String?
+  deliveryAddressSnapshot Json?
+  paymentStatus          String             @default("PENDING") // PENDING, PAID, FAILED, REFUNDED
+  paymentMethod          String?
+  isGuest                Boolean            @default(false)
+  guestEmail             String?
+  guestPhone             String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  customerProfile        CustomerProfile?   @relation(fields: [customerProfileId], references: [id])
+  kitchenBranch          KitchenBranch?     @relation(fields: [kitchenBranchId], references: [id])
+  items                  OrderItem[]
+  payments               Payment[]
+  kot                    KitchenOrderTicket?
+  delivery               DeliveryAssignment?
 
   @@index([orderNumber])
   @@index([customerProfileId])
@@ -581,18 +627,23 @@ model Order {
 }
 
 model OrderItem {
-  id            String   @id @default(uuid())
-  orderId       String
-  productId     String?
-  variantId     String?
-  recipeId      String?
-  itemTitle     String
-  unitPrice     Decimal  @db.Decimal(10, 2)
-  quantity      Int
-  totalPrice    Decimal  @db.Decimal(10, 2)
-  customization Json?
+  id               String   @id @default(uuid())
+  orderId          String
+  productId        String?
+  variantId        String?
+  recipeId         String?
+  itemTitle        String
+  variantName      String?
+  sku              String?
+  unitPrice        Decimal  @db.Decimal(10, 2)
+  quantity         Int
+  taxRate          Decimal  @default(0.0500) @db.Decimal(5, 4)
+  taxAmount        Decimal  @default(0.00) @db.Decimal(10, 2)
+  containerDeposit Decimal  @default(0.00) @db.Decimal(10, 2)
+  totalPrice       Decimal  @db.Decimal(10, 2)
+  customization    Json?
 
-  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order            Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@map("order_items")
 }

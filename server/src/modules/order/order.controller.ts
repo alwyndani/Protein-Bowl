@@ -1,79 +1,79 @@
 import { Request, Response, NextFunction } from 'express';
 import { OrderService } from './order.service.js';
+import { checkoutPreviewSchema, createOrderSchema } from './order.validator.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
 
 export class OrderController {
-  public static async createOrder(req: Request, res: Response, next: NextFunction) {
+  /**
+   * POST /api/v1/checkout/preview
+   */
+  public static async checkoutPreview(req: Request, res: Response, next: NextFunction) {
     try {
-      let customerProfileId: string | undefined;
-
-      if (req.user?.userId) {
-        const customerProfile = await prisma.customerProfile.findUnique({
-          where: { userId: req.user.userId }
-        });
-        customerProfileId = customerProfile?.id;
+      const userId = req.user?.userId;
+      if (!userId) {
+        return ApiResponse.error(res, 'Authentication required', 401, 'UNAUTHORIZED');
       }
 
-      const order = await OrderService.createOrder({
-        customerProfileId,
-        items: req.body.items,
-        deliveryAddress: req.body.deliveryAddress,
-        paymentMethod: req.body.paymentMethod || 'UPI',
-        isGuest: req.body.isGuest,
-        guestEmail: req.body.guestEmail,
-        guestPhone: req.body.guestPhone,
-        branchId: req.body.branchId
-      });
+      const validatedData = checkoutPreviewSchema.parse(req.body);
+      const preview = await OrderService.checkoutPreview(userId, validatedData.addressId);
+      return ApiResponse.success(res, preview, 'Checkout preview calculated successfully', 200);
+    } catch (err) {
+      next(err);
+    }
+  }
 
+  /**
+   * POST /api/v1/orders
+   */
+  public static async createOrder(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return ApiResponse.error(res, 'Authentication required', 401, 'UNAUTHORIZED');
+      }
+
+      const validatedData = createOrderSchema.parse(req.body);
+      const idempotencyKey = (req.headers['x-idempotency-key'] as string) || 
+                             validatedData.idempotencyKey || 
+                             `IK-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+      const order = await OrderService.createOrder(userId, idempotencyKey, validatedData);
       return ApiResponse.success(res, order, 'Order created successfully', 201);
     } catch (err) {
       next(err);
     }
   }
 
+  /**
+   * GET /api/v1/orders/my-orders
+   */
   public static async getCustomerOrders(req: Request, res: Response, next: NextFunction) {
     try {
-      if (!req.user?.userId) {
-        return ApiResponse.error(res, 'Authentication required', 401);
+      const userId = req.user?.userId;
+      if (!userId) {
+        return ApiResponse.error(res, 'Authentication required', 401, 'UNAUTHORIZED');
       }
 
-      const customerProfile = await prisma.customerProfile.findUnique({
-        where: { userId: req.user.userId }
-      });
-
-      if (!customerProfile) {
-        return ApiResponse.success(res, [], 'No profile found');
-      }
-
-      const orders = await OrderService.getCustomerOrders(customerProfile.id);
-      return ApiResponse.success(res, orders, 'Customer orders retrieved');
+      const orders = await OrderService.getCustomerOrders(userId);
+      return ApiResponse.success(res, orders, 'Customer orders retrieved successfully', 200);
     } catch (err) {
       next(err);
     }
   }
 
-  public static async getOrderByNumber(req: Request, res: Response, next: NextFunction) {
+  /**
+   * GET /api/v1/orders/:orderId
+   */
+  public static async getOrderById(req: Request, res: Response, next: NextFunction) {
     try {
-      const { orderNumber } = req.params;
-      const order = await OrderService.getOrderByNumber(orderNumber);
-      if (!order) {
-        return ApiResponse.error(res, 'Order not found', 404);
+      const userId = req.user?.userId;
+      if (!userId) {
+        return ApiResponse.error(res, 'Authentication required', 401, 'UNAUTHORIZED');
       }
-      return ApiResponse.success(res, order, 'Order details retrieved');
-    } catch (err) {
-      next(err);
-    }
-  }
 
-  public static async updateOrderStatus(req: Request, res: Response, next: NextFunction) {
-    try {
       const { orderId } = req.params;
-      const { status } = req.body;
-      const updatedOrder = await OrderService.updateOrderStatus(orderId, status);
-      return ApiResponse.success(res, updatedOrder, 'Order status updated');
+      const order = await OrderService.getOrderById(userId, orderId);
+      return ApiResponse.success(res, order, 'Order details retrieved successfully', 200);
     } catch (err) {
       next(err);
     }

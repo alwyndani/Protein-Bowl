@@ -1,13 +1,11 @@
 import { Router } from 'express';
 import { OrderController } from './order.controller.js';
-import { authenticateToken, requireRole } from '../../middleware/auth.middleware.js';
-import { RoleEnum } from '@prisma/client';
+import { authenticateToken, requireCustomerRole } from '../../middleware/auth.middleware.js';
 
 const router = Router();
 
-router.post('/', OrderController.createOrder); // Guest or authenticated checkout
-router.get('/my-orders', authenticateToken, OrderController.getCustomerOrders);
-router.get('/track/:orderNumber', OrderController.getOrderByNumber);
-router.patch('/:orderId/status', authenticateToken, requireRole([RoleEnum.CHEF, RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN, RoleEnum.MD]), OrderController.updateOrderStatus);
+router.post('/', authenticateToken, requireCustomerRole, OrderController.createOrder);
+router.get('/my-orders', authenticateToken, requireCustomerRole, OrderController.getCustomerOrders);
+router.get('/:orderId', authenticateToken, requireCustomerRole, OrderController.getOrderById);
 
 export default router;
