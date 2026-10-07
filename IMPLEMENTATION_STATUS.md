@@ -65,3 +65,17 @@
   - Implemented customer address management, checkout preview, and transactional order creation with idempotency and snapshot protection.
   - Integrated frontend components (`DirectCartCheckoutModal`, `DirectOrderTrackingModal`) with backend API services.
   - Executed quality gate: `prisma validate` 🚀, `prisma migrate status` (6 migrations up to date), backend `tsc` (0 errors), frontend `tsc` (0 errors), `npm run build` (built in 23.43s), mobile `tsc` (0 errors), full Vitest suite passing (95/95 tests passing), clean migration replay against isolated disposable DB `protein_bowl_test_db` verified.
+
+---
+
+## 🔎 Onboarding Audit Corrections (2026-10-07, Claude Code migration)
+
+Verified by running the quality gates: `prisma validate` OK, `prisma migrate status` (6 migrations, up to date), backend/web/mobile `tsc` 0 errors, web build OK, Vitest **95/95** (foundation 12, diet 19, recipe 23, commerce 41). The matrix above is retained; the following qualifications apply and take precedence:
+
+- **Per-module test counts in the matrix** for rows 1–2 (7 / 4) are not traceable to files; actual counts are per file (foundation = 12 covering auth + customer + foundation).
+- **Mobile columns marked "Integrated" / "API Contract Ready" → SCAFFOLD.** `apps/mobile` is a single 277-line `App.tsx` with demo credentials, hardcoded `localhost` API URL and a fake wallet balance. No mobile tests.
+- **Row 8 (Commerce) is VERIFIED for backend behaviour only.** Pricing defaults (₹40 delivery, ₹499 free-delivery threshold, 5% fallback tax, ₹0 packaging; ₹10 Tepache deposit in seed data) are **PRODUCT DECISION REQUIRED**. The earlier-cited ₹25 packaging fee is not in code. Payment gateway: **MISSING/DEFERRED** (orders are created with `status=PENDING`, `paymentStatus=PENDING`; no PAID path). `Payment.status` schema default `"SUCCESS"` is unsafe and must be fixed before use.
+- **Seed counts:** dev DB currently holds 23 products/23 variants (11 categories); this document previously said 22. Recipes 120 / RecipeIngredient 606 / Ingredient 350 confirmed.
+- **Rows 9–21 (ERP/Mess/KDS/etc.):** backend routes + schema exist as thin untested CRUD (**SCAFFOLD**) and web dashboards run on `src/data/mock*.ts` (**MOCK**); "DEFERRED" remains correct for production workflows.
+- **Web integration is PARTIAL:** `App.tsx` still seeds profile/requests/orders and ERP state from mock constants; several customer components still read static data files.
+- **Security gaps recorded (unfixed):** cart routes use `requireRole([CUSTOMER])` (SUPER_ADMIN passes); diet customer routes and mess routes lack a customer-role guard; CORS reflects any origin with credentials; register/refresh not rate-limited. See `CLAUDE.md` §9.
