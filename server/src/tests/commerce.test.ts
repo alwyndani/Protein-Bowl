@@ -704,6 +704,15 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
     expect(order!.paymentStatus).toBe('PENDING');
   });
 
+  it('39b. Creating an Order does not create a successful Payment record', async () => {
+    const successfulPayments = await prisma.payment.count({
+      where: { orderId: createdOrderId, status: 'SUCCESS' }
+    });
+    expect(successfulPayments).toBe(0);
+    const anyPayments = await prisma.payment.count({ where: { orderId: createdOrderId } });
+    expect(anyPayments).toBe(0);
+  });
+
   it('40. No fake kitchen/delivery status progression', async () => {
     const order = await prisma.order.findUnique({
       where: { id: createdOrderId }

@@ -1,9 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../config/database.js';
 import { UpdateCustomerProfileDto } from './customer.validator.js';
 import { calculateBiometrics } from '../../utils/biometricsCalculator.js';
 import { AppError } from '../../middleware/error.middleware.js';
-
-const prisma = new PrismaClient();
 
 export class CustomerService {
   /**

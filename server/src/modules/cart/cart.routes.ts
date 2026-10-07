@@ -1,15 +1,14 @@
 import { Router } from 'express';
 import { CartController } from './cart.controller.js';
-import { authenticateToken, requireRole } from '../../middleware/auth.middleware.js';
+import { authenticateToken, requireCustomerRole } from '../../middleware/auth.middleware.js';
 import { validateBody } from '../../middleware/validate.middleware.js';
 import { addCartItemSchema, updateCartItemSchema } from './cart.validator.js';
-import { RoleEnum } from '@prisma/client';
 
 const router = Router();
 
 // All cart routes require authenticated CUSTOMER role
 router.use(authenticateToken);
-router.use(requireRole([RoleEnum.CUSTOMER]));
+router.use(requireCustomerRole);
 
 router.get('/', CartController.getCart);
 router.post('/items', validateBody(addCartItemSchema), CartController.addItem);

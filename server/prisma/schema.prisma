@@ -655,7 +655,7 @@ model Payment {
   gatewayTransactionId String?
   amount               Decimal         @db.Decimal(10, 2)
   currency             String          @default("INR")
-  status               String          @default("SUCCESS") // PENDING, SUCCESS, FAILED, REFUNDED
+  status               String          @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED (never default to SUCCESS)
   method               String          // CARD, UPI, NET_BANKING, WALLET, CASH
   payload              Json?
   createdAt            DateTime        @default(now())

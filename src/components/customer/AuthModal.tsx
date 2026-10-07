@@ -30,6 +30,10 @@ interface AuthModalProps {
   onEmployeeLogin?: (role: UserRole, employeeData: EmployeeLoginData) => void;
 }
 
+// Demo shortcuts/prefilled credentials exist for local development only. Production builds (import.meta.env.DEV === false)
+// must never expose them. Backend authorization never depends on this flag.
+const IS_DEV = import.meta.env.DEV;
+
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
@@ -47,8 +51,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Employee Login State
   const [employeeDeptFilter, setEmployeeDeptFilter] = useState<'all' | 'kerala_mess' | 'kitchen' | 'aggregators' | 'management'>('all');
   const [employeeFormData, setEmployeeFormData] = useState({
-    empIdOrEmail: 'murugan.mess@proteinbowl.in',
-    securityPin: 'Password123!',
+    empIdOrEmail: IS_DEV ? 'murugan.mess@proteinbowl.in' : '',
+    securityPin: IS_DEV ? 'Password123!' : '',
     targetRole: 'chef' as UserRole,
     department: 'Kerala Mess & Hostel Ops'
   });
@@ -56,16 +60,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Auth basic fields
   const [formData, setFormData] = useState({
-    name: initialProfile?.name || 'Anjali Ramesh',
-    email: initialProfile?.email || 'anjali@example.com',
-    phone: initialProfile?.phone || '+91 98765 43210',
-    dob: initialProfile?.dob || '1995-04-18',
-    password: 'Password123!',
+    name: initialProfile?.name || (IS_DEV ? 'Anjali Ramesh' : ''),
+    email: initialProfile?.email || (IS_DEV ? 'anjali@example.com' : ''),
+    phone: initialProfile?.phone || (IS_DEV ? '+91 98765 43210' : ''),
+    dob: initialProfile?.dob || (IS_DEV ? '1995-04-18' : ''),
+    password: IS_DEV ? 'Password123!' : '',
     otp: ''
   });
   const [forgotSuccess, setForgotSuccess] = useState(false);
 
-  const EMPLOYEE_PRESETS: (EmployeeLoginData & { badge?: string; desc: string })[] = [
+  const ALL_EMPLOYEE_PRESETS: (EmployeeLoginData & { badge?: string; desc: string })[] = [
     {
       id: 'EMP-105',
       name: 'Chef Murugan K.',
@@ -167,7 +171,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   ];
 
+  // Development-only quick-login shortcuts (hard-coded seed password); empty in production builds.
+  const EMPLOYEE_PRESETS = IS_DEV ? ALL_EMPLOYEE_PRESETS : [];
+
   const handleQuickEmployeeLogin = async (preset: EmployeeLoginData & { desc: string }) => {
+    if (!IS_DEV) return;
     setAuthError(null);
     setIsSubmitting(true);
     const res = await auth.login({
@@ -187,7 +195,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 600);
     } else {
-      // Demo fallback if offline/unseeded
+      // Development-only demo fallback if offline/unseeded (IS_DEV is guaranteed here). Never operates in production.
       setEmployeeLoginSuccess(`Demo Access: ${preset.name}`);
       if (onEmployeeLogin) {
         onEmployeeLogin(preset.role, preset);
@@ -516,6 +524,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   const handleSocialAuth = async (provider: 'Google' | 'Apple') => {
+    // Placeholder social sign-in derives an account from a hard-coded shared password: development only.
+    if (!IS_DEV) {
+      setAuthError('Social sign-in is not available yet.');
+      return;
+    }
     setAuthError(null);
     setIsSubmitting(true);
     const socialEmail = `user.${provider.toLowerCase()}@proteinbowl.in`;

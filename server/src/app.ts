@@ -23,24 +23,38 @@ import financeRoutes from './modules/finance/finance.routes.js';
 import cmsRoutes from './modules/cms/cms.routes.js';
 import recipeRoutes from './modules/recipe/recipe.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
+import { enforceAllowedOrigin, isAllowedOrigin } from './middleware/origin.middleware.js';
+import { generalRateLimiter } from './middleware/rateLimiter.middleware.js';
 import { ApiResponse } from './utils/apiResponse.js';
 
 const app: Application = express();
 
 // Security & Utility Middlewares
 app.use(helmet());
+if (env.TRUST_PROXY) {
+  const trust = Number(env.TRUST_PROXY);
+  app.set('trust proxy', Number.isNaN(trust) ? env.TRUST_PROXY : trust);
+}
+
+// CORS: only configured origins receive CORS headers (credentials included). Requests without an
+// Origin header (native mobile, curl, server-to-server) are not browser cross-origin requests and pass.
+// A disallowed origin gets no CORS headers (the browser blocks it) - never an error/500.
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin)),
   credentials: true
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(enforceAllowedOrigin);
+app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: env.JSON_BODY_LIMIT }));
 app.use(cookieParser());
 
 // Base Route Health Check
 app.get('/api/v1/health', (_req, res) => {
   return ApiResponse.success(res, { status: 'healthy', timestamp: new Date().toISOString() }, 'Protein Bowl Enterprise Platform API Online');
 });
+
+// General API rate limit (health check exempt); registered after /health
+app.use('/api/v1', generalRateLimiter);
 
 // API Domain Routes
 app.use('/api/v1/auth', authRoutes);

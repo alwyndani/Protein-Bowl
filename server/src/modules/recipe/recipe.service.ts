@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
-
-const prisma = new PrismaClient();
 
 export interface GetRecipesOptions {
   page?: number;

@@ -1,9 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { MessService } from './mess.service.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../../config/database.js';
 
 export class MessController {
   public static async getPlans(_req: Request, res: Response, next: NextFunction) {
@@ -22,7 +20,7 @@ export class MessController {
       const customerProfile = await prisma.customerProfile.findUnique({
         where: { userId: req.user.userId }
       });
-      if (!customerProfile) return ApiResponse.error(res, 'Customer profile not found', 4404);
+      if (!customerProfile) return ApiResponse.error(res, 'Customer profile not found', 404);
 
       const messAccount = await MessService.getMessAccount(customerProfile.id);
       return ApiResponse.success(res, messAccount, 'Mess account details retrieved');

@@ -1,6 +1,8 @@
 import { MobileStorage } from './storage';
 
-const API_BASE_URL = 'http://localhost:5000/api/v1';
+// Production builds must provide EXPO_PUBLIC_API_URL; the localhost fallback is for development builds only.
+const API_BASE_URL: string =
+  process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? 'http://localhost:5000/api/v1' : '');
 
 export class MobileApiClient {
   public static async request<T = any>(endpoint: string, options: RequestInit = {}): Promise<{ success: boolean; data?: T; error?: string; message?: string }> {

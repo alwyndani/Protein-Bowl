@@ -2,11 +2,21 @@ import { PrismaClient, RoleEnum } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedRecipes } from './seedRecipes.js';
 import { seedProducts } from './seedProducts.js';
+import { resolveSeedPlan } from './seedGuard.js';
 
 
 const prisma = new PrismaClient();
 
 async function main() {
+  const plan = resolveSeedPlan();
+  if (!plan.seedDemoData) {
+    console.warn(`🔒 ${plan.reason}`);
+    await seedRecipes();
+    await seedProducts();
+    console.log('🎉 Catalog seeding completed (no demo users created).');
+    return;
+  }
+
   console.log('🌱 Seeding Protein Bowl Development Database...');
 
   // 1. Create Kitchen Branches
@@ -51,8 +61,8 @@ async function main() {
 
   console.log(`✅ Kitchen Branches created: ${kochiBranch.name}, ${kozhikodeBranch.name}, ${trivandrumBranch.name}`);
 
-  // Shared test password hash ('Password123!')
-  const passwordHash = await bcrypt.hash('Password123!', 12);
+  // Shared development-only password hash (SEED_DEFAULT_PASSWORD, or the documented dev default)
+  const passwordHash = await bcrypt.hash(plan.demoPassword!, 12);
 
   // Helper function to create staff users safely
   const seedStaffUser = async (email: string, role: RoleEnum, code: string, name: string, title: string, branchId: string) => {

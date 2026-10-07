@@ -57,3 +57,22 @@ export function requireCustomerRole(req: Request, _res: Response, next: NextFunc
   next();
 }
 
+
+/**
+ * Role guard WITHOUT the SUPER_ADMIN bypass. Use for customer-context endpoints,
+ * where the caller must hold one of the listed roles themselves.
+ */
+export function requireExactRoles(allowedRoles: RoleEnum[]) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+    }
+
+    const userRoles = req.user.roles || [];
+    if (!allowedRoles.some(role => userRoles.includes(role))) {
+      return next(new AppError('Access denied. Insufficient permissions for this resource.', 403, 'FORBIDDEN'));
+    }
+
+    next();
+  };
+}

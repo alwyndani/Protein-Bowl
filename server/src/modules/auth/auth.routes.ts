@@ -4,14 +4,14 @@ import { validateBody } from '../../middleware/validate.middleware.js';
 import { registerSchema, loginSchema } from './auth.validator.js';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { requireRoles } from '../../middleware/rbac.middleware.js';
-import { authRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { loginRateLimiter, registerRateLimiter, refreshRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { RoleEnum } from '@prisma/client';
 
 const router = Router();
 
-router.post('/register', validateBody(registerSchema), AuthController.register);
-router.post('/login', authRateLimiter, validateBody(loginSchema), AuthController.login);
-router.post('/refresh', AuthController.refresh);
+router.post('/register', registerRateLimiter, validateBody(registerSchema), AuthController.register);
+router.post('/login', loginRateLimiter, validateBody(loginSchema), AuthController.login);
+router.post('/refresh', refreshRateLimiter, AuthController.refresh);
 router.post('/logout', AuthController.logout);
 
 // Protected Routes

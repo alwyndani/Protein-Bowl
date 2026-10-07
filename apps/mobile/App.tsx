@@ -5,8 +5,9 @@ import { MobileStorage } from './src/services/storage';
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
-  const [email, setEmail] = useState('customer@proteinbowl.in');
-  const [password, setPassword] = useState('Password123!');
+  // Credentials are pre-filled only in development builds (__DEV__); production builds start empty.
+  const [email, setEmail] = useState(__DEV__ ? 'customer@proteinbowl.in' : '');
+  const [password, setPassword] = useState(__DEV__ ? 'Password123!' : '');
   const [activeTab, setActiveTab] = useState<'home' | 'mess' | 'diets' | 'orders' | 'kds'>('home');
   const [loading, setLoading] = useState(false);
 
@@ -110,6 +111,7 @@ export default function App() {
               {loading ? <ActivityIndicator color="#090D16" /> : <Text style={styles.primaryBtnText}>Sign In to Account</Text>}
             </TouchableOpacity>
 
+            {__DEV__ && (
             <View style={styles.demoBox}>
               <Text style={styles.demoTitle}>Demo Quick Logins:</Text>
               <TouchableOpacity onPress={() => { setEmail('customer@proteinbowl.in'); setPassword('Password123!'); }}>
@@ -122,6 +124,7 @@ export default function App() {
                 <Text style={styles.demoLink}>• Kitchen Chef: chef.kochi@nutrifitkitchen.in</Text>
               </TouchableOpacity>
             </View>
+            )}
           </View>
         </View>
       </SafeAreaView>

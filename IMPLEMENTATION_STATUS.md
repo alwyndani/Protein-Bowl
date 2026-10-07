@@ -79,3 +79,26 @@ Verified by running the quality gates: `prisma validate` OK, `prisma migrate sta
 - **Rows 9–21 (ERP/Mess/KDS/etc.):** backend routes + schema exist as thin untested CRUD (**SCAFFOLD**) and web dashboards run on `src/data/mock*.ts` (**MOCK**); "DEFERRED" remains correct for production workflows.
 - **Web integration is PARTIAL:** `App.tsx` still seeds profile/requests/orders and ERP state from mock constants; several customer components still read static data files.
 - **Security gaps recorded (unfixed):** cart routes use `requireRole([CUSTOMER])` (SUPER_ADMIN passes); diet customer routes and mess routes lack a customer-role guard; CORS reflects any origin with credentials; register/refresh not rate-limited. See `CLAUDE.md` §9.
+
+---
+
+## 🛡️ Phase 4C — Security & Commerce Hardening (2026-10-07)
+
+Backend tests 132/132; backend/web/mobile `tsc` clean; web build OK; migration chain replayed on a disposable DB with no drift.
+
+| Item | Status |
+|------|--------|
+| Customer-context authorization (cart, profile, addresses, checkout, orders): SUPER_ADMIN/staff blocked | **VERIFIED** |
+| Diet customer routes require CUSTOMER; nutritionist workflow unchanged | **VERIFIED** |
+| Mess customer routes: CUSTOMER + legacy MESS_CUSTOMER only; staff blocked; gate-pass staff access unchanged | **VERIFIED** |
+| CORS allow-list + Origin check on state-changing requests | **VERIFIED** (production origin = deployment configuration required) |
+| Rate limits: login/register/refresh/general (env-configurable) | **VERIFIED** |
+| JSON body limit 256kb, 413/400 error mapping | **VERIFIED** |
+| `Payment.status` default PENDING (migration `20261007100318_phase4c_payment_status_safe_default`) | **VERIFIED** |
+| Seed production guard; dev-only demo credentials / Demo Access (web), `__DEV__` gating (mobile) | **VERIFIED** (frontend gating is UX hygiene; demo strings confirmed absent from the production web bundle) |
+| Shared Prisma singleton in all application modules | **VERIFIED** |
+| MESS_CUSTOMER to CUSTOMER reconciliation | **DEFERRED** (legacy role kept; Option A is the target) |
+| Order/checkout-specific rate limits, Payment status enum, real OTP/social login, ERP validation | **DEFERRED** |
+| Pricing values (delivery fee, free-delivery threshold, fallback tax, packaging, Tepache deposit, payment methods) | **PRODUCT DECISION REQUIRED** |
+
+The security gaps listed in "Onboarding Audit Corrections" above (cart role bypass, unprotected diet/mess customer routes, open CORS, missing rate limits/body limit, Payment default) are resolved by this phase.

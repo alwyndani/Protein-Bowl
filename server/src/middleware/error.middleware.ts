@@ -28,6 +28,19 @@ export function errorHandler(
     return ApiResponse.error(res, `Validation failed: ${issueMessages}`, 422, 'VALIDATION_ERROR');
   }
 
+  // Body-parser / HTTP-layer errors (carry a 4xx status and a `type`)
+  const httpErr = err as Error & { status?: number; statusCode?: number; type?: string };
+  if (httpErr.type === 'entity.too.large') {
+    return ApiResponse.error(res, 'Request body is too large', 413, 'PAYLOAD_TOO_LARGE');
+  }
+  if (httpErr.type === 'entity.parse.failed') {
+    return ApiResponse.error(res, 'Malformed request body', 400, 'INVALID_BODY');
+  }
+  const clientStatus = httpErr.status ?? httpErr.statusCode;
+  if (httpErr.type && clientStatus && clientStatus >= 400 && clientStatus < 500) {
+    return ApiResponse.error(res, 'Invalid request', clientStatus, 'BAD_REQUEST');
+  }
+
   console.error('Unhandled Server Error:', err);
   return ApiResponse.error(
     res,

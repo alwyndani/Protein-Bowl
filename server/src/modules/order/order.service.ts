@@ -1,9 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { PricingService } from '../commerce/pricing.service.js';
 import { CreateOrderDto } from './order.validator.js';
-
-const prisma = new PrismaClient();
 
 export class OrderService {
   /**

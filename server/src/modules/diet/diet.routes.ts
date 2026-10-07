@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { DietController } from './diet.controller.js';
-import { authenticateToken, requireRole } from '../../middleware/auth.middleware.js';
+import { authenticateToken, requireRole, requireCustomerRole } from '../../middleware/auth.middleware.js';
 import { validateBody } from '../../middleware/validate.middleware.js';
 import {
   createDietRequestSchema,
@@ -13,9 +13,11 @@ import { RoleEnum } from '@prisma/client';
 const router = Router();
 
 // --- CUSTOMER ROUTES ---
+// Literal CUSTOMER role required (no staff/SUPER_ADMIN bypass); identity derives from the JWT.
 router.post(
   '/requests',
   authenticateToken,
+  requireCustomerRole,
   validateBody(createDietRequestSchema),
   DietController.createRequest
 );
@@ -23,18 +25,21 @@ router.post(
 router.get(
   '/my-requests',
   authenticateToken,
+  requireCustomerRole,
   DietController.getMyRequests
 );
 
 router.get(
   '/my-plans',
   authenticateToken,
+  requireCustomerRole,
   DietController.getMyDietPlans
 );
 
 router.post(
   '/plans/:planId/approve',
   authenticateToken,
+  requireCustomerRole,
   validateBody(approvePlanSchema),
   DietController.approvePlan
 );
@@ -42,6 +47,7 @@ router.post(
 router.post(
   '/plans/:planId/request-revision',
   authenticateToken,
+  requireCustomerRole,
   validateBody(requestRevisionSchema),
   DietController.requestRevision
 );

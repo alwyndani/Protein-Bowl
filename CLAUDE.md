@@ -38,39 +38,43 @@ No monorepo tooling: three independent npm packages (root, `server/`, `apps/mobi
 - Response envelope: `{success, message?, data?, error?}`; `ApiResponse` helper in `utils/apiResponse.ts`, though cart/order controllers call `res.json` directly. Errors: throw `AppError(message, status, code)`; `errorHandler` maps `AppError` and `ZodError` (422).
 - Monetary logic: `modules/commerce/pricing.service.ts` (Decimal-safe, shared by checkout preview and order creation).
 - Order creation is transactional, idempotent (`Order.idempotencyKey`, header `x-idempotency-key`), snapshots OrderItem and delivery address.
-- Convention gap: most services call `new PrismaClient()` instead of importing the singleton in `config/database.ts`. New code should import `prisma` from `config/database.js`; do not mass-refactor existing services unprompted.
+- Prisma: all application services/controllers use the shared singleton (`import { prisma } from '../../config/database.js'`; logs `error`/`warn` only, `error` in production). Never add `new PrismaClient()` to app code. Intentional standalone clients remain only in `prisma/seed*.ts` scripts and test fixtures (`src/tests/*`).
 
 ## 5. Database architecture
 `server/prisma/schema.prisma` (~1100 lines, 57 models+enums). Notable: User/UserRoleAssignment/RefreshToken/AuditLog; CustomerProfile/HealthBiometrics/CustomerAddress; DietPlanRequest/DietPlan/DietPlanDay/DietPlanMeal; Recipe/Ingredient/RecipeIngredient; ProductCategory/Product/ProductVariant; Cart/CartItem; Order/OrderItem/Payment; Mess*/Wallet*; KitchenOrderTicket; Inventory/StockMovement; DeliveryAssignment; POS*; FMCG*; Tepache*; HRM*; FinancialTransaction; CMS*. Many ERP models exist only as schema + thin CRUD.
-Order `status` and `paymentStatus` are **String** columns (not DB enums); `Payment.status` defaults to `"SUCCESS"` (dangerous default — see §17).
+Order `status` and `paymentStatus` are **String** columns (not DB enums); `Payment.status` now defaults to `"PENDING"` (migration `20261007100318`; Phase 4C). No code writes `Payment` yet. Payment enum design is deferred.
 Current dev DB (verified read-only): 120 Recipe, 350 Ingredient, 606 RecipeIngredient, 23 Product, 23 ProductVariant, 11 ProductCategory, 41 User (21 CUSTOMER), 0 Order/Cart/DietPlan.
 
 ## 6. Authentication
 - Access JWT (15m default) via `Authorization: Bearer`; refresh token (7d) stored hashed-in-DB (`RefreshToken`), sent as HttpOnly cookie `pb_refresh_token` (body `refreshToken` also accepted — used by mobile), rotated on refresh.
 - Web keeps access token in memory only (`ApiClient`). Mobile uses expo-secure-store.
-- Login is rate-limited (20/15min/IP); register and refresh are not.
+- Rate limits (per IP, env-configurable `RL_*`): login 20/15min, register 10/hour, refresh 60/15min, general `/api/v1` 600/15min (health exempt). Limits are effectively off under `NODE_ENV=test` unless a test sets `RL_*_MAX` before importing the app (see `ratelimit*.test.ts`). `RL_DISABLED=true` works only outside production. Set `TRUST_PROXY` when behind a reverse proxy.
 - Public registration allows only `CUSTOMER` or `MESS_CUSTOMER`. Staff accounts come from seed/admin only.
 
 ## 7. RBAC roles (`RoleEnum`, verified)
 CUSTOMER, MESS_CUSTOMER, SUPER_ADMIN, MD, NUTRITIONIST, TRAINER, CHEF, PROCUREMENT, DELIVERY, POS, BAKERY_FMCG, TEPACHE_ERP, SWIGGY_ZOMATO. Do not change role semantics.
-Middleware (`auth.middleware.ts`): `authenticateToken`; `requireRole([...])` (**SUPER_ADMIN always passes**); `requireCustomerRole` (requires literal CUSTOMER; SUPER_ADMIN does NOT pass); `rbac.middleware.ts` also has `requireRoles` (same SUPER_ADMIN bypass; used only in `auth.routes`). Two near-duplicate helpers exist — keep both until deliberately consolidated.
+Middleware (`auth.middleware.ts`): `authenticateToken`; `requireRole([...])` (**staff/admin APIs only — SUPER_ADMIN always passes**); `requireCustomerRole` (literal CUSTOMER; no SUPER_ADMIN bypass); `requireExactRoles([...])` (listed roles only; no bypass). `rbac.middleware.ts` also has `requireRoles` (SUPER_ADMIN bypass; used only in `auth.routes`). RULE: customer-context endpoints must use `requireCustomerRole`/`requireExactRoles`, never `requireRole`.
+`MESS_CUSTOMER` is LEGACY / DEPRECATED FOR FUTURE RECONCILIATION. Target (decided): CUSTOMER is the canonical customer identity for Customer Portal AND Kerala Mess; Mess entitlement = the customer's MessAccount. Until a controlled future migration, customer Mess endpoints accept CUSTOMER and legacy MESS_CUSTOMER; MESS_CUSTOMER is not accepted on diet/commerce/profile APIs. Do not delete or rewrite the role without an approved phase.
 
 ## 8. Customer vs staff boundaries
 One customer account, two customer experiences (Customer Portal, Kerala Mess). Customers never get staff/ERP permissions. Public register cannot mint staff roles. Customer-private routes derive identity from `req.user.userId` (JWT) → `CustomerProfile` lookup; never accept `customerId` from the client. SUPER_ADMIN must not be able to use `/me` customer endpoints (order, checkout, customers/me use `requireCustomerRole`; see §9 for gaps).
 
 ## 9. Security rules and known gaps
 Rules: backend authorization + ownership checks are authoritative; frontend hiding is not security; never leak costing/clinical notes/SOP/supplier/ERP metadata in public DTOs; least-privilege for health data (diet health-profile access is limited to NUTRITIONIST/SUPER_ADMIN with claim checks in `diet.service`).
-Known gaps found in audit (do not "fix" silently — raise and get approval, then add tests):
-1. `cart.routes.ts` uses `requireRole([CUSTOMER])`, which lets SUPER_ADMIN through (it then 404s only because no CustomerProfile exists). Should be `requireCustomerRole`.
-2. `diet.routes.ts` customer routes (`/requests`, `/my-requests`, `/my-plans`, approve, request-revision) and `mess.routes.ts` (`/account`, `/register`, `/pause-meal`) use only `authenticateToken` — any authenticated staff user reaches them; ownership still comes from JWT but role is not enforced.
-3. CORS is `origin: true` with `credentials: true` (reflects any origin); `CLIENT_URL` is validated in env but unused by CORS. Must be locked down before production.
-4. No global rate limit; `/auth/register` and `/auth/refresh` unthrottled. No body size limit configured.
-5. Seed accounts all use password `Password123!` (dev only); `apps/mobile/App.tsx` pre-fills that login and a hardcoded wallet balance (450). Never use seed accounts/passwords outside dev.
-6. `server/.env` and root `.env` are gitignored (only `.env.example` tracked) — keep it so; never print or commit secrets. `server/.env.test` exists locally; tests actually force the DB URL in `src/tests/setup.ts`.
-7. ERP service modules (kds/pos/procurement/…) are thin, unvalidated CRUD (no Zod, `Error` thrown instead of `AppError`, status strings unchecked beyond KDS).
+Phase 4C (2026-10-07) fixed: cart/diet/mess customer-role guards (SUPER_ADMIN and staff are blocked from customer-context APIs); CORS allow-list + Origin check on state-changing requests (`CORS_ALLOWED_ORIGINS`, falls back to `CLIENT_URL` outside production; production startup fails without it; no-Origin requests such as mobile/curl are allowed; a disallowed origin gets no CORS headers, mutating requests get 403 `ORIGIN_NOT_ALLOWED`); auth + general rate limits; `JSON_BODY_LIMIT` (default 256kb; oversized -> 413, malformed JSON -> 400); invalid HTTP `4404` in mess controller; Payment default; seed production guard (`prisma/seedGuard.ts`: NODE_ENV=production seeds only recipes/products, never demo users); web/mobile demo credentials gated behind `import.meta.env.DEV` / `__DEV__`; shared Prisma singleton.
+Body limit rationale: legitimate max today is a 7-day nutritionist plan (~20-45KB); a verbose 30-day, 6-meals/day plan is ~90KB; the validators allow up to 365 days (~1MB) but no UI sends that. Binary/lab-report uploads need a dedicated upload route later, not bigger JSON limits.
+Remaining concerns (not fixed; need approval/phase):
+1. Frontend guards (`IS_DEV`, `__DEV__`) are UX hygiene only; backend never depends on them.
+2. Web OTP step is a local mock (auto-filled "4821"; no backend OTP); `App.tsx`/ERP dashboards use mock data. Mobile wallet balance is still a fake constant (450). Mobile production needs `EXPO_PUBLIC_API_URL`.
+3. Production CORS origin(s) are deployment configuration — not decided/known yet.
+4. Dev/seed accounts still use the documented dev password; never use outside development. `seed.ts` also seeds non-production demo operational data (branches, tanks, mess plans).
+5. ERP service modules (kds/pos/procurement/...) remain thin, unvalidated CRUD (no Zod, plain `Error`), no tests. Mess controllers take unvalidated bodies.
+6. Refresh tokens are accepted from cookie OR body (needed by mobile); consider tightening later. `Payment.status` is still a free String.
+7. No per-endpoint order/checkout rate limits (decision: not yet).
+8. `.env` files are gitignored; keep it so.
 
 ## 10. VERIFIED modules (code + passing tests)
-- Auth/refresh/RBAC foundation (foundation.test.ts, 12 tests).
+- Auth/refresh/RBAC foundation (foundation.test.ts, 12 tests). Phase 4C hardening tests: hardening.test.ts (31), ratelimit.test.ts (4), ratelimit-general.test.ts (1).
 - Customer profile + biometrics + addresses CRUD; BMI/BMR/TDEE/macros in `utils/biometricsCalculator.ts` (server-authoritative).
 - Diet request → nutritionist claim → plan create/version → customer approve/revise, immutable meal snapshots (diet.test.ts, 19).
 - Recipe & nutrition catalog: 120 recipes in Postgres, public vs staff projections, Chef/SUPER_ADMIN mutation, publish = SUPER_ADMIN only (recipe.test.ts, 23).
@@ -93,12 +97,12 @@ Known gaps found in audit (do not "fix" silently — raise and get approval, the
 Payment gateway/capture/refunds, SMS OTP, subscriptions, Kerala Mess production workflow, KDS/KOT full workflow, inventory stock movements, procurement integration, delivery fleet/live GPS, mobile parity, aggregator integrations, workout/trainer backend, SSE/WebSocket, background jobs, Docker/CI/CD, production deployment.
 
 ## 14. Migration safety rules
-Chain (all applied to dev DB): `20260924114508_init_phase1`, `20260926120407_add_health_biometrics`, `20261001120000_add_enterprise_platform_models`, `20261001133300_phase3_diet_nutrition_workflow`, `20261001140000_phase4a_recipe_nutrition_catalog`, `20261005143000_phase4b_commerce_cart_order`.
+Chain (7, all applied to dev and test DBs): `20260924114508_init_phase1`, `20260926120407_add_health_biometrics`, `20261001120000_add_enterprise_platform_models`, `20261001133300_phase3_diet_nutrition_workflow`, `20261001140000_phase4a_recipe_nutrition_catalog`, `20261005143000_phase4b_commerce_cart_order`, `20261007100318_phase4c_payment_status_safe_default`. After creating a migration, immediately check that the generated directory name sorts AFTER the chain tail; if it does not, STOP and report (never rename/repair automatically). New migrations must also be applied to the test DB (`DATABASE_URL=<test db> npx prisma migrate deploy`).
 NEVER: `prisma db push`; `migrate reset` on the dev DB; drop the dev DB; rename/edit applied migration folders or SQL; touch `_prisma_migrations`; alter checksums.
-Before ANY new migration: inspect migrations → `npx prisma migrate status` → new folder name must sort AFTER `20261005143000` (use a timestamp later than that, mind the dates are in the 2026-10 range) → create with controlled `prisma migrate dev --create-only`, review SQL → replay the whole chain on a disposable DB (e.g. a new scratch database, `migrate deploy`) → only then apply to dev. Back up/snapshot concerns: dev DB holds real seeded data (41 users, recipes).
+Before ANY new migration: inspect migrations → `npx prisma migrate status` → new folder name must sort AFTER `20261007100318` (use a timestamp later than that, mind the dates are in the 2026-10 range) → create with controlled `prisma migrate dev --create-only`, review SQL → replay the whole chain on a disposable DB (e.g. a new scratch database, `migrate deploy`) → only then apply to dev. Back up/snapshot concerns: dev DB holds real seeded data (41 users, recipes).
 
 ## 15. Testing
-- Run: `cd server && npm test` (vitest run). Last audited result: 4 files, **95/95 passing** (foundation 12, diet 19, recipe 23, commerce 41).
+- Run: `cd server && npm test` (vitest run). Last result (after Phase 4C): 7 files, **132/132 passing** (foundation 12, diet 19, recipe 23, commerce 42, hardening 31, ratelimit 4, ratelimit-general 1). Baseline before Phase 4C was 95.
 - Tests are integration tests against a real Postgres: `src/tests/setup.ts` hard-forces `protein_bowl_test_db` on localhost. The test DB must exist, be migrated (`DATABASE_URL=<test db> npx prisma migrate deploy`) and seeded. Never point tests at the dev DB.
 - There are no web or mobile tests. Every change to auth, RBAC, ownership, pricing, orders or diet must add/keep regression tests; do not delete or weaken existing tests to make them pass.
 
@@ -110,8 +114,8 @@ Windows host; bash tool is Git Bash. Use Unix syntax there.
 
 ## 17. Money / pricing safety
 - Backend is authoritative; never trust client prices/totals. Use `Decimal` (Prisma runtime Decimal), never float arithmetic, for money.
-- Current code hard-codes defaults in `PricingService`: delivery fee ₹40, free-delivery threshold ₹499, packaging fee ₹0, fallback tax rate 5% (Product.taxRate default 0.05), container deposit per product/variant (seeded ₹10 for Tepache bottles). These are **PRODUCT DECISION REQUIRED** — do not generalize or hide them as policy; do not add other fees (e.g. the old ₹25 packaging) without a decision.
-- Payments: no gateway. Orders must never become PAID automatically. Keep order `status` and `paymentStatus` separate. `Payment.status` schema default `"SUCCESS"` must be corrected (via a controlled migration, with approval) before any payment code uses that model. Do not integrate Razorpay/Stripe/UPI until instructed.
+- Current code hard-codes defaults in `PricingService` (unchanged by Phase 4C): delivery fee ₹40, free-delivery threshold ₹499, packaging fee ₹0, fallback tax rate 5% (Product.taxRate default 0.05), container deposit per product/variant (seeded ₹10 for Tepache bottles). These are **PRODUCT DECISION REQUIRED** — do not generalize or hide them as policy; do not add other fees (e.g. the old ₹25 packaging) without a decision.
+- Payments: no gateway. Orders must never become PAID automatically. Keep order `status` and `paymentStatus` separate. `Payment.status` now defaults to `PENDING`; a payment must never be marked SUCCESS/PAID without verified gateway confirmation. Payment status enum design is deferred. Do not integrate Razorpay/Stripe/UPI until instructed.
 
 ## 18. Health-data access
 Health biometrics/clinical notes are private to the owning customer; nutritionists access only via diet-request claim flow (`/diets/requests/:id/health-profile`, claim + role checked in service); MD intentionally excluded from routine clinical endpoints. Staff DTOs must not leak to public/customer projections and vice versa. Calculations stay server-side.
