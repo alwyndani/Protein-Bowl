@@ -218,3 +218,30 @@ Backend change: none. Web fix made along the way: `ApiClient` no longer refresh-
 **Manual E2E (dev stack, 2026-10-08):** SUPER_ADMIN login → Admin workspace listed real staff → invite with wrong step-up password rejected (session kept) → correct password → temp CHEF created with Kochi branch, "NO EMAIL WAS SENT" + one-time link shown, dismissal removed it from the DOM, no browser storage used → link opened: fragment scrubbed, weak/common and name-containing passwords rejected by the server, strong password activated the account, link not reusable → temp CHEF signed in, saw only the Chef dashboard; `/admin/*` returned 403 for the CHEF → SUPER_ADMIN assigned POS (step-up), revoked POS (proof reused, no second prompt), assigned and revoked Kozhikode → deactivation needed reason + confirmation → afterwards the old CHEF access token returned 401 `ACCOUNT_INACTIVE` and login returned 403 → audit UI showed STAFF_CREATED, STAFF_INVITED, STAFF_INVITATION_ACCEPTED, ROLE_ASSIGNED/REVOKED, BRANCH_ASSIGNED/REVOKED, STAFF_DEACTIVATED, STEP_UP_FAILED, STAFF_INVITATION_REJECTED with no secrets.
 
 **Temporary dev records left in the dev DB (not cleaned up):** User `p6c.temp.chef@proteinbowl.test` (id `631c7b83-756c-4501-ae3d-f3e8afe0fefb`, status DEACTIVATED, role CHEF) with its EmployeeProfile (`1366d928-5b72-42a1-be90-ee9dc2794da8`) and Kochi branch assignment, one StaffInvitation (`b256f5fb-5f28-4363-8420-163b0bf4fb57`, USED), refresh-token rows (from the E2E logins), and 10 audit rows (audit is append-only by design). Dev servers were stopped afterwards.
+
+---
+
+## 💳 P7 — Order lifecycle, payments, refunds: DESIGN REVIEWED · NOT IMPLEMENTED (2026-10-08)
+
+Design review only. No application code, schema or migration changed. Baseline re-verified at 5f4617e: backend 263/263, web 127/127, all `tsc` clean, web build OK, 9 migrations up to date, clean tree.
+
+| Area (current code) | Classification |
+|---|---|
+| Checkout preview + order creation use server pricing (client sends no prices/totals) | **WORKING** |
+| `PricingService` Decimal math; fees/threshold/tax fallback hard-coded in code (₹40, ₹499, 5 %), packaging ₹0, no minimum order, no discounts persisted | **PARTIAL / PRODUCT DECISION REQUIRED** |
+| Order creation transaction, address + item snapshots | **WORKING** |
+| Idempotency (global unique key, no fingerprint, race → 500, cart not locked, random fallback key) | **PARTIAL / UNSAFE edge cases** |
+| `paymentMethod` accepted as any string | **UNSAFE (low)** |
+| Payment model (one table, no provider ids, no webhook/refund tables, `method` NOT NULL, no `updatedAt`) | **PLACEHOLDER** (0 rows in dev) |
+| Order status machine | **MISSING**; KDS/delivery services write `Order.status` directly (no rules, non-atomic, no audit) → **UNSAFE** |
+| KOT / delivery assignment creation, branch routing (`kitchenBranchId` never set), stock checks | **MISSING** |
+| Cancellation, refunds, COD, receipts, webhook handling | **MISSING** |
+| Web checkout: server totals, order placed as PENDING, honest "payment not available yet" copy | **WORKING** (no payment UI) |
+| Legacy web mocks with ₹40/₹499/₹25/5 %: `DirectGuestOrderModal` (not referenced anywhere), `CheckoutModal` (subscription mock) | **MOCK / dead code** |
+
+**Recommended split:** P7A pricing policy + order lifecycle foundation → P7B payment provider, verification, webhooks (+COD primitive) → P7C cancellation + refunds → P7D web payment/cancel/refund UI. First implementation subphase: **P7A**.
+
+**Decisions required (recommended default → blocks):**
+P7-D1 tax mode inclusive vs exclusive (keep exclusive-as-built until the accountant decides) → P7A · P7-D2 per-product rates, remove code fallback → P7A · P7-D3 delivery/packaging taxable (default: no, pending accountant) → P7A · P7-D4 delivery fee + free threshold (owner supplies values; threshold on pre-tax item subtotal) → P7A · P7-D5 packaging fee, order-level flat → P7A · P7-D6 minimum order value and basis → P7A · P7-D7 max quantity per line/order → P7A · P7-D8 order confirmation timing (online: auto on verified payment; COD: auto when enabled) → P7A/B · P7-D9 payment expiry (default 30 min) → P7A/B · P7-D10 retry policy (default: retries within expiry, max 5 attempts) → P7B · P7-D11 provider (Razorpay, adapter + mock first) → live P7B only · P7-D12 methods (whatever Razorpay checkout enables; no wallet) → P7B · P7-D13 auto-capture (yes) → P7B · P7-D14 COD enabled (default off; primitive built) → P7B · P7-D15 COD collection authority (assigned DELIVERY driver in P9, POS in P15, never arbitrary) → P9/P15 · P7-D16 customer cancellation window/statuses → P7C · P7-D17 staff cancellation authority (SUPER_ADMIN with reason + step-up in P7; CHEF reject in P8) → P7C · P7-D18 refund eligibility incl. delivery fee and deposit → P7C · P7-D19 partial refunds (SUPER_ADMIN only) → P7C · P7-D20 container deposit refund mechanics (roadmap D4) → P7C/P16 · P7-D21 branch routing (roadmap D8) → P8 (P7 leaves branch nullable, PREPARING refuses without it) · P7-D22 receipts/GST invoice format → P7D/P17 · P7-D23 INR only.
+
+External credentials: none needed for P7A/P7C or for P7B with the Mock provider. Live Razorpay key id/secret/webhook secret are **BLOCKED_BY_EXTERNAL_SERVICE** until supplied; they must never enter Git.

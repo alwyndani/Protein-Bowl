@@ -166,6 +166,9 @@ Seed/import sources (`server/prisma/seed*.ts`, `src/data/recipes/*`) may remain.
 ## 22b. Roadmap
 `PROJECT_COMPLETION_ROADMAP.md` is the master completion plan (domain/role matrices, dependency graph, phases P5–P22, decisions D1–D21, external dependencies). Work one approved phase at a time; update its statuses conservatively.
 
+## 22c. P7 (orders/payments) — DESIGN REVIEWED, NOT IMPLEMENTED (2026-10-08)
+Design review of order lifecycle, payments, refunds and kitchen handoff is recorded in PROJECT_COMPLETION_ROADMAP.md (Phase 7) and IMPLEMENTATION_STATUS.md. Facts verified in code that future work must respect: `Order.status`/`paymentStatus` are free Strings; KDS and delivery services currently write `Order.status` directly with no transition rules or payment check (must be routed through a central transition service in P7A); `paymentMethod` is an unvalidated string; idempotency is a global unique key with no fingerprint and a race that returns 500; the global `express.json` runs before routes and keeps no raw body, so a payment webhook needs a raw-body route mounted before it and exempt from the general rate limiter; `AuditService` redaction does not yet cover `signature`/card/VPA keys; `Order.kitchenBranchId` is never set and nothing creates KOTs or delivery assignments; ₹40/₹499/5 % live in `PricingService` (PRODUCT DECISION REQUIRED, §17). Do not implement P7 without explicit approval of a sub-phase and of the P7-D decisions that block it.
+
 ## 23. Rules for future Claude Code sessions
 - Start by reading this file, then `git status` and `npx prisma migrate status`. Verify docs against code.
 - Do not start a new phase or feature without explicit user approval; one phase at a time.
