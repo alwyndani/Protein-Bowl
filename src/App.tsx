@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth, mapBackendRoleToUserRole } from './context/AuthContext';
+import { useCart } from './context/CartContext';
+import { useStorefrontActions } from './hooks/useStorefrontActions';
 import { CustomerService } from './services/customerService';
 import { 
   UserRole, 
@@ -15,8 +17,6 @@ import {
   StaffUserAccount,
   CloudKitchenBranch,
   DirectGuestOrder,
-  DirectCartItem,
-  RetailCustomerAccount,
   MessCustomerAccount,
   MessDailyOrder,
   MessMealSlot
@@ -33,7 +33,7 @@ import {
   INITIAL_PROGRESS_PHOTOS, 
   INITIAL_VIDEO_SESSIONS 
 } from './data/mockFitnessData';
-import { INITIAL_DIRECT_ORDERS, INITIAL_RETAIL_ACCOUNTS } from './data/mockDirectOrdersData';
+import { INITIAL_DIRECT_ORDERS } from './data/mockDirectOrdersData';
 import { INITIAL_MESS_ACCOUNTS, INITIAL_MESS_DAILY_ORDERS } from './data/mockKeralaMessData';
 import { ALL_RECIPES } from './data/recipeDatabase';
 
@@ -71,6 +71,7 @@ import { TepacheBreweryDashboard } from './components/erp/TepacheBreweryDashboar
 
 export function App() {
   const auth = useAuth();
+  const cart = useCart();
 
   // Role & Navigation State
   const [currentRole, setCurrentRole] = useState<UserRole>('customer');
@@ -79,13 +80,10 @@ export function App() {
   const [currentBranchId, setCurrentBranchId] = useState<KitchenBranchId>('all');
   const [branches, setBranches] = useState<CloudKitchenBranch[]>(CLOUD_KITCHEN_BRANCHES);
 
-  // Direct FMCG & Tepache Shopping Cart & Tracking State
-  const [cartItems, setCartItems] = useState<DirectCartItem[]>([]);
+  // Direct FMCG & Tepache checkout / order-tracking modals. The cart itself lives on the SERVER (CartContext).
   const [isCartCheckoutOpen, setIsCartCheckoutOpen] = useState<boolean>(false);
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState<boolean>(false);
   const [trackingLookupOrderNumber, setTrackingLookupOrderNumber] = useState<string>('');
-  const [retailAccounts, setRetailAccounts] = useState<RetailCustomerAccount[]>(INITIAL_RETAIL_ACCOUNTS);
-  const [directOrders, setDirectOrders] = useState<DirectGuestOrder[]>(INITIAL_DIRECT_ORDERS);
   const [guestOrders, setGuestOrders] = useState<DirectGuestOrder[]>(INITIAL_DIRECT_ORDERS);
   const [isSRSModalOpen, setIsSRSModalOpen] = useState<boolean>(false);
 
@@ -332,71 +330,14 @@ export function App() {
     );
   };
 
-  // Direct Shopping Cart Handlers
-  const handleAddToCart = (item: DirectCartItem) => {
-    setCartItems((prev) => {
-      const existingIndex = prev.findIndex((i) => i.id === item.id);
-      if (existingIndex > -1) {
-        const updated = [...prev];
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          quantity: updated[existingIndex].quantity + item.quantity
-        };
-        return updated;
-      }
-      return [...prev, item];
-    });
-  };
-
-  const handleUpdateCartQuantity = (id: string, delta: number) => {
-    setCartItems((prev) =>
-      prev
-        .map((item) => {
-          if (item.id === id) {
-            const newQty = item.quantity + delta;
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
-          }
-          return item;
-        })
-        .filter(Boolean) as DirectCartItem[]
-    );
-  };
-
-  const handleRemoveFromCart = (id: string) => {
-    setCartItems((prev) => prev.filter((i) => i.id !== id));
-  };
-
-  const handleClearCart = () => {
-    setCartItems([]);
-  };
-
-  const handleQuickBuy = (item: DirectCartItem) => {
-    handleAddToCart(item);
-    setIsCartCheckoutOpen(true);
-  };
-
-  const handleDirectOrderPlaced = (
-    order: DirectGuestOrder,
-    customerAccount?: RetailCustomerAccount
-  ) => {
-    // Add to direct orders
-    setDirectOrders((prev) => [order, ...prev]);
-    setGuestOrders((prev) => [order, ...prev]);
-
-    // Upsert retail customer account for instant tracking & deposit ledger
-    if (customerAccount) {
-      setRetailAccounts((prev) => {
-        const exists = prev.some((acc) => acc.phone === customerAccount.phone);
-        if (exists) {
-          return prev.map((acc) => (acc.phone === customerAccount.phone ? customerAccount : acc));
-        }
-        return [customerAccount, ...prev];
-      });
-    }
-
-    // Clear cart
-    setCartItems([]);
-  };
+  // Storefront cart handlers: every add goes to the SERVER cart; unauthenticated users are asked to log in first.
+  const isCustomerSession = auth.isAuthenticated || isLoggedIn;
+  const { add: handleStorefrontAdd, buyNow: handleStorefrontBuyNow } = useStorefrontActions({
+    isCustomerSession,
+    requireCustomerAuth,
+    addItem: cart.addItem,
+    openCheckout: () => setIsCartCheckoutOpen(true)
+  });
 
   const handleOpenTrackingForOrder = (orderNumber?: string) => {
     if (orderNumber) {
@@ -405,13 +346,9 @@ export function App() {
     setIsTrackingModalOpen(true);
   };
 
-  const handleReorderBasket = (items: DirectCartItem[]) => {
-    items.forEach((item) => handleAddToCart(item));
-    setIsCartCheckoutOpen(true);
-  };
-
-  const cartItemsCount = cartItems.reduce((acc, i) => acc + i.quantity, 0);
-  const cartTotal = cartItems.reduce((acc, i) => acc + i.price * i.quantity, 0);
+  // Header cart badge: figures come from the server cart.
+  const cartItemsCount = cart.itemCount;
+  const cartTotal = cart.cart?.itemsSubtotal ?? 0;
 
   return (
     <div className="min-h-screen bg-stone-950 text-white font-sans flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
@@ -469,10 +406,8 @@ export function App() {
                 currentRole={currentRole}
                 onRoleChange={(role) => setCurrentRole(role)}
                 onOpenKeralaMessPortal={handleOpenKeralaMessPortal}
-                onGuestOrderPlaced={(newOrder) => setGuestOrders(prev => [newOrder, ...prev])}
-                cartItems={cartItems}
-                onAddToCart={(item) => requireCustomerAuth(() => handleAddToCart(item))}
-                onQuickBuy={(item) => requireCustomerAuth(() => handleQuickBuy(item))}
+                onAddToCart={handleStorefrontAdd}
+                onQuickBuy={handleStorefrontBuyNow}
                 onOpenCart={() => requireCustomerAuth(() => setIsCartCheckoutOpen(true))}
                 onOpenDirectTracking={() => requireCustomerAuth(() => setIsTrackingModalOpen(true))}
               />
@@ -838,29 +773,20 @@ export function App() {
       <DirectCartCheckoutModal
         isOpen={isCartCheckoutOpen}
         onClose={() => setIsCartCheckoutOpen(false)}
-        cartItems={cartItems}
-        onUpdateQuantity={handleUpdateCartQuantity}
-        onRemoveItem={handleRemoveFromCart}
-        onClearCart={handleClearCart}
-        onOrderConfirmed={handleDirectOrderPlaced}
-        existingAccounts={retailAccounts}
         onOpenTracking={(orderNum) => {
           setIsCartCheckoutOpen(false);
           handleOpenTrackingForOrder(orderNum);
         }}
       />
 
-      {/* Direct Order Live Tracking & Customer Account Ledger Modal */}
+      {/* Customer order history & order detail (persisted server orders only) */}
       <DirectOrderTrackingModal
         isOpen={isTrackingModalOpen}
         onClose={() => {
           setIsTrackingModalOpen(false);
           setTrackingLookupOrderNumber('');
         }}
-        orders={directOrders}
-        accounts={retailAccounts}
         initialOrderNumber={trackingLookupOrderNumber}
-        onReorderItems={handleReorderBasket}
       />
 
       {/* Software Requirements Specification (SRS) Modal */}

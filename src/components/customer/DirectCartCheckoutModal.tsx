@@ -1,1047 +1,649 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  ShoppingBag, 
-  X, 
-  MapPin, 
-  Clock, 
-  ShieldCheck, 
-  Sparkles, 
-  Truck, 
-  CreditCard, 
-  CheckCircle2, 
-  AlertCircle, 
-  Plus, 
-  Minus, 
-  Trash2, 
-  ThermometerSnowflake, 
-  RotateCcw, 
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  X,
+  ShoppingBag,
+  MapPin,
+  Plus,
+  Minus,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
   ArrowRight,
-  Phone,
-  Mail,
-  User,
-  Building,
-  QrCode,
-  FileText,
-  Printer,
-  ChevronRight,
-  Boxes,
-  Check
+  ArrowLeft,
+  ShieldCheck,
+  PackageOpen,
+  RefreshCw
 } from 'lucide-react';
-import { DirectCartItem, DirectGuestOrder, RetailCustomerAccount } from '../../types';
-import { AddressService } from '../../services/addressService';
+import { useCart } from '../../context/CartContext';
+import { AddressService, CustomerAddressItem } from '../../services/addressService';
 import { OrderService } from '../../services/orderService';
-import { CartService } from '../../services/cartService';
+import type { ApiOrder, CheckoutPreview } from '../../services/commerceTypes';
+import { formatInr, moneyToNumber } from '../../utils/money';
 
 interface DirectCartCheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
-  cartItems: DirectCartItem[];
-  onUpdateQuantity: (id: string, delta: number) => void;
-  onRemoveItem: (id: string) => void;
-  onClearCart: () => void;
-  onOrderPlaced?: (order: DirectGuestOrder, account: RetailCustomerAccount) => void;
-  onOrderConfirmed?: (order: DirectGuestOrder, account: RetailCustomerAccount) => void;
-  existingAccounts?: RetailCustomerAccount[];
-  onOpenTracking?: (orderId?: string, phone?: string) => void;
+  onOpenTracking?: (orderNumber: string) => void;
 }
 
-export const KERALA_FULFILLMENT_HUBS = [
-  { id: 'hub-koc', name: 'Kochi Central Hub & Central Bakery (Kakkanad HQ)', deliveryRadius: 'Kochi, Kakkanad, Fort Kochi, Aluva (Est. 45-60 Mins)' },
-  { id: 'hub-tvm', name: 'Trivandrum South Coast Hub (Kowdiar & Technopark)', deliveryRadius: 'Trivandrum City, Kazhakkoottam, Kowdiar (Est. 45-60 Mins)' },
-  { id: 'hub-clt', name: 'Kozhikode Malabar Hub (Beach Road & Cyberpark)', deliveryRadius: 'Kozhikode Urban, Mavoor Road, Beach (Est. 50-70 Mins)' },
-  { id: 'hub-tcr', name: 'Thrissur Cultural Hub (Round South & Punkunnam)', deliveryRadius: 'Thrissur Town, Ayyanthole, Ollur (Est. 50-70 Mins)' },
-];
+type Step = 'cart' | 'address' | 'review' | 'success';
+type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 
-export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = ({
-  isOpen,
-  onClose,
-  cartItems,
-  onUpdateQuantity,
-  onRemoveItem,
-  onClearCart,
-  onOrderPlaced,
-  onOrderConfirmed,
-  existingAccounts = [],
-  onOpenTracking
-}) => {
-  const [step, setStep] = useState<'cart' | 'details' | 'payment' | 'success'>('cart');
+interface NewAddressForm {
+  title: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  isDefault: boolean;
+}
 
-  // Customer & Account Details
-  const [customerPhone, setCustomerPhone] = useState('');
-  const [customerName, setCustomerName] = useState('');
-  const [customerEmail, setCustomerEmail] = useState('');
-  const [whatsappUpdates, setWhatsappUpdates] = useState(true);
-  const [createAccount, setCreateAccount] = useState(true);
-  const [matchedAccount, setMatchedAccount] = useState<RetailCustomerAccount | null>(null);
+const EMPTY_ADDRESS_FORM: NewAddressForm = {
+  title: 'Home',
+  addressLine1: '',
+  addressLine2: '',
+  city: '',
+  state: 'Kerala',
+  postalCode: '',
+  isDefault: false
+};
 
-  // Delivery & Supply Specifics
-  const [selectedHub, setSelectedHub] = useState(KERALA_FULFILLMENT_HUBS[0].id);
-  const [fulfillmentMode, setFulfillmentMode] = useState<'express_home_delivery' | 'hub_counter_pickup'>('express_home_delivery');
-  const [deliveryAddress, setDeliveryAddress] = useState('');
-  const [landmark, setLandmark] = useState('');
-  const [pincode, setPincode] = useState('682030');
-  const [deliverySlot, setDeliverySlot] = useState<string>('Morning (8:00 AM - 11:00 AM)');
-  const [deliveryDate, setDeliveryDate] = useState(() => {
-    const today = new Date();
-    return today.toISOString().split('T')[0];
-  });
-  const [coldChainPackaging, setColdChainPackaging] = useState(true);
-  const [orderNotes, setOrderNotes] = useState('');
+function newIdempotencyKey(): string {
+  const c = globalThis.crypto as Crypto | undefined;
+  if (c && typeof c.randomUUID === 'function') return `IK-${c.randomUUID()}`;
+  return `IK-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
-  // Payment
-  const [paymentMode, setPaymentMode] = useState<'upi_instant' | 'cash_on_delivery' | 'card_online'>('upi_instant');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [confirmedOrder, setConfirmedOrder] = useState<DirectGuestOrder | null>(null);
-  const [createdAccount, setCreatedAccount] = useState<RetailCustomerAccount | null>(null);
+function errMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
 
-  // Auto-detect existing account when phone changes
+const SummaryRow: React.FC<{ label: string; value: number; strong?: boolean; hideWhenZero?: boolean }> = ({ label, value, strong, hideWhenZero }) => {
+  if (hideWhenZero && value === 0) return null;
+  return (
+    <div className={`flex justify-between ${strong ? 'text-white font-black text-base pt-2 border-t border-stone-800' : 'text-stone-300 text-xs'}`}>
+      <span>{label}</span>
+      <span data-testid={`summary-${label.toLowerCase().replace(/[^a-z]+/g, '-')}`}>{formatInr(value)}</span>
+    </div>
+  );
+};
+
+export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = ({ isOpen, onClose, onOpenTracking }) => {
+  const cart = useCart();
+  const [step, setStep] = useState<Step>('cart');
+
+  // Address step
+  const [addresses, setAddresses] = useState<CustomerAddressItem[]>([]);
+  const [addressState, setAddressState] = useState<LoadState>('idle');
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [showNewAddress, setShowNewAddress] = useState(false);
+  const [addressForm, setAddressForm] = useState<NewAddressForm>(EMPTY_ADDRESS_FORM);
+  const [savingAddress, setSavingAddress] = useState(false);
+
+  // Review step (server-authoritative preview)
+  const [preview, setPreview] = useState<CheckoutPreview | null>(null);
+  const [previewState, setPreviewState] = useState<LoadState>('idle');
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  // Order submission
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [placedOrder, setPlacedOrder] = useState<ApiOrder | null>(null);
+  // Synchronous double-submit guard + the idempotency key reused for retries of the SAME submission.
+  const submittingRef = useRef(false);
+  const idempotencyKeyRef = useRef<string | null>(null);
+
+  const resetFlow = useCallback(() => {
+    setStep('cart');
+    setPreview(null);
+    setPreviewState('idle');
+    setPreviewError(null);
+    setSubmitError(null);
+    setPlacedOrder(null);
+    setShowNewAddress(false);
+    setAddressForm(EMPTY_ADDRESS_FORM);
+    idempotencyKeyRef.current = null;
+  }, []);
+
+  // Each time the modal opens: start from the cart step and re-sync with the server cart.
   useEffect(() => {
-    const cleanPhone = customerPhone.replace(/\D/g, '');
-    if (cleanPhone.length >= 10) {
-      const match = existingAccounts.find(acc => acc.phone.replace(/\D/g, '').includes(cleanPhone));
-      if (match) {
-        setMatchedAccount(match);
-        if (!customerName) setCustomerName(match.name);
-        if (!customerEmail) setCustomerEmail(match.email);
-        if (!deliveryAddress && match.defaultAddress) setDeliveryAddress(match.defaultAddress);
-        if (match.landmark && !landmark) setLandmark(match.landmark);
-        if (match.pincode && !pincode) setPincode(match.pincode);
-        if (match.hubPreference) setSelectedHub(match.hubPreference);
-      } else {
-        setMatchedAccount(null);
-      }
-    } else {
-      setMatchedAccount(null);
+    if (isOpen) {
+      resetFlow();
+      void cart.refresh();
     }
-  }, [customerPhone, existingAccounts]);
-
-  // Reset steps when closed
-  useEffect(() => {
-    if (!isOpen) {
-      if (step === 'success') {
-        setStep('cart');
-        setConfirmedOrder(null);
-      }
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  const loadAddresses = useCallback(async () => {
+    setAddressState('loading');
+    setAddressError(null);
+    try {
+      const list = await AddressService.getAddresses();
+      setAddresses(list);
+      setSelectedAddressId((current) => {
+        if (current && list.some((a) => a.id === current)) return current;
+        return (list.find((a) => a.isDefault) || list[0])?.id ?? null;
+      });
+      setShowNewAddress(list.length === 0);
+      setAddressState('ready');
+    } catch (err) {
+      setAddressError(errMessage(err, 'Could not load your addresses'));
+      setAddressState('error');
+    }
+  }, []);
+
+  const loadPreview = useCallback(async (addressId: string) => {
+    setPreviewState('loading');
+    setPreviewError(null);
+    try {
+      const result = await OrderService.checkoutPreview({ addressId });
+      setPreview(result);
+      setPreviewState('ready');
+    } catch (err) {
+      setPreview(null);
+      setPreviewError(errMessage(err, 'Could not calculate your order total'));
+      setPreviewState('error');
+    }
+  }, []);
+
+  const goToAddress = () => {
+    setStep('address');
+    void loadAddresses();
+  };
+
+  const goToReview = () => {
+    if (!selectedAddressId) return;
+    setSubmitError(null);
+    setStep('review');
+    void loadPreview(selectedAddressId);
+  };
+
+  const handleSaveAddress = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingAddress) return;
+    setSavingAddress(true);
+    setAddressError(null);
+    try {
+      const created = await AddressService.createAddress({
+        title: addressForm.title.trim() || 'Home',
+        addressLine1: addressForm.addressLine1.trim(),
+        addressLine2: addressForm.addressLine2.trim() || undefined,
+        city: addressForm.city.trim(),
+        state: addressForm.state.trim() || 'Kerala',
+        postalCode: addressForm.postalCode.trim(),
+        isDefault: addressForm.isDefault || addresses.length === 0
+      });
+      setAddresses((prev) => [created, ...prev.filter((a) => a.id !== created.id)]);
+      setSelectedAddressId(created.id);
+      setShowNewAddress(false);
+      setAddressForm(EMPTY_ADDRESS_FORM);
+    } catch (err) {
+      setAddressError(errMessage(err, 'Could not save this address'));
+    } finally {
+      setSavingAddress(false);
+    }
+  };
+
+  const handlePlaceOrder = async () => {
+    if (submittingRef.current || !selectedAddressId || previewState !== 'ready') return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setSubmitError(null);
+    if (!idempotencyKeyRef.current) idempotencyKeyRef.current = newIdempotencyKey();
+    try {
+      const order = await OrderService.createOrder({
+        addressId: selectedAddressId,
+        idempotencyKey: idempotencyKeyRef.current
+      });
+      setPlacedOrder(order);
+      setStep('success');
+      idempotencyKeyRef.current = null; // a new key for any future order
+      void cart.refresh(); // the server consumed the cart in the order transaction
+    } catch (err) {
+      // Keep the same idempotency key so a retry can never create a duplicate order.
+      setSubmitError(errMessage(err, 'We could not place your order. Please try again.'));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  };
 
   if (!isOpen) return null;
 
-  // Price & Deposit Calculations
-  const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const tepacheBottleCount = cartItems
-    .filter(i => i.isTepacheBottle || i.category.toLowerCase().includes('tepache') || i.name.toLowerCase().includes('tepache'))
-    .reduce((sum, item) => sum + item.quantity, 0);
-  
-  const bottleDepositTotal = tepacheBottleCount * 10; // ₹10 refundable deposit per glass bottle
-  const packagingFee = coldChainPackaging ? 25 : 0;
-  const deliveryFee = fulfillmentMode === 'hub_counter_pickup' ? 0 : (subtotal >= 499 ? 0 : 40);
-  const gstAmount = Math.round(subtotal * 0.05); // 5% GST on packaged goods
-  const grandTotal = subtotal + bottleDepositTotal + packagingFee + deliveryFee + gstAmount;
+  const items = cart.cart?.items ?? [];
+  const cartBusy = cart.isMutating;
 
-  const handleProceedToDetails = () => {
-    if (cartItems.length === 0) return;
-    setStep('details');
-  };
-
-  const handleProceedToPayment = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customerPhone || customerPhone.trim().length < 8) {
-      alert('Please enter a valid phone number for delivery coordination.');
-      return;
-    }
-    if (!customerName.trim()) {
-      alert('Please enter your name.');
-      return;
-    }
-    if (fulfillmentMode === 'express_home_delivery' && (!deliveryAddress.trim() || !pincode.trim())) {
-      alert('Please provide your complete delivery address and pincode.');
-      return;
-    }
-    setStep('payment');
-  };
-
-  const handlePlaceFinalOrder = async () => {
-    setIsSubmitting(true);
-    try {
-      // 1. Resolve or create customer address
-      let addressId = '';
-      const userAddresses = await AddressService.getAddresses().catch(() => []);
-      if (userAddresses && userAddresses.length > 0) {
-        addressId = userAddresses[0].id;
-      } else {
-        const createdAddr = await AddressService.createAddress({
-          title: 'Home',
-          addressLine1: deliveryAddress || 'Kochi Headquarters',
-          city: 'Kochi',
-          state: 'Kerala',
-          postalCode: pincode || '682030',
-          isDefault: true
-        });
-        addressId = createdAddr.id;
-      }
-
-      // 2. Generate idempotency key
-      const idempotencyKey = `IK-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-      // 3. Create real order transaction on backend
-      const realOrder = await OrderService.createOrder({
-        addressId,
-        paymentMethod: paymentMode === 'cash_on_delivery' ? 'COD' : 'ONLINE',
-        idempotencyKey
-      });
-
-      const hubObj = KERALA_FULFILLMENT_HUBS.find(h => h.id === selectedHub) || KERALA_FULFILLMENT_HUBS[0];
-      const newOrder: DirectGuestOrder = {
-        id: realOrder.id,
-        orderNumber: realOrder.orderNumber,
-        orderType: 'packaged_bakery',
-        customerName: customerName || 'Customer',
-        customerPhone: customerPhone || '',
-        customerEmail: customerEmail || '',
-        deliveryAddress: deliveryAddress || `Counter Pickup at ${hubObj.name}`,
-        landmark,
-        pincode: pincode || '682030',
-        fulfillmentHub: hubObj.name,
-        fulfillmentMode,
-        deliveryDate,
-        deliverySlot,
-        items: (realOrder.items || []).map((i: any) => ({
-          id: i.id,
-          name: i.itemTitle,
-          sku: i.sku || 'SKU-PROD',
-          category: 'Packaged',
-          quantity: i.quantity,
-          unitPrice: Number(i.unitPrice),
-          lineTotal: Number(i.totalPrice),
-          sizeOrWeight: i.variantName || 'Standard'
-        })),
-        subtotal: Number(realOrder.totalAmount),
-        deliveryFee: Number(realOrder.deliveryFee),
-        packagingFee: Number(realOrder.packagingFee),
-        gstAmount: Number(realOrder.taxAmount),
-        discountAmount: 0,
-        bottleDepositTotal: Number(realOrder.containerDepositTotal),
-        grandTotal: Number(realOrder.netAmount),
-        paymentMode,
-        paymentStatus: realOrder.paymentStatus,
-        orderStatus: realOrder.status,
-        orderNotes,
-        coldChainRequired: coldChainPackaging || tepacheBottleCount > 0,
-        createdAt: realOrder.createdAt || new Date().toISOString()
-      };
-
-      setIsSubmitting(false);
-      setConfirmedOrder(newOrder);
-      setStep('success');
-      const callback = onOrderPlaced || onOrderConfirmed;
-      if (callback) {
-        callback(newOrder, null as any);
-      }
-      onClearCart();
-      CartService.clearCart().catch(() => {});
-    } catch (err: any) {
-      setIsSubmitting(false);
-      alert(err?.message || 'Failed to place order. Please check that you are logged in as a customer.');
-    }
-  };
-
+  const stepLabels: Array<{ id: Step; label: string }> = [
+    { id: 'cart', label: 'Cart' },
+    { id: 'address', label: 'Address' },
+    { id: 'review', label: 'Review' }
+  ];
 
   return (
-    <div className="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 md:p-6 overflow-y-auto">
-      <div 
-        className="bg-stone-900 border border-stone-800 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl relative overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        
+    <div role="dialog" aria-label="Cart and checkout" className="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-stone-900 border border-stone-800 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl relative overflow-hidden text-white">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-800 bg-stone-950/90 shrink-0 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40">
+            <div className="p-2.5 rounded-2xl bg-amber-500/10 text-amber-400 border border-amber-500/30">
               <ShoppingBag className="w-5 h-5" />
             </div>
             <div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-black uppercase tracking-wider mb-0.5">
-                <Sparkles className="w-3 h-3" />
-                Direct Packaged Nutrition & Tepache Cart
-              </div>
-              <h3 className="text-base sm:text-lg font-black text-white">
-                {step === 'cart' && `Your Nutrition Cart (${cartItems.reduce((s, i) => s + i.quantity, 0)} items)`}
-                {step === 'details' && 'Delivery Details & Customer Account'}
-                {step === 'payment' && 'Payment & Order Verification'}
-                {step === 'success' && 'Order Placed & Tracking Live!'}
-              </h3>
+              <h3 className="text-base sm:text-lg font-black text-white">{step === 'success' ? 'Order placed' : 'Your cart & checkout'}</h3>
+              {step !== 'success' && (
+                <div className="flex items-center gap-2 text-[11px] mt-0.5">
+                  {stepLabels.map((s, i) => (
+                    <span key={s.id} className={step === s.id ? 'text-amber-400 font-black' : 'text-stone-500'}>
+                      {i + 1}. {s.label}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-
-          <button
-            onClick={onClose}
-            className="text-stone-400 hover:text-white bg-stone-800 p-2 rounded-full border border-stone-700 hover:bg-stone-700 transition-colors"
-          >
+          <button onClick={onClose} aria-label="Close" className="text-stone-400 hover:text-white bg-stone-800 p-2 rounded-full border border-stone-700 hover:bg-stone-700 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Multi-step Breadcrumbs (if not success) */}
-        {step !== 'success' && (
-          <div className="bg-stone-950/60 px-6 py-2.5 border-b border-stone-800/80 flex items-center justify-between text-xs font-bold text-stone-400">
-            <button 
-              onClick={() => setStep('cart')}
-              className={`flex items-center gap-1.5 ${step === 'cart' ? 'text-amber-400 font-black' : 'hover:text-stone-200'}`}
-            >
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'cart' ? 'bg-amber-500 text-stone-950' : 'bg-stone-800'}`}>1</span>
-              <span>1. Cart Items</span>
-            </button>
-            <ChevronRight className="w-3.5 h-3.5 text-stone-600" />
-            <button 
-              onClick={() => cartItems.length > 0 && setStep('details')}
-              disabled={cartItems.length === 0}
-              className={`flex items-center gap-1.5 ${step === 'details' ? 'text-amber-400 font-black' : 'hover:text-stone-200'}`}
-            >
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'details' ? 'bg-amber-500 text-stone-950' : 'bg-stone-800'}`}>2</span>
-              <span>2. Delivery & Account</span>
-            </button>
-            <ChevronRight className="w-3.5 h-3.5 text-stone-600" />
-            <span className={`flex items-center gap-1.5 ${step === 'payment' ? 'text-amber-400 font-black' : 'text-stone-500'}`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${step === 'payment' ? 'bg-amber-500 text-stone-950' : 'bg-stone-800'}`}>3</span>
-              <span>3. Payment</span>
-            </span>
-          </div>
-        )}
-
-        {/* ======================================================= */}
-        {/* STEP 1: CART ITEMS & SUMMARY */}
-        {/* ======================================================= */}
-        {step === 'cart' && (
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
-            {cartItems.length === 0 ? (
-              <div className="py-16 text-center space-y-4">
-                <div className="w-16 h-16 bg-stone-800 rounded-full flex items-center justify-center mx-auto text-stone-500">
-                  <ShoppingBag className="w-8 h-8" />
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-4">
+          {/* ---------------- CART STEP ---------------- */}
+          {step === 'cart' && (
+            <>
+              {cart.status === 'loading' && !cart.cart && (
+                <div role="status" className="flex items-center justify-center gap-3 py-12 text-stone-300 text-sm">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Loading your cart…</span>
                 </div>
-                <div className="space-y-1">
-                  <h4 className="text-lg font-bold text-white">Your Cart is Currently Empty</h4>
-                  <p className="text-xs text-stone-400 max-w-sm mx-auto">
-                    Browse our freshly baked artisan breads, organic granolas, protein bars, or chilled sparkling Tepache elixirs below and click "+ Add to Cart".
-                  </p>
-                </div>
-                <button
-                  onClick={onClose}
-                  className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold px-6 py-2.5 rounded-xl text-xs transition-all shadow-md"
-                >
-                  Explore Packaged Foods & Tepache
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Items List */}
-                <div className="lg:col-span-2 space-y-3">
-                  <div className="flex items-center justify-between text-xs text-stone-400 pb-1">
-                    <span>Products Selected ({cartItems.length})</span>
-                    <button
-                      onClick={onClearCart}
-                      className="text-red-400 hover:text-red-300 transition-colors flex items-center gap-1 font-bold"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      Clear Cart
-                    </button>
-                  </div>
+              )}
 
-                  <div className="space-y-2.5">
-                    {cartItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3.5 flex items-center justify-between gap-3 hover:border-stone-700 transition-all"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-stone-900 border border-stone-800 flex items-center justify-center shrink-0 text-lg">
-                            {item.isTepacheBottle || item.name.includes('Tepache') ? '🍍' : 
-                             item.name.includes('Bread') || item.name.includes('Sourdough') ? '🍞' :
-                             item.name.includes('Granola') ? '🥣' :
-                             item.name.includes('Bar') ? '⚡' : '🍪'}
-                          </div>
-                          <div>
-                            <h4 className="text-xs sm:text-sm font-bold text-white leading-tight">
-                              {item.name}
-                            </h4>
-                            <div className="flex items-center gap-2 text-[11px] text-stone-400 mt-0.5">
-                              <span>{item.weightOrVolume}</span>
-                              <span>•</span>
-                              <span className="text-amber-400">₹{item.price} each</span>
-                              {item.isTepacheBottle && (
-                                <span className="text-[10px] text-teal-300 bg-teal-950/80 px-1.5 py-0.2 rounded border border-teal-500/30">
-                                  +₹10 Glass Dep.
-                                </span>
-                              )}
-                            </div>
-                          </div>
+              {cart.status === 'error' && (
+                <div role="alert" className="flex flex-col items-center gap-3 py-8 text-center">
+                  <AlertCircle className="w-8 h-8 text-red-400" />
+                  <p className="text-sm text-stone-200">We could not load your cart.</p>
+                  {cart.error && <p className="text-xs text-stone-500">{cart.error}</p>}
+                  <button type="button" onClick={() => void cart.refresh()} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-700 text-xs font-bold">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {cart.mutationError && (
+                <div role="alert" className="flex items-center justify-between gap-3 bg-red-950/60 border border-red-500/40 text-red-200 text-xs rounded-2xl px-4 py-3">
+                  <span>{cart.mutationError}</span>
+                  <button type="button" onClick={cart.dismissMutationError} className="font-bold underline">
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
+              {cart.status === 'ready' && items.length === 0 && (
+                <div className="flex flex-col items-center gap-2 py-12 text-center text-stone-400">
+                  <PackageOpen className="w-8 h-8" />
+                  <p className="text-sm">Your cart is empty.</p>
+                  <button type="button" onClick={onClose} className="text-xs font-bold text-amber-400 underline">
+                    Continue shopping
+                  </button>
+                </div>
+              )}
+
+              {items.length > 0 && cart.cart && (
+                <>
+                  <ul className="space-y-3">
+                    {items.map((item) => (
+                      <li key={item.id} data-testid={`cart-item-${item.id}`} className="bg-stone-950/70 border border-stone-800 rounded-2xl p-3 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-sm font-black text-white truncate">{item.name}</div>
+                          {item.variantName && <div className="text-[11px] text-stone-400">{item.variantName}</div>}
+                          <div className="text-[11px] text-stone-500">{formatInr(item.unitPrice)} each</div>
                         </div>
-
                         <div className="flex items-center gap-3 shrink-0">
-                          {/* Quantity Controls */}
-                          <div className="flex items-center bg-stone-900 border border-stone-700 rounded-xl p-1">
+                          <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => onUpdateQuantity(item.id, -1)}
-                              className="p-1 text-stone-400 hover:text-white rounded hover:bg-stone-800 transition-colors"
+                              disabled={cartBusy || item.quantity <= 1}
+                              onClick={() => void cart.updateQuantity(item.id, item.quantity - 1)}
+                              aria-label={`Decrease quantity of ${item.name}`}
+                              className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 disabled:opacity-40"
                             >
                               <Minus className="w-3.5 h-3.5" />
                             </button>
-                            <span className="w-7 text-center font-bold text-xs text-white">
-                              {item.quantity}
-                            </span>
+                            <span className="w-6 text-center text-sm font-black" data-testid={`qty-${item.id}`}>{item.quantity}</span>
                             <button
                               type="button"
-                              onClick={() => onUpdateQuantity(item.id, 1)}
-                              className="p-1 text-stone-400 hover:text-white rounded hover:bg-stone-800 transition-colors"
+                              disabled={cartBusy}
+                              onClick={() => void cart.updateQuantity(item.id, item.quantity + 1)}
+                              aria-label={`Increase quantity of ${item.name}`}
+                              className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 border border-stone-700 disabled:opacity-40"
                             >
                               <Plus className="w-3.5 h-3.5" />
                             </button>
                           </div>
-
-                          <div className="text-right min-w-[60px]">
-                            <div className="text-xs sm:text-sm font-black text-white">
-                              ₹{item.price * item.quantity}
-                            </div>
-                          </div>
-
+                          <div className="w-20 text-right text-sm font-black text-amber-400">{formatInr(item.subtotal)}</div>
                           <button
                             type="button"
-                            onClick={() => onRemoveItem(item.id)}
-                            className="text-stone-500 hover:text-red-400 p-1 transition-colors"
+                            disabled={cartBusy}
+                            onClick={() => void cart.removeItem(item.id)}
+                            aria-label={`Remove ${item.name}`}
+                            className="p-1.5 rounded-lg text-red-400 hover:bg-red-950/50 disabled:opacity-40"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
-                      </div>
+                      </li>
                     ))}
+                  </ul>
+
+                  <div className="bg-stone-950/70 border border-stone-800 rounded-2xl p-4 space-y-1.5">
+                    <SummaryRow label="Items subtotal" value={cart.cart.itemsSubtotal} />
+                    <SummaryRow label="Container deposit" value={cart.cart.containerDepositTotal} hideWhenZero />
+                    <p className="text-[11px] text-stone-500 pt-1">Tax, delivery and any fees are calculated by the server on the review step.</p>
                   </div>
 
-                  {/* Cold Chain Packaging Notice */}
-                  {tepacheBottleCount > 0 && (
-                    <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-2xl p-3 text-xs text-emerald-200 flex items-start gap-2.5">
-                      <ThermometerSnowflake className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white">Active Cold-Chain Dispatch: </strong>
-                        Contains {tepacheBottleCount}x live probiotic Tepache bottles. Your order will be packed in food-grade thermal insulation with reusable ice gel packs to preserve live cultures.
-                      </div>
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between gap-3 pt-1">
+                    <button
+                      type="button"
+                      disabled={cartBusy}
+                      onClick={() => void cart.clear()}
+                      className="text-xs font-bold text-stone-400 hover:text-red-300 underline disabled:opacity-40"
+                    >
+                      Clear cart
+                    </button>
+                    <button
+                      type="button"
+                      disabled={cartBusy}
+                      onClick={goToAddress}
+                      className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-5 py-3 rounded-2xl text-sm flex items-center gap-2 disabled:opacity-60"
+                    >
+                      Continue to delivery
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
 
-                  {/* Glass Bottle Deposit Notice */}
-                  {tepacheBottleCount > 0 && (
-                    <div className="bg-amber-950/40 border border-amber-500/30 rounded-2xl p-3 text-xs text-amber-200 flex items-start gap-2.5">
-                      <RotateCcw className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <div>
-                        <strong className="text-white">Circular Bottle Deposit (₹{bottleDepositTotal}): </strong>
-                        ₹10 per bottle refundable glass deposit is added. You can return empty bottles to the delivery rider on your next order or at any NutriFit POS counter for an instant full cash/ledger refund!
-                      </div>
-                    </div>
+          {/* ---------------- ADDRESS STEP ---------------- */}
+          {step === 'address' && (
+            <>
+              {addressState === 'loading' && (
+                <div role="status" className="flex items-center justify-center gap-3 py-10 text-stone-300 text-sm">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Loading your addresses…</span>
+                </div>
+              )}
+
+              {addressError && (
+                <div role="alert" className="bg-red-950/60 border border-red-500/40 text-red-200 text-xs rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+                  <span>{addressError}</span>
+                  {addressState === 'error' && (
+                    <button type="button" onClick={() => void loadAddresses()} className="font-bold underline">
+                      Retry
+                    </button>
                   )}
                 </div>
+              )}
 
-                {/* Price Breakdown Card */}
-                <div className="bg-stone-950 border border-stone-800 rounded-2xl p-5 space-y-4 h-fit">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-stone-300 border-b border-stone-800 pb-2">
-                    Bill Summary
-                  </h4>
-
-                  <div className="space-y-2 text-xs text-stone-300">
-                    <div className="flex justify-between">
-                      <span>Item Subtotal:</span>
-                      <span className="font-bold text-white">₹{subtotal}</span>
-                    </div>
-
-                    {bottleDepositTotal > 0 && (
-                      <div className="flex justify-between text-amber-300">
-                        <span className="flex items-center gap-1">
-                          <RotateCcw className="w-3 h-3" />
-                          Refundable Glass Deposit ({tepacheBottleCount} btls):
+              {addressState === 'ready' && addresses.length > 0 && (
+                <fieldset className="space-y-2">
+                  <legend className="text-xs font-black uppercase tracking-wider text-stone-400 mb-1">Delivery address</legend>
+                  {addresses.map((a) => (
+                    <label
+                      key={a.id}
+                      className={`flex items-start gap-3 p-3 rounded-2xl border cursor-pointer ${
+                        selectedAddressId === a.id ? 'border-amber-500 bg-amber-500/5' : 'border-stone-800 bg-stone-950/60'
+                      }`}
+                    >
+                      <input type="radio" name="delivery-address" checked={selectedAddressId === a.id} onChange={() => setSelectedAddressId(a.id)} className="mt-1" />
+                      <span className="text-xs text-stone-300">
+                        <span className="block font-black text-white">
+                          {a.title}
+                          {a.isDefault && <span className="ml-2 text-[10px] text-emerald-400">Default</span>}
                         </span>
-                        <span className="font-bold">+₹{bottleDepositTotal}</span>
-                      </div>
+                        {a.addressLine1}
+                        {a.addressLine2 ? `, ${a.addressLine2}` : ''}, {a.city}, {a.state} - {a.postalCode}
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+
+              {addressState === 'ready' && !showNewAddress && (
+                <button type="button" onClick={() => setShowNewAddress(true)} className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5" /> Add a new address
+                </button>
+              )}
+
+              {addressState === 'ready' && showNewAddress && (
+                <form onSubmit={handleSaveAddress} className="space-y-3 bg-stone-950/60 border border-stone-800 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-stone-400">
+                    <MapPin className="w-3.5 h-3.5" /> New address
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">Label</span>
+                      <input value={addressForm.title} onChange={(e) => setAddressForm({ ...addressForm, title: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">Address line 1</span>
+                      <input required minLength={3} value={addressForm.addressLine1} onChange={(e) => setAddressForm({ ...addressForm, addressLine1: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">Address line 2 (optional)</span>
+                      <input value={addressForm.addressLine2} onChange={(e) => setAddressForm({ ...addressForm, addressLine2: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">City</span>
+                      <input required minLength={2} value={addressForm.city} onChange={(e) => setAddressForm({ ...addressForm, city: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">State</span>
+                      <input value={addressForm.state} onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="block mb-1 text-stone-400">Postal code</span>
+                      <input required minLength={4} value={addressForm.postalCode} onChange={(e) => setAddressForm({ ...addressForm, postalCode: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                    </label>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-stone-300">
+                    <input type="checkbox" checked={addressForm.isDefault} onChange={(e) => setAddressForm({ ...addressForm, isDefault: e.target.checked })} />
+                    Make this my default address
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button type="submit" disabled={savingAddress} className="bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black px-4 py-2 rounded-xl text-xs disabled:opacity-60">
+                      {savingAddress ? 'Saving…' : 'Save address'}
+                    </button>
+                    {addresses.length > 0 && (
+                      <button type="button" onClick={() => setShowNewAddress(false)} className="text-xs text-stone-400 underline">
+                        Cancel
+                      </button>
                     )}
+                  </div>
+                </form>
+              )}
 
-                    <div className="flex justify-between">
-                      <span className="flex items-center gap-1">
-                        <ThermometerSnowflake className="w-3 h-3 text-cyan-400" />
-                        Thermal Cold Packaging:
-                      </span>
-                      <span className="font-bold text-stone-200">
-                        {coldChainPackaging ? '+₹25' : '₹0'}
+              <div className="flex items-center justify-between pt-1">
+                <button type="button" onClick={() => setStep('cart')} className="text-xs font-bold text-stone-400 flex items-center gap-1">
+                  <ArrowLeft className="w-3.5 h-3.5" /> Back to cart
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedAddressId || addressState !== 'ready'}
+                  onClick={goToReview}
+                  className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-5 py-3 rounded-2xl text-sm flex items-center gap-2 disabled:opacity-50"
+                >
+                  Review order
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ---------------- REVIEW STEP ---------------- */}
+          {step === 'review' && (
+            <>
+              {previewState === 'loading' && (
+                <div role="status" className="flex items-center justify-center gap-3 py-10 text-stone-300 text-sm">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>Calculating your total…</span>
+                </div>
+              )}
+
+              {previewState === 'error' && (
+                <div role="alert" className="flex flex-col items-center gap-3 py-8 text-center">
+                  <AlertCircle className="w-8 h-8 text-red-400" />
+                  <p className="text-sm text-stone-200">We could not calculate your order total.</p>
+                  {previewError && <p className="text-xs text-stone-500">{previewError}</p>}
+                  <div className="flex items-center gap-3">
+                    <button type="button" onClick={() => selectedAddressId && void loadPreview(selectedAddressId)} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-700 text-xs font-bold">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Try again
+                    </button>
+                    <button type="button" onClick={() => setStep('cart')} className="text-xs font-bold text-stone-400 underline">
+                      Back to cart
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {previewState === 'ready' && preview && (
+                <>
+                  <ul className="space-y-2">
+                    {preview.items.map((line, idx) => (
+                      <li key={`${line.productId}-${line.variantId ?? 'base'}-${idx}`} className="flex items-center justify-between gap-3 text-xs bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
+                        <span className="text-stone-200">
+                          {line.title}
+                          {line.variantName ? ` — ${line.variantName}` : ''} <span className="text-stone-500">× {line.quantity}</span>
+                        </span>
+                        <span className="font-bold text-white">{formatInr(line.totalPrice)}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {preview.deliveryAddress && (
+                    <div className="flex items-start gap-2 text-xs text-stone-300 bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
+                      <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        <span className="block font-black text-white">{preview.deliveryAddress.recipientName}</span>
+                        {preview.deliveryAddress.addressLine1}
+                        {preview.deliveryAddress.addressLine2 ? `, ${preview.deliveryAddress.addressLine2}` : ''}, {preview.deliveryAddress.city},{' '}
+                        {preview.deliveryAddress.state} - {preview.deliveryAddress.postalCode}
                       </span>
                     </div>
+                  )}
 
-                    <div className="flex justify-between">
-                      <span className="flex items-center gap-1">
-                        <Truck className="w-3 h-3 text-purple-400" />
-                        Express Hub Delivery:
-                      </span>
-                      <span className="font-bold text-stone-200">
-                        {deliveryFee === 0 ? (
-                          <span className="text-emerald-400 uppercase font-black text-[10px]">FREE (Over ₹499)</span>
-                        ) : (
-                          `+₹${deliveryFee}`
-                        )}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between">
-                      <span>GST (5%):</span>
-                      <span className="font-bold text-stone-300">+₹{gstAmount}</span>
-                    </div>
-
-                    <div className="border-t border-stone-800 pt-3 flex justify-between items-baseline">
-                      <div>
-                        <div className="text-xs text-stone-400 font-bold uppercase">Grand Total</div>
-                        <div className="text-[10px] text-stone-500">Incl. all taxes & deposits</div>
-                      </div>
-                      <div className="text-2xl font-black text-amber-400">
-                        ₹{grandTotal}
-                      </div>
-                    </div>
+                  <div className="bg-stone-950/70 border border-stone-800 rounded-2xl p-4 space-y-1.5" data-testid="checkout-summary">
+                    <SummaryRow label="Items subtotal" value={preview.summary.itemsSubtotal} />
+                    <SummaryRow label="Tax" value={preview.summary.totalTax} />
+                    <SummaryRow label="Container deposit" value={preview.summary.containerDepositTotal} hideWhenZero />
+                    <SummaryRow label="Packaging" value={preview.summary.packagingFee} hideWhenZero />
+                    <SummaryRow label="Delivery" value={preview.summary.deliveryFee} />
+                    <SummaryRow label="Discount" value={preview.summary.discountAmount} hideWhenZero />
+                    <SummaryRow label="Total" value={preview.summary.netAmount} strong />
                   </div>
 
+                  <div className="flex items-start gap-2 text-[11px] text-stone-400 bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <span>
+                      Totals are calculated by our server. Online payment is not available yet: your order will be placed with payment status <strong>PENDING</strong> and you will not be charged now.
+                    </span>
+                  </div>
+
+                  {submitError && (
+                    <div role="alert" className="bg-red-950/60 border border-red-500/40 text-red-200 text-xs rounded-2xl px-4 py-3">
+                      {submitError}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button type="button" disabled={submitting} onClick={() => setStep('address')} className="text-xs font-bold text-stone-400 flex items-center gap-1 disabled:opacity-40">
+                      <ArrowLeft className="w-3.5 h-3.5" /> Change address
+                    </button>
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => void handlePlaceOrder()}
+                      className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-5 py-3 rounded-2xl text-sm flex items-center gap-2 disabled:opacity-60"
+                    >
+                      {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                      {submitting ? 'Placing order…' : 'Place order'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {/* ---------------- SUCCESS STEP ---------------- */}
+          {step === 'success' && placedOrder && (
+            <div className="space-y-4" data-testid="order-confirmation">
+              <div className="flex flex-col items-center text-center gap-2 py-2">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+                <h4 className="text-lg font-black">Thank you — your order has been received</h4>
+                <p className="text-xs text-stone-400">
+                  Order number <strong className="text-white" data-testid="order-number">{placedOrder.orderNumber}</strong>
+                </p>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-200">
+                    Status: <strong data-testid="order-status">{placedOrder.status}</strong>
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-200">
+                    Payment: <strong data-testid="order-payment-status">{placedOrder.paymentStatus}</strong>
+                  </span>
+                </div>
+              </div>
+
+              <ul className="space-y-2">
+                {placedOrder.items.map((it) => (
+                  <li key={it.id} className="flex items-center justify-between gap-3 text-xs bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
+                    <span className="text-stone-200">
+                      {it.itemTitle}
+                      {it.variantName ? ` — ${it.variantName}` : ''} <span className="text-stone-500">× {it.quantity}</span>
+                    </span>
+                    <span className="font-bold text-white">{formatInr(it.totalPrice)}</span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="bg-stone-950/70 border border-stone-800 rounded-2xl p-4 space-y-1.5">
+                <SummaryRow label="Items subtotal" value={moneyToNumber(placedOrder.totalAmount)} />
+                <SummaryRow label="Tax" value={moneyToNumber(placedOrder.taxAmount)} />
+                <SummaryRow label="Container deposit" value={moneyToNumber(placedOrder.containerDepositTotal)} hideWhenZero />
+                <SummaryRow label="Packaging" value={moneyToNumber(placedOrder.packagingFee)} hideWhenZero />
+                <SummaryRow label="Delivery" value={moneyToNumber(placedOrder.deliveryFee)} />
+                <SummaryRow label="Discount" value={moneyToNumber(placedOrder.discountAmount)} hideWhenZero />
+                <SummaryRow label="Total" value={moneyToNumber(placedOrder.netAmount)} strong />
+              </div>
+
+              {placedOrder.deliveryAddress && (
+                <div className="flex items-start gap-2 text-xs text-stone-300">
+                  <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>{placedOrder.deliveryAddress}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3">
+                <button type="button" onClick={onClose} className="text-xs font-bold text-stone-400 underline">
+                  Continue shopping
+                </button>
+                {onOpenTracking && (
                   <button
                     type="button"
-                    onClick={handleProceedToDetails}
-                    className="w-full bg-amber-500 hover:bg-amber-400 text-stone-950 font-black py-3.5 rounded-xl text-xs sm:text-sm transition-all shadow-xl flex items-center justify-center gap-2 hover:scale-[1.02]"
+                    onClick={() => onOpenTracking(placedOrder.orderNumber)}
+                    className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-5 py-2.5 rounded-2xl text-sm"
                   >
-                    <span>Proceed to Delivery & Account</span>
-                    <ArrowRight className="w-4 h-4" />
+                    View order
                   </button>
-
-                  <div className="text-[10px] text-center text-stone-500 flex items-center justify-center gap-1">
-                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                    <span>FSSAI Certified • Contactless Thermal Dispatched</span>
-                  </div>
-                </div>
-
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ======================================================= */}
-        {/* STEP 2: DELIVERY DETAILS & CUSTOMER ACCOUNT */}
-        {/* ======================================================= */}
-        {step === 'details' && (
-          <form onSubmit={handleProceedToPayment} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-            
-            {/* Account Auto-Detection Banner */}
-            {matchedAccount ? (
-              <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-4 flex items-center justify-between gap-3 text-xs text-emerald-200">
-                <div className="flex items-center gap-2.5">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  <div>
-                    <div className="font-black text-white text-sm">Welcome back, {matchedAccount.name}!</div>
-                    <div className="text-[11px] text-emerald-300">
-                      Linked Retail Account • {matchedAccount.totalOrdersCount} previous orders • ₹{matchedAccount.bottleDepositBalance} Bottle Deposit Credit Available
-                    </div>
-                  </div>
-                </div>
-                <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 font-bold text-[10px] shrink-0 uppercase border border-emerald-500/40">
-                  Account Synced
-                </span>
-              </div>
-            ) : (
-              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3.5 flex items-center justify-between text-xs text-stone-300">
-                <div className="flex items-center gap-2">
-                  <User className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Enter your phone number to auto-fill your saved address or create a 1-click tracking account.</span>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              
-              {/* Phone Number */}
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Contact Mobile Number *
-                </label>
-                <div className="relative">
-                  <Phone className="w-4 h-4 text-stone-500 absolute left-3.5 top-3" />
-                  <input
-                    type="tel"
-                    required
-                    placeholder="+91 98470 12345"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-10 pr-3 py-2.5 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Full Name */}
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Full Customer Name *
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-stone-500 absolute left-3.5 top-3" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Rahul Menon"
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-10 pr-3 py-2.5 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Email */}
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Email Address (For Tax Invoice PDF)
-                </label>
-                <div className="relative">
-                  <Mail className="w-4 h-4 text-stone-500 absolute left-3.5 top-3" />
-                  <input
-                    type="email"
-                    placeholder="rahul@example.com"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    className="w-full bg-stone-950 border border-stone-700 rounded-xl pl-10 pr-3 py-2.5 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Fulfillment Hub */}
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Kerala Fulfillment Kitchen Hub *
-                </label>
-                <select
-                  value={selectedHub}
-                  onChange={(e) => setSelectedHub(e.target.value)}
-                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:border-amber-500 focus:outline-none"
-                >
-                  {KERALA_FULFILLMENT_HUBS.map(hub => (
-                    <option key={hub.id} value={hub.id}>
-                      {hub.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-            </div>
-
-            {/* Delivery Mode Tabs */}
-            <div>
-              <label className="block text-xs font-bold text-stone-300 mb-1.5">
-                Fulfillment Mode
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setFulfillmentMode('express_home_delivery')}
-                  className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                    fulfillmentMode === 'express_home_delivery'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-md'
-                      : 'bg-stone-950 text-stone-400 border-stone-800 hover:text-white'
-                  }`}
-                >
-                  <Truck className="w-4 h-4" />
-                  <span>Express Cold Home Delivery</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setFulfillmentMode('hub_counter_pickup')}
-                  className={`p-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                    fulfillmentMode === 'hub_counter_pickup'
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-md'
-                      : 'bg-stone-950 text-stone-400 border-stone-800 hover:text-white'
-                  }`}
-                >
-                  <Building className="w-4 h-4" />
-                  <span>Hub Counter Pickup (Zero Fee)</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Address fields (if home delivery) */}
-            {fulfillmentMode === 'express_home_delivery' && (
-              <div className="space-y-3 bg-stone-950/80 border border-stone-800 rounded-2xl p-4">
-                <div>
-                  <label className="block text-xs font-bold text-stone-300 mb-1">
-                    Complete Street Address / Apartment *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Flat 4B, Olive Courtyard, Infopark Expressway, Kakkanad"
-                    value={deliveryAddress}
-                    onChange={(e) => setDeliveryAddress(e.target.value)}
-                    className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-stone-300 mb-1">
-                      Prominent Landmark
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Near Infopark South Gate"
-                      value={landmark}
-                      onChange={(e) => setLandmark(e.target.value)}
-                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-stone-300 mb-1">
-                      Kerala Pincode *
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="682030"
-                      value={pincode}
-                      onChange={(e) => setPincode(e.target.value)}
-                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Delivery Date & Time Slot */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Preferred Delivery Date
-                </label>
-                <input
-                  type="date"
-                  value={deliveryDate}
-                  onChange={(e) => setDeliveryDate(e.target.value)}
-                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-300 mb-1">
-                  Preferred Time Slot
-                </label>
-                <select
-                  value={deliverySlot}
-                  onChange={(e) => setDeliverySlot(e.target.value)}
-                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:border-amber-500 focus:outline-none"
-                >
-                  <option value="Morning (8:00 AM - 11:00 AM)">Morning (8:00 AM - 11:00 AM)</option>
-                  <option value="Afternoon (1:00 PM - 4:00 PM)">Afternoon (1:00 PM - 4:00 PM)</option>
-                  <option value="Evening (5:00 PM - 8:00 PM)">Evening (5:00 PM - 8:00 PM)</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Account Creation & WhatsApp Options */}
-            <div className="bg-stone-950 border border-stone-800 rounded-2xl p-4 space-y-2 text-xs">
-              <label className="flex items-center gap-2 text-stone-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={createAccount}
-                  onChange={(e) => setCreateAccount(e.target.checked)}
-                  className="rounded border-stone-700 text-amber-500 focus:ring-amber-500"
-                />
-                <span className="font-bold text-amber-300">
-                  ✨ Create/Sync my Customer Account for 1-Click Order Tracking & Bottle Deposit Refunds
-                </span>
-              </label>
-
-              <label className="flex items-center gap-2 text-stone-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={whatsappUpdates}
-                  onChange={(e) => setWhatsappUpdates(e.target.checked)}
-                  className="rounded border-stone-700 text-amber-500 focus:ring-amber-500"
-                />
-                <span>Send dispatch & courier tracking link on WhatsApp</span>
-              </label>
-            </div>
-
-            {/* Bottom Actions */}
-            <div className="pt-2 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setStep('cart')}
-                className="px-4 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold transition-all"
-              >
-                ← Back to Cart
-              </button>
-
-              <button
-                type="submit"
-                className="flex-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black py-3.5 rounded-xl text-xs sm:text-sm transition-all shadow-xl flex items-center justify-center gap-2 hover:scale-[1.02]"
-              >
-                <span>Continue to Payment (₹{grandTotal})</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-
-          </form>
-        )}
-
-        {/* ======================================================= */}
-        {/* STEP 3: PAYMENT & FINAL VERIFICATION */}
-        {/* ======================================================= */}
-        {step === 'payment' && (
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-            
-            {/* Delivery Snapshot */}
-            <div className="bg-stone-950 border border-stone-800 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-stone-300">
-              <div>
-                <div className="text-stone-400 uppercase font-bold text-[10px]">Delivering To</div>
-                <div className="font-bold text-white text-sm">{customerName} ({customerPhone})</div>
-                <div className="text-stone-400 mt-0.5">{deliveryAddress || 'Hub Counter Pickup'}</div>
-              </div>
-              <div className="text-right sm:border-l sm:border-stone-800 sm:pl-4">
-                <div className="text-stone-400 uppercase font-bold text-[10px]">Scheduled Slot</div>
-                <div className="font-bold text-amber-400">{deliveryDate}</div>
-                <div className="text-stone-400 text-[11px]">{deliverySlot}</div>
-              </div>
-            </div>
-
-            {/* Payment Modes */}
-            <div className="space-y-3">
-              <label className="block text-xs font-black uppercase text-stone-300 tracking-wider">
-                Select Payment Mode
-              </label>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                
-                {/* UPI */}
-                <button
-                  type="button"
-                  onClick={() => setPaymentMode('upi_instant')}
-                  className={`p-4 rounded-2xl border text-left transition-all space-y-1.5 ${
-                    paymentMode === 'upi_instant'
-                      ? 'bg-amber-500/15 border-amber-500/80 shadow-lg text-white'
-                      : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <QrCode className="w-5 h-5 text-amber-400" />
-                    {paymentMode === 'upi_instant' && <Check className="w-4 h-4 text-amber-400" />}
-                  </div>
-                  <div className="font-black text-xs text-white">UPI Instant (GPay / PhonePe)</div>
-                  <div className="text-[10px] text-stone-400">Zero surcharge instant confirmation</div>
-                </button>
-
-                {/* COD */}
-                <button
-                  type="button"
-                  onClick={() => setPaymentMode('cash_on_delivery')}
-                  className={`p-4 rounded-2xl border text-left transition-all space-y-1.5 ${
-                    paymentMode === 'cash_on_delivery'
-                      ? 'bg-amber-500/15 border-amber-500/80 shadow-lg text-white'
-                      : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <Truck className="w-5 h-5 text-emerald-400" />
-                    {paymentMode === 'cash_on_delivery' && <Check className="w-4 h-4 text-amber-400" />}
-                  </div>
-                  <div className="font-black text-xs text-white">Cash / UPI on Delivery</div>
-                  <div className="text-[10px] text-stone-400">Pay rider upon delivery verification</div>
-                </button>
-
-                {/* Card / NetBanking */}
-                <button
-                  type="button"
-                  onClick={() => setPaymentMode('card_online')}
-                  className={`p-4 rounded-2xl border text-left transition-all space-y-1.5 ${
-                    paymentMode === 'card_online'
-                      ? 'bg-amber-500/15 border-amber-500/80 shadow-lg text-white'
-                      : 'bg-stone-950 border-stone-800 text-stone-400 hover:text-white'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <CreditCard className="w-5 h-5 text-purple-400" />
-                    {paymentMode === 'card_online' && <Check className="w-4 h-4 text-amber-400" />}
-                  </div>
-                  <div className="font-black text-xs text-white">Cards & Net Banking</div>
-                  <div className="text-[10px] text-stone-400">All major Indian cards & banks</div>
-                </button>
-
-              </div>
-            </div>
-
-            {/* UPI QR Preview Box */}
-            {paymentMode === 'upi_instant' && (
-              <div className="bg-stone-950 border border-stone-800 rounded-2xl p-4 flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left">
-                <div className="p-3 bg-white rounded-xl shrink-0 shadow-md">
-                  <QrCode className="w-20 h-20 text-stone-950" />
-                </div>
-                <div className="space-y-1 text-xs">
-                  <div className="font-black text-white text-sm">Scan to Pay with Any UPI App</div>
-                  <div className="text-stone-400 text-[11px]">UPI ID: <span className="font-mono text-amber-300 font-bold">nutrifit.bakery@icici</span></div>
-                  <div className="text-emerald-400 font-bold">Amount to Pay: ₹{grandTotal}</div>
-                  <div className="text-[10px] text-stone-500">Supports Google Pay, PhonePe, Paytm, BHIM, Cred, and Amazon Pay.</div>
-                </div>
-              </div>
-            )}
-
-            {/* Order Note */}
-            <div>
-              <label className="block text-xs font-bold text-stone-300 mb-1">
-                Kitchen / Rider Instructions (Optional)
-              </label>
-              <input
-                type="text"
-                placeholder="e.g. Leave package with building security guard / ring bell twice"
-                value={orderNotes}
-                onChange={(e) => setOrderNotes(e.target.value)}
-                className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:border-amber-500 focus:outline-none"
-              />
-            </div>
-
-            {/* Bottom Final Place Order */}
-            <div className="pt-2 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setStep('details')}
-                className="px-4 py-3.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-bold transition-all"
-              >
-                ← Back
-              </button>
-
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handlePlaceFinalOrder}
-                className="flex-1 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black py-4 rounded-xl text-sm transition-all shadow-xl flex items-center justify-center gap-2 hover:scale-[1.02] disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <span className="flex items-center gap-2">
-                    <span className="animate-spin">🌀</span> Confirming Dispatch...
-                  </span>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>Confirm Order & Pay ₹{grandTotal}</span>
-                  </>
                 )}
-              </button>
-            </div>
-
-          </div>
-        )}
-
-        {/* ======================================================= */}
-        {/* STEP 4: SUCCESS & LIVE TRACKING */}
-        {/* ======================================================= */}
-        {step === 'success' && confirmedOrder && (
-          <div className="flex-1 overflow-y-auto p-6 sm:p-8 space-y-6 text-center">
-            
-            <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center mx-auto border-2 border-emerald-500/40 animate-bounce">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-
-            <div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-black uppercase tracking-wider mb-2">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Order Confirmed & Live on ERP
-              </div>
-              <h2 className="text-2xl sm:text-3xl font-black text-white">
-                Order #{confirmedOrder.orderNumber}
-              </h2>
-              <p className="text-xs sm:text-sm text-stone-300 max-w-lg mx-auto mt-2">
-                Thank you <strong className="text-white">{confirmedOrder.customerName}</strong>! Your order has been registered under your retail account (<span className="text-amber-400 font-mono">{confirmedOrder.customerPhone}</span>) and is being prepared at <strong className="text-emerald-400">{confirmedOrder.fulfillmentHub}</strong>.
-              </p>
-            </div>
-
-            {/* Live Tracking Progress Bar */}
-            <div className="bg-stone-950 border border-stone-800 rounded-3xl p-5 text-left max-w-xl mx-auto space-y-4">
-              <div className="flex items-center justify-between border-b border-stone-800 pb-3">
-                <div className="flex items-center gap-2 text-xs font-black uppercase text-amber-400">
-                  <Truck className="w-4 h-4" />
-                  Live Cold Delivery Timeline
-                </div>
-                <span className="text-[10px] font-bold text-stone-400">
-                  Expected: {confirmedOrder.deliveryDate} ({confirmedOrder.deliverySlot})
-                </span>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                {confirmedOrder.trackingUpdates?.map((up, idx) => (
-                  <div key={idx} className="flex items-start gap-3">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 text-xs font-bold mt-0.5 ${
-                      up.completed ? 'bg-emerald-500 text-stone-950' : 'bg-stone-800 text-stone-500'
-                    }`}>
-                      {up.completed ? '✓' : idx + 1}
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between">
-                        <div className={`font-bold ${up.completed ? 'text-white' : 'text-stone-400'}`}>
-                          {up.stage}
-                        </div>
-                        <span className="text-[10px] text-stone-500 font-mono">{up.time}</span>
-                      </div>
-                      <p className="text-[11px] text-stone-400 mt-0.5">{up.description}</p>
-                    </div>
-                  </div>
-                ))}
               </div>
             </div>
-
-            {/* Receipt Summary Box */}
-            <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 text-left max-w-xl mx-auto space-y-2 text-xs">
-              <div className="flex items-center justify-between text-stone-400 text-[11px] border-b border-stone-800 pb-2">
-                <span>Payment Mode: <strong className="text-white capitalize">{confirmedOrder.paymentMode.replace(/_/g, ' ')}</strong></span>
-                <span>Grand Total: <strong className="text-emerald-400 text-sm">₹{confirmedOrder.grandTotal}</strong></span>
-              </div>
-
-              <div className="space-y-1 pt-1">
-                {confirmedOrder.items.map((item, i) => (
-                  <div key={i} className="flex justify-between text-stone-300 text-[11px]">
-                    <span>{item.quantity}x {item.name} ({item.sizeOrWeight})</span>
-                    <span className="font-bold text-white">₹{item.lineTotal}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2 max-w-xl mx-auto">
-              <button
-                type="button"
-                onClick={() => {
-                  onClose();
-                  if (onOpenTracking) onOpenTracking(confirmedOrder.orderNumber, confirmedOrder.customerPhone);
-                }}
-                className="w-full sm:w-auto flex-1 bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black px-6 py-3 rounded-xl text-xs transition-all shadow-lg flex items-center justify-center gap-2"
-              >
-                <Truck className="w-4 h-4" />
-                <span>Track in Customer Portal</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-stone-700"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print Invoice</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onClose}
-                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-stone-900 hover:bg-stone-800 text-stone-400 hover:text-white text-xs font-bold transition-colors border border-stone-800"
-              >
-                Done
-              </button>
-            </div>
-
-          </div>
-        )}
-
+          )}
+        </div>
       </div>
     </div>
   );

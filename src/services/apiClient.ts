@@ -11,6 +11,21 @@ export interface ApiResponseEnvelope<T = any> {
     totalPages: number;
   };
   error?: string;
+  /** HTTP status of the response (set by ApiClient.request). */
+  httpStatus?: number;
+}
+
+/** Thrown by ApiClient.requestData when the API reports failure. */
+export class ApiRequestError extends Error {
+  public readonly code: string;
+  public readonly status?: number;
+
+  constructor(message: string, code = 'REQUEST_FAILED', status?: number) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.code = code;
+    this.status = status;
+  }
 }
 
 export class ApiClient {
@@ -24,6 +39,18 @@ export class ApiClient {
 
   public static setAccessToken(token: string | null): void {
     this.accessTokenInMemory = token;
+  }
+
+  /**
+   * Like request(), but resolves with the typed data payload and THROWS ApiRequestError on any failure
+   * (HTTP error, network error, success:false). Use for flows that must never treat a failure as success.
+   */
+  public static async requestData<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const res = await this.request<T>(endpoint, options);
+    if (!res.success) {
+      throw new ApiRequestError(res.message || 'Request failed', res.error || 'REQUEST_FAILED', res.httpStatus);
+    }
+    return res.data as T;
   }
 
   public static async request<T = any>(
@@ -78,7 +105,7 @@ export class ApiClient {
         }
       }
 
-      return data;
+      return { ...data, httpStatus: response.status };
     } catch (error) {
       return {
         success: false,

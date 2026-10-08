@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { RecipeItem, CustomerProfile, DirectGuestOrder, DirectCartItem } from '../../types';
+import { RecipeItem, CustomerProfile } from '../../types';
+import { useCart } from '../../context/CartContext';
+import { formatInr } from '../../utils/money';
+import type { AddToCartHandler } from './StorefrontProduct';
 import { INITIAL_COMBO_OFFERS } from '../../data/mockData';
 import { ALL_RECIPES } from '../../data/recipeDatabase';
 import { matchCategoryToRecipe } from '../../utils/categoryFilter';
@@ -36,10 +39,8 @@ interface CustomerHomeProps {
   currentRole?: any;
   onRoleChange?: (role: any) => void;
   onOpenKeralaMessPortal?: () => void;
-  onGuestOrderPlaced?: (order: DirectGuestOrder) => void;
-  cartItems?: DirectCartItem[];
-  onAddToCart?: (item: DirectCartItem) => void;
-  onQuickBuy?: (item: DirectCartItem) => void;
+  onAddToCart: AddToCartHandler;
+  onQuickBuy: AddToCartHandler;
   onOpenCart?: () => void;
   onOpenDirectTracking?: () => void;
 }
@@ -69,9 +70,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   currentRole = 'customer',
   onRoleChange,
   onOpenKeralaMessPortal,
-  onGuestOrderPlaced,
-  cartItems = [],
-  onAddToCart = () => {},
+  onAddToCart,
   onQuickBuy,
   onOpenCart,
   onOpenDirectTracking
@@ -80,8 +79,10 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
   const filteredRecipes = ALL_RECIPES.filter((r) => matchCategoryToRecipe(selectedMenuCategory, r));
 
-  const totalCartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-  const cartSubtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  // Cart figures come from the SERVER cart (CartContext); nothing is computed locally.
+  const serverCart = useCart();
+  const totalCartCount = serverCart.itemCount;
+  const cartSubtotal = serverCart.cart?.itemsSubtotal ?? 0;
 
   return (
     <div className="space-y-16 pb-24 relative">
@@ -116,7 +117,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               </div>
               <div>
                 <div className="text-xs text-stone-400 font-bold">{totalCartCount} item{totalCartCount > 1 ? 's' : ''} in Cart</div>
-                <div className="text-sm font-black text-amber-400">₹{cartSubtotal} <span className="text-[10px] text-stone-400 font-normal">+ taxes & hub delivery</span></div>
+                <div className="text-sm font-black text-amber-400">{formatInr(cartSubtotal)} <span className="text-[10px] text-stone-400 font-normal">+ taxes & fees at checkout</span></div>
               </div>
             </div>
 

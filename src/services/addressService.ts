@@ -25,32 +25,29 @@ export interface CreateAddressDto {
   isDefault?: boolean;
 }
 
+/** Customer-owned delivery addresses (/customers/me/addresses). All methods throw ApiRequestError on failure. */
 export class AddressService {
   public static async getAddresses(): Promise<CustomerAddressItem[]> {
-    const response = await ApiClient.request('/customers/me/addresses');
-    return response.data || [];
+    return (await ApiClient.requestData<CustomerAddressItem[]>('/customers/me/addresses')) || [];
   }
 
   public static async createAddress(data: CreateAddressDto): Promise<CustomerAddressItem> {
-    const response = await ApiClient.request('/customers/me/addresses', {
+    return await ApiClient.requestData<CustomerAddressItem>('/customers/me/addresses', {
       method: 'POST',
       body: JSON.stringify(data)
     });
-    return response.data;
   }
 
   public static async updateAddress(addressId: string, data: Partial<CreateAddressDto>): Promise<CustomerAddressItem> {
-    const response = await ApiClient.request(`/customers/me/addresses/${addressId}`, {
+    return await ApiClient.requestData<CustomerAddressItem>(`/customers/me/addresses/${addressId}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
-    return response.data;
   }
 
-  public static async deleteAddress(addressId: string): Promise<{ success: boolean; message: string }> {
-    const response = await ApiClient.request(`/customers/me/addresses/${addressId}`, {
+  public static async deleteAddress(addressId: string): Promise<void> {
+    await ApiClient.requestData<unknown>(`/customers/me/addresses/${addressId}`, {
       method: 'DELETE'
     });
-    return response.data;
   }
 }

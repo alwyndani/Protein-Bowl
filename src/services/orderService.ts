@@ -1,4 +1,5 @@
 import { ApiClient } from './apiClient';
+import type { ApiOrder, CheckoutPreview } from './commerceTypes';
 
 export interface CheckoutPreviewPayload {
   addressId?: string;
@@ -7,46 +8,37 @@ export interface CheckoutPreviewPayload {
 
 export interface CreateOrderPayload {
   addressId: string;
+  /** Optional: payment methods are a pending product decision; omit to use the server default. */
   paymentMethod?: string;
   deliveryInstructions?: string;
-  idempotencyKey?: string;
+  /** Required by the server; the same key MUST be reused when retrying the same order submission. */
+  idempotencyKey: string;
 }
 
+/** All methods throw ApiRequestError on failure, so a failed call can never be mistaken for a created order. */
 export class OrderService {
-  public static async checkoutPreview(payload: CheckoutPreviewPayload = {}) {
-    const response = await ApiClient.request('/checkout/preview', {
+  public static async checkoutPreview(payload: CheckoutPreviewPayload = {}): Promise<CheckoutPreview> {
+    return await ApiClient.requestData<CheckoutPreview>('/checkout/preview', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
-    return response.data;
   }
 
-  public static async createOrder(payload: CreateOrderPayload) {
-    const headers: Record<string, string> = {};
-    if (payload.idempotencyKey) {
-      headers['x-idempotency-key'] = payload.idempotencyKey;
-    }
-
-    const response = await ApiClient.request('/orders', {
+  public static async createOrder(payload: CreateOrderPayload): Promise<ApiOrder> {
+    const { idempotencyKey, ...body } = payload;
+    return await ApiClient.requestData<ApiOrder>('/orders', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
+      headers: { 'x-idempotency-key': idempotencyKey },
+      body: JSON.stringify(body)
     });
-    return response.data;
   }
 
-  public static async getMyOrders() {
-    const response = await ApiClient.request('/orders/my-orders');
-    return response.data || [];
+  public static async getMyOrders(): Promise<ApiOrder[]> {
+    return (await ApiClient.requestData<ApiOrder[]>('/orders/my-orders')) || [];
   }
 
-  public static async getOrderById(orderId: string) {
-    const response = await ApiClient.request(`/orders/${orderId}`);
-    return response.data;
-  }
-
-  public static async trackOrder(orderNumber: string) {
-    const response = await ApiClient.request(`/orders/${orderNumber}`);
-    return response.data;
+  /** Accepts either the order id or the human-readable order number. */
+  public static async getOrder(orderIdOrNumber: string): Promise<ApiOrder> {
+    return await ApiClient.requestData<ApiOrder>(`/orders/${encodeURIComponent(orderIdOrNumber)}`);
   }
 }

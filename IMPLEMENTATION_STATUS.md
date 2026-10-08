@@ -113,3 +113,28 @@ See `PROJECT_COMPLETION_ROADMAP.md` for the full matrix. Corrections that supers
 - `MessService`, `MDService`, `KDSService` and `ProductService` web services exist but have no UI consumers.
 - Rows 9–21: backends are SCAFFOLD (unwired/untested). Nothing creates `KitchenOrderTicket`, `DeliveryAssignment`, `Subscription`, `MessSubscription`/`MessDailyOrder`, `InventoryItem`, `WorkoutPlan` or `AuditLog` rows. Swiggy/Zomato has **no backend routes**. There is no Super Admin / staff provisioning API.
 - Row 22 and Payments: **MISSING** (no initiate/verify/webhook).
+
+---
+
+## 🛒 Phase P5 — Customer Storefront ↔ Server Commerce (2026-10-08)
+
+Supersedes the "Row 8 — Web Frontend is PARTIAL" correction above for the customer purchase path.
+
+| Item | Status |
+|------|--------|
+| Storefront product browsing from `GET /products` (loading / empty / error+retry; no mock fallback) | **VERIFIED** |
+| Server-backed cart (hydrate, add, quantity, remove, clear) — single authoritative cart | **VERIFIED** |
+| Login required to purchase; public browsing; no guest cart | **VERIFIED** (guest-cart merge NOT implemented — product decision) |
+| Address select/create (owned addresses) | **VERIFIED** |
+| Checkout totals from `POST /checkout/preview` (displayed verbatim, never recomputed) | **VERIFIED** |
+| Order creation via server cart, idempotency key reused on retry, double-submit guarded | **VERIFIED** |
+| Persisted order confirmation, history and detail; status shown exactly as stored | **VERIFIED** |
+| Web automated tests (Vitest + Testing Library, 43 tests) | **VERIFIED** |
+| Manual E2E browser → API → PostgreSQL (executed 2026-10-08) | **VERIFIED** — one order, cart consumed, no Payment row, PENDING/PENDING |
+| Payment, order lifecycle, KDS, delivery, inventory, subscriptions, mobile commerce | **NOT STARTED / DEFERRED** (unchanged) |
+| Pricing values (tax, delivery fee/threshold, packaging, Tepache deposit, payment methods) | **PRODUCT DECISION REQUIRED** — web now displays whatever the server returns; none is hard-coded in the web path |
+| Product content (ingredients, allergens, shelf life, images), prepared-bowl storefront section, reorder | **MISSING** |
+
+Remaining mock/static dependencies near this path: `CustomerHome` combo offers (`mockData`) and static recipe menu (`recipeDatabase`); `App.tsx` `guestOrders`/`orders` mock state feeding ERP and diet-order screens; dead file `DirectGuestOrderModal.tsx` (unused).
+
+Maintenance note (not part of P5): `npm audit` at the repo root reports 1 high-severity transitive advisory in `source-map-js` (GHSA-68fv-2mgg-jv7q, DoS via source-map section offsets). Not addressed in P5; schedule for a later dependency/security maintenance pass.
