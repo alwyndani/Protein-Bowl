@@ -1,6 +1,11 @@
 import { prisma } from '../../config/database.js';
+import { BranchFilter, branchWhere } from '../../authz/branchScope.js';
 
 export class POSService {
+  public static async branchExists(branchId: string): Promise<boolean> {
+    return (await prisma.kitchenBranch.count({ where: { id: branchId } })) > 0;
+  }
+
   public static async recordTransaction(data: {
     branchId: string;
     cashierId?: string;
@@ -25,9 +30,10 @@ export class POSService {
     });
   }
 
-  public static async getBranchTransactions(branchId: string) {
+  /** Transactions for the branches in `filter` (computed by the authorization layer). */
+  public static async getBranchTransactions(filter: BranchFilter) {
     return await prisma.pOSTransaction.findMany({
-      where: { branchId },
+      where: branchWhere(filter),
       orderBy: { createdAt: 'desc' }
     });
   }

@@ -79,7 +79,9 @@ async function main() {
             fullName: name,
             designation: title,
             assignedBranchId: branchId,
-            isOnline: true
+            isOnline: true,
+            // multi-branch assignment (the primary branch above is kept for backward compatibility)
+            branchAssignments: { create: { branchId } }
           }
         }
       }

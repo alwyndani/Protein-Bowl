@@ -93,7 +93,8 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-stone-950/90 backdrop-blur-xl border-b border-stone-800/80 text-white shadow-2xl transition-all">
       {/* Role Switcher Toolbar - Visually Separated Developer Sandbox */}
-      {!hideRoleDemo && !isCustomerRole && (
+      {/* Developer-only role sandbox: never rendered in production builds. */}
+      {import.meta.env.DEV && !hideRoleDemo && !isCustomerRole && (
         <div className="bg-stone-900 border-b border-amber-500/30 text-stone-300 text-xs py-1 px-4 shadow-inner">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">

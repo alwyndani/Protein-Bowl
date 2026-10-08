@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { DietService } from './diet.service.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
+import { AuditService } from '../audit/audit.service.js';
 
 export class DietController {
   // --- CUSTOMER ENDPOINTS ---
@@ -112,7 +113,7 @@ export class DietController {
       if (!userId) return ApiResponse.error(res, 'Unauthorized', 401);
 
       const { requestId } = req.params;
-      const healthProfile = await DietService.getAuthorizedHealthProfile(requestId, userId, roles as string[]);
+      const healthProfile = await DietService.getAuthorizedHealthProfile(requestId, userId, roles as string[], AuditService.contextFromRequest(req));
       return ApiResponse.success(res, healthProfile, 'Patient health profile retrieved successfully');
     } catch (err) {
       next(err);
@@ -122,10 +123,9 @@ export class DietController {
   public static async createDietPlan(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user?.userId;
-      const roles = req.user?.roles || [];
       if (!userId) return ApiResponse.error(res, 'Unauthorized', 401);
 
-      const plan = await DietService.createOrPublishDietPlan(userId, roles as string[], req.body);
+      const plan = await DietService.createOrPublishDietPlan(userId, req.body);
       return ApiResponse.success(res, plan, 'Diet plan created and published successfully', 201);
     } catch (err) {
       next(err);

@@ -5,8 +5,21 @@ import { generateServerReferralCode } from '../../utils/referralCode.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { RegisterDto, LoginDto } from './auth.validator.js';
 import { RoleEnum } from '@prisma/client';
+import { AuditService, AuditContext } from '../audit/audit.service.js';
 
 export class AuthService {
+  /**
+   * Revoke every active refresh session of a user (used on deactivation / role change / security events).
+   * Existing access tokens stop working immediately anyway (authenticateToken checks the database); this ends refresh.
+   */
+  static async revokeAllRefreshTokens(userId: string): Promise<number> {
+    const result = await prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+    return result.count;
+  }
+
   /**
    * Helper to format User payload without sensitive hashes.
    */
@@ -114,7 +127,7 @@ export class AuthService {
       throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
-    if (user.status !== 'ACTIVE') {
+    if (user.status !== 'ACTIVE' || user.deletedAt) {
       throw new AppError('Account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
@@ -153,7 +166,7 @@ export class AuthService {
   /**
    * Rotate Refresh Token (Revoke old token, issue new token pair).
    */
-  static async rotateRefreshToken(rawRefreshToken: string) {
+  static async rotateRefreshToken(rawRefreshToken: string, context?: AuditContext) {
     if (!rawRefreshToken) {
       throw new AppError('Refresh token required', 401, 'TOKEN_REQUIRED');
     }
@@ -183,6 +196,21 @@ export class AuthService {
 
     if (!existingToken || existingToken.expiresAt < new Date()) {
       throw new AppError('Invalid or expired refresh token', 401, 'TOKEN_INVALID');
+    }
+
+    // Inactive / suspended / soft-deleted users must never receive new tokens: end all their sessions.
+    const tokenOwner = existingToken.user;
+    if (tokenOwner.deletedAt || tokenOwner.status !== 'ACTIVE') {
+      await this.revokeAllRefreshTokens(tokenOwner.id);
+      await AuditService.recordSafe({
+        actor: { userId: tokenOwner.id, roles: tokenOwner.roles.map((r) => r.role) },
+        action: 'AUTH_REFRESH_DENIED_INACTIVE',
+        entity: 'User',
+        entityId: tokenOwner.id,
+        payload: { status: tokenOwner.status, softDeleted: !!tokenOwner.deletedAt },
+        context
+      });
+      throw new AppError('Your session is no longer valid. Please sign in again.', 401, 'ACCOUNT_INACTIVE');
     }
 
     // Revoke old token

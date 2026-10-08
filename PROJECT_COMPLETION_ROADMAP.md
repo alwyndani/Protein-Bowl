@@ -162,6 +162,10 @@ Everything except login/products/mess plans/orders/KOT list/pause-meal stubs: re
 | S13 | No password reset / email verification / 2FA for staff | auth | P14 / P6 |
 | S14 | Production CORS origin, `TRUST_PROXY`, secrets management are deployment configuration | deploy | P22 |
 | S15 | No web/mobile automated tests; no CI | repo | P5 (harness), P21 |
+| S16 | **[P6 audit]** Deactivating/suspending a user does NOT stop them: `authenticateToken` trusts the JWT (roles + identity) with no DB check, and `rotateRefreshToken` does not check `User.status`/`deletedAt`, so a deactivated user keeps refreshing indefinitely; role changes are only picked up at refresh (≤15 min) | auth | **FIXED in P6A (2026-10-08)** |
+| S17 | **[P6 audit]** `GET /pos/transactions`, `GET /kds/tickets`, `GET /procurement/items` with no `branchId` return ALL branches (Prisma `where: {branchId: undefined}`); branch filters are client-supplied query params; `POST /pos/transaction` accepts any `branchId` in the body | kds/pos/procurement | **FIXED in P6A for existing endpoints (2026-10-08)**; full workflows P8/P9/P12/P15 |
+| S18 | **[P6 audit]** Web "Role Demo Sandbox" switcher is rendered for every non-customer session in production builds (not DEV-gated); `EmployeeProfile` supports only ONE branch and `UserRoleAssignment` has no branch dimension; `/auth/rbac-test` test route is exposed; mobile never stores the refresh token (login returns it only in the cookie), so mobile sessions end after 15 min | web/schema/auth/mobile | P6A fixed: role switcher DEV-only, `/auth/rbac-test` gated, multi-branch model. Still open: mobile refresh-token storage (P11) |
+| S19 | **[P6 audit]** `DietService.getAuthorizedHealthProfile` (and plan creation) let SUPER_ADMIN read ANY customer's full health profile without a claim and without auditing — conflicts with the least-privilege rule for sensitive health data | diet | **FIXED in P6A (2026-10-08)** — bypass removed; no break-glass |
 
 ---
 
@@ -259,19 +263,15 @@ All phases follow the Git workflow in the directive (implement → gates → rep
 - **External:** none. **Decisions:** D1–D3, D7 can ship as server-configured values flagged in UI; do not hide them as policy.
 - **Done:** purchase works from the browser against a clean DB; order appears in history; status shows `PENDING / paymentStatus PENDING`; all 132+ tests + new tests pass; docs corrected.
 
-### Phase 6 — Staff, Branch & Admin Foundation
-- **Goal:** production-capable identity administration for staff and branch scoping.
-- **Modules:** SUPER_ADMIN user/role admin, branches, employee↔branch, audit log writes, branch-scope helper.
-- **Database:** likely none (EmployeeProfile/KitchenBranch/AuditLog exist); maybe `EmployeeProfile` role-branch constraints; avoid destructive changes.
-- **Backend:** `/admin/users` (create staff, assign/revoke role, deactivate, reset-password-by-admin), `/admin/branches`, `/admin/audit`; `requireBranchScope` helper; write `AuditLog` for role/user/branch changes; Zod validation; password policy.
-- **Web:** minimal Super Admin console (users, roles, branches) — add `super_admin` UI role; remove role-demo switcher dependence (role derived from backend identity only); staff login without demo.
-- **Mobile:** none.
-- **Security:** SUPER_ADMIN-only; cannot demote self/last admin; audit everything; no customer impersonation.
-- **Tests:** authz matrix for every admin route; audit rows written; last-admin protection.
-- **Migration:** only if a missing column is proven necessary.
-- **Mocks removed:** `cloudKitchensData` branch list at runtime; demo staff presets.
-- **External:** none. **Decisions:** provisioning workflow, 2FA policy (D-list).
-- **Done:** a SUPER_ADMIN can create a CHEF for branch X in production without seed scripts; all actions audited.
+### Phase 6 — Staff, Branch & Super Admin Foundation  (design reviewed 2026-10-08; split into three sub-phases)
+**Status: P6A ✅ VERIFIED (2026-10-08) · P6B ⏳ pending · P6C ⏳ pending.** P6A delivered: DB-authoritative auth + refresh checks, `EmployeeBranchAssignment` migration (`20261008084310_p6a_staff_branch_assignment_audit_indexes`), role-scope/permission catalogues, branch-scope helpers applied to KDS/procurement/POS/delivery, `AuditService`, health-data least privilege (decision D4), `/auth/rbac-test` + role-demo hardening. Tests: backend 183, web 50. **P6B must add** password step-up (D6), 12-char staff password policy (D7), invitation onboarding with manual one-time link (D8), CLI-only SUPER_ADMIN bootstrap (D1), SUPER_ADMIN-only audit read API (D10); staff 2FA deferred. Approved decisions: D1 no SUPER_ADMIN assignment via API; D2 MD global read-only; D3 BAKERY_FMCG/TEPACHE branch/facility-scoped; D4 SUPER_ADMIN has no health bypass; D5 staff/customer identities separate (0 conflicts found); D9 rbac-test dev/test only.
+- **P6A — Backend identity, branch scope & audit foundation (1 migration):** DB-authoritative `authenticateToken` (status + current roles per request), refresh/login status checks, session revocation helper; `EmployeeBranchAssignment` (multi-branch; backfills legacy `EmployeeProfile.assignedBranchId`); static role→permission/scope catalog; `requirePermission`/branch-scope helpers; audit-writer service (+ AuditLog indexes); minimal application of branch scope to existing KDS/procurement/POS/delivery list endpoints (fixes S17, S1 partially).
+- **P6B — Staff admin APIs & secure onboarding (1 migration: `StaffInvitation`):** `/admin/staff`, `/admin/branches`, `/admin/audit`, `/staff/me`; invitation-based onboarding (no shared passwords; one-time setup link delivered manually until an email provider exists); CLI-only SUPER_ADMIN bootstrap; guardrails (no self role change, last-SUPER_ADMIN protection, SUPER_ADMIN not assignable through the API).
+- **P6C — Super Admin web workspace:** `super_admin` UI role (stop mapping SUPER_ADMIN → MD), `components/admin/*`, `adminService`, DEV-gate/remove the role-demo switcher, invitation acceptance page, web tests.
+- **Mobile:** only additive auth-contract changes; staff mobile workspaces out of scope.
+- **Mocks removed:** demo staff presets; branch list at runtime (`cloudKitchensData`) in the admin workspace.
+- **Decisions:** see the P6 design review (MD read scope, SUPER_ADMIN creation, branch-scope per role, invitation delivery, re-authentication for sensitive actions).
+- **Done:** a SUPER_ADMIN can invite a CHEF for branch X in production without seed scripts; deactivated users lose access within one request; every administrative action is audited; Branch A staff cannot read Branch B operational records.
 
 ### Phase 7 — Order Lifecycle & Payments
 - **Goal:** safe order state machine and real payment flow with a provider adapter.

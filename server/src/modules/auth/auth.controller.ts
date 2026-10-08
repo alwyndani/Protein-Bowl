@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { AuthService } from './auth.service.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { env } from '../../config/env.js';
+import { AuditService } from '../audit/audit.service.js';
 
 const REFRESH_COOKIE_NAME = 'pb_refresh_token';
 
@@ -53,7 +54,7 @@ export class AuthController {
   static async refresh(req: Request, res: Response, next: NextFunction) {
     try {
       const rawRefreshToken = req.cookies[REFRESH_COOKIE_NAME] || req.body.refreshToken;
-      const result = await AuthService.rotateRefreshToken(rawRefreshToken);
+      const result = await AuthService.rotateRefreshToken(rawRefreshToken, AuditService.contextFromRequest(req));
       res.cookie(REFRESH_COOKIE_NAME, result.rawRefreshToken, cookieOptions);
 
       return ApiResponse.success(

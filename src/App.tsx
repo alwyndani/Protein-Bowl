@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth, mapBackendRoleToUserRole } from './context/AuthContext';
 import { useCart } from './context/CartContext';
 import { useStorefrontActions } from './hooks/useStorefrontActions';
+import { isUiRoleAllowed } from './utils/roleGuard';
 import { CustomerService } from './services/customerService';
 import { 
   UserRole, 
@@ -74,7 +75,11 @@ export function App() {
   const cart = useCart();
 
   // Role & Navigation State
-  const [currentRole, setCurrentRole] = useState<UserRole>('customer');
+  // `requestedRole` is what the UI asked to show; `currentRole` is what is actually rendered. In production builds a staff
+  // dashboard is only rendered for a session that holds the matching backend role (presentation hygiene - the backend
+  // authorizes every API call regardless). Development builds keep the role sandbox.
+  const [requestedRole, setCurrentRole] = useState<UserRole>('customer');
+  const currentRole: UserRole = isUiRoleAllowed(requestedRole, auth.user?.roles, import.meta.env.DEV) ? requestedRole : 'customer';
   const [activeTab, setActiveTab] = useState<string>('home');
   const [selectedMenuFilter, setSelectedMenuFilter] = useState<string>('All');
   const [currentBranchId, setCurrentBranchId] = useState<KitchenBranchId>('all');
@@ -225,6 +230,16 @@ export function App() {
     }
   };
 
+  // Production: a staff role can only be presented after a real staff login; otherwise prompt employee sign-in.
+  const handleRoleChangeRequest = (role: UserRole) => {
+    if (isUiRoleAllowed(role, auth.user?.roles, import.meta.env.DEV)) {
+      setCurrentRole(role);
+    } else {
+      setAuthModalInitialMode('employee_login');
+      setAuthModalOpen(true);
+    }
+  };
+
   const handleSelectCustomerTab = (tab: string) => {
     if (tab === 'home' || tab === 'menu') {
       setActiveTab(tab);
@@ -358,7 +373,7 @@ export function App() {
         <BrandHeader
           currentRole={currentRole}
           onRoleChange={(role) => {
-            setCurrentRole(role);
+            handleRoleChangeRequest(role);
             if (role === 'customer') {
               setActiveTab(isLoggedIn ? 'dashboard' : 'home');
             }
@@ -404,7 +419,7 @@ export function App() {
                 currentUser={isLoggedIn ? profile : null}
                 activeTab={activeTab}
                 currentRole={currentRole}
-                onRoleChange={(role) => setCurrentRole(role)}
+                onRoleChange={(role) => handleRoleChangeRequest(role)}
                 onOpenKeralaMessPortal={handleOpenKeralaMessPortal}
                 onAddToCart={handleStorefrontAdd}
                 onQuickBuy={handleStorefrontBuyNow}

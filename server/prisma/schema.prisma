@@ -48,6 +48,7 @@ model User {
   employeeProfile     EmployeeProfile?
   assignedDietRequests DietPlanRequest[]
   auditLogs           AuditLog[]
+  branchAssignmentsMade EmployeeBranchAssignment[] @relation("BranchAssignedBy")
 
   @@index([email])
   @@index([phone])
@@ -98,6 +99,8 @@ model AuditLog {
 
   @@index([userId])
   @@index([action])
+  @@index([entity, entityId])
+  @@index([createdAt])
   @@map("audit_logs")
 }
 
@@ -120,8 +123,27 @@ model KitchenBranch {
   inventoryItems      InventoryItem[]
   posTransactions     POSTransaction[]
   shifts              CashDrawerShift[]
+  employeeAssignments EmployeeBranchAssignment[]
 
   @@map("kitchen_branches")
+}
+
+/// Many-to-many: which branches a staff member may operate in.
+/// EmployeeProfile.assignedBranchId remains the primary/home branch (backward compatibility).
+model EmployeeBranchAssignment {
+  id                String          @id @default(uuid())
+  employeeProfileId String
+  branchId          String
+  assignedById      String?
+  assignedAt        DateTime        @default(now())
+
+  employeeProfile   EmployeeProfile @relation(fields: [employeeProfileId], references: [id], onDelete: Cascade)
+  branch            KitchenBranch   @relation(fields: [branchId], references: [id])
+  assignedBy        User?           @relation("BranchAssignedBy", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([employeeProfileId, branchId])
+  @@index([branchId])
+  @@map("employee_branch_assignments")
 }
 
 model CustomerProfile {
@@ -271,6 +293,7 @@ model EmployeeProfile {
   assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
   deliveries          DeliveryAssignment[]
   hrmRecord           HRMEmployee?
+  branchAssignments   EmployeeBranchAssignment[]
 
   @@index([employeeCode])
   @@map("employee_profiles")

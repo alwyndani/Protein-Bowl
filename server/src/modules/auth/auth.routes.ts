@@ -6,6 +6,7 @@ import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { requireRoles } from '../../middleware/rbac.middleware.js';
 import { loginRateLimiter, registerRateLimiter, refreshRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { RoleEnum } from '@prisma/client';
+import { env } from '../../config/env.js';
 
 const router = Router();
 
@@ -17,12 +18,14 @@ router.post('/logout', AuthController.logout);
 // Protected Routes
 router.get('/me', authenticateToken, AuthController.me);
 
-// RBAC Protected Test Route (Demonstrates authorization checking for privileged roles)
-router.get(
-  '/rbac-test',
-  authenticateToken,
-  requireRoles([RoleEnum.MD, RoleEnum.CHEF, RoleEnum.NUTRITIONIST, RoleEnum.SUPER_ADMIN]),
-  AuthController.testRbac
-);
+// RBAC diagnostic route: registered ONLY in development/test. It does not exist (404) in production.
+if (env.NODE_ENV !== 'production') {
+  router.get(
+    '/rbac-test',
+    authenticateToken,
+    requireRoles([RoleEnum.MD, RoleEnum.CHEF, RoleEnum.NUTRITIONIST, RoleEnum.SUPER_ADMIN]),
+    AuthController.testRbac
+  );
+}
 
 export default router;

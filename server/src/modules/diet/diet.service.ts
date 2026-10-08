@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
+import { AuditService, AuditContext } from '../audit/audit.service.js';
 
 export class DietService {
   /**
@@ -219,9 +220,11 @@ export class DietService {
   }
 
   /**
-   * 7. Get Authorized Patient Health Profile (Only assigned nutritionist or Super Admin)
+   * 7. Get Authorized Patient Health Profile.
+   * Least privilege: ONLY the nutritionist assigned (claimed) to this request. There is no SUPER_ADMIN / MD / other-staff bypass.
+   * Every access and every denial is audited (the audit payload never contains health data).
    */
-  public static async getAuthorizedHealthProfile(requestId: string, requestingUserId: string, userRoles: string[]) {
+  public static async getAuthorizedHealthProfile(requestId: string, requestingUserId: string, userRoles: string[], context?: AuditContext) {
     const req = await prisma.dietPlanRequest.findUnique({
       where: { id: requestId },
       include: {
@@ -238,20 +241,35 @@ export class DietService {
       throw new AppError('Diet plan request not found', 404);
     }
 
-    const isSuperAdmin = userRoles.includes('SUPER_ADMIN');
-    const isAssignedNutritionist = req.nutritionistId === requestingUserId;
+    const isAssignedNutritionist = !!req.nutritionistId && req.nutritionistId === requestingUserId;
 
-    if (!isAssignedNutritionist && !isSuperAdmin) {
+    if (!isAssignedNutritionist) {
+      await AuditService.recordSafe({
+        actor: { userId: requestingUserId, roles: userRoles },
+        action: 'HEALTH_PROFILE_ACCESS_DENIED',
+        entity: 'DietPlanRequest',
+        entityId: requestId,
+        payload: { customerProfileId: req.customerProfileId },
+        context
+      });
       throw new AppError('Unauthorized: Detailed health profile access is restricted to the assigned nutritionist', 403);
     }
 
+    await AuditService.recordSafe({
+      actor: { userId: requestingUserId, roles: userRoles },
+      action: 'HEALTH_PROFILE_ACCESSED',
+      entity: 'DietPlanRequest',
+      entityId: requestId,
+      payload: { customerProfileId: req.customerProfileId },
+      context
+    });
     return req.customerProfile;
   }
 
   /**
    * 8. Create or Publish a Diet Plan (Supports initial version & revision multi-version history)
    */
-  public static async createOrPublishDietPlan(nutritionistUserId: string, userRoles: string[], data: {
+  public static async createOrPublishDietPlan(nutritionistUserId: string, data: {
     requestId: string;
     name: string;
     targetCalories: number;
@@ -292,8 +310,8 @@ export class DietService {
         throw new AppError('Diet plan request not found', 404);
       }
 
-      const isSuperAdmin = userRoles.includes('SUPER_ADMIN');
-      if (request.nutritionistId !== nutritionistUserId && !isSuperAdmin) {
+      // Only the assigned nutritionist may author clinical plans (no SUPER_ADMIN bypass).
+      if (request.nutritionistId !== nutritionistUserId) {
         throw new AppError('Unauthorized: You are not the assigned nutritionist for this request', 403);
       }
 

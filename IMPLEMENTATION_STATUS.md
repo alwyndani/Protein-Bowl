@@ -138,3 +138,27 @@ Supersedes the "Row 8 — Web Frontend is PARTIAL" correction above for the cust
 Remaining mock/static dependencies near this path: `CustomerHome` combo offers (`mockData`) and static recipe menu (`recipeDatabase`); `App.tsx` `guestOrders`/`orders` mock state feeding ERP and diet-order screens; dead file `DirectGuestOrderModal.tsx` (unused).
 
 Maintenance note (not part of P5): `npm audit` at the repo root reports 1 high-severity transitive advisory in `source-map-js` (GHSA-68fv-2mgg-jv7q, DoS via source-map section offsets). Not addressed in P5; schedule for a later dependency/security maintenance pass.
+
+---
+
+## 🛡️ P6A — Staff identity, authorization, branch scope & audit foundation (2026-10-08)
+
+Backend 183/183 (p6a 51 new), web 50/50 (7 new), `tsc` ×3 clean, web build OK, migration chain (8) replayed on a disposable DB with no drift. **Only P6A is VERIFIED; P6B and P6C remain pending.**
+
+| Item | Status |
+|------|--------|
+| Database-authoritative authentication (inactive/suspended/soft-deleted users rejected on the next request; roles read from current DB assignments, JWT role claims ignored) | **VERIFIED** |
+| Refresh/login reject inactive and soft-deleted users; refresh denial revokes all sessions and is audited | **VERIFIED** |
+| `EmployeeBranchAssignment` (many-to-many) + idempotent backfill of legacy primary branch (dev: 18/18) + AuditLog indexes | **VERIFIED** |
+| Role-scope and permission catalogues (SUPER_ADMIN global, MD global read-only, facility roles branch-scoped, DELIVERY self) | **VERIFIED** |
+| Branch scope applied to KDS, procurement, POS, delivery endpoints (omitted branch ≠ all branches; foreign branch → 403; MD cannot mutate; driver self-scope) | **VERIFIED** (existing endpoints only — their business workflows remain SCAFFOLD) |
+| Customer health data least privilege (SUPER_ADMIN/MD/unassigned staff denied; audited nutritionist access) | **VERIFIED** |
+| `AuditService` (append-only, redacts secrets, atomic with transactions when given a tx client) | **VERIFIED** (full admin-event coverage arrives in P6B) |
+| `/auth/rbac-test` not registered in production; web role-demo switcher DEV-only; production UI-role guard | **VERIFIED** |
+| Existing-data identity audit: 0 users hold both customer and staff roles (dev and test DBs) | **VERIFIED** |
+| Staff admin APIs, invitations, CLI bootstrap, password step-up, 12-char policy, audit read API | **P6B — PENDING** |
+| Super Admin workspace, `super_admin` UI role | **P6C — PENDING** |
+| Staff 2FA | **DEFERRED** (authentication/platform security completion phase) |
+| SUPER_ADMIN health break-glass | **NOT IMPLEMENTED** (requires separate design) |
+
+Notes: SUPER_ADMIN no longer has the nutritionist workstation routes (consequence of D4). Mess gate-pass still allows MD (review in the Mess phase). Dev DB still holds the P5 manual-E2E order and address as test data.
