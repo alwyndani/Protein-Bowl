@@ -102,3 +102,14 @@ Backend tests 132/132; backend/web/mobile `tsc` clean; web build OK; migration c
 | Pricing values (delivery fee, free-delivery threshold, fallback tax, packaging, Tepache deposit, payment methods) | **PRODUCT DECISION REQUIRED** |
 
 The security gaps listed in "Onboarding Audit Corrections" above (cart role bypass, unprotected diet/mess customer routes, open CORS, missing rate limits/body limit, Payment default) are resolved by this phase.
+
+---
+
+## 🔎 Master Completion Audit Corrections (2026-10-08)
+
+See `PROJECT_COMPLETION_ROADMAP.md` for the full matrix. Corrections that supersede earlier statements in this file:
+
+- **Row 8 (E-commerce, Cart & Direct Checkout) — Web Frontend is PARTIAL, not "Integrated".** The storefront (`PackagedFoodsSection`, `TepacheDrinksSection`, `CustomerHome`) uses mock products and a local cart; no component calls `CartService.addItem` or `ProductService`. `DirectCartCheckoutModal` creates orders from the (empty) server cart, so order creation from the UI returns `400 EMPTY_CART`. Addresses and order history are real. Backend remains VERIFIED. Target: Phase 5.
+- `MessService`, `MDService`, `KDSService` and `ProductService` web services exist but have no UI consumers.
+- Rows 9–21: backends are SCAFFOLD (unwired/untested). Nothing creates `KitchenOrderTicket`, `DeliveryAssignment`, `Subscription`, `MessSubscription`/`MessDailyOrder`, `InventoryItem`, `WorkoutPlan` or `AuditLog` rows. Swiggy/Zomato has **no backend routes**. There is no Super Admin / staff provisioning API.
+- Row 22 and Payments: **MISSING** (no initiate/verify/webhook).

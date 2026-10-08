@@ -84,7 +84,7 @@ Remaining concerns (not fixed; need approval/phase):
 "VERIFIED" means backend behaviour is tested; it does NOT imply production-ready pricing, payments, or mobile/web parity.
 
 ## 11. PARTIAL
-- Web commerce/diet/health UI: `DirectCartCheckoutModal`, `DirectOrderTrackingModal`, `DietPlanBuilder`, `CustomerPlanReview`, `HealthProfile*`, `NutritionistDashboard` (publish), `ChefDashboard` (recipes) call real services, but `App.tsx` still seeds profile/requests/orders and many tabs from mock constants, and `CustomerHome`, `PackagedFoodsSection`, `CustomerDashboard`, `DietPlanBuilder` still read static `data/` files.
+- Web commerce is NOT end-to-end: the storefront uses mock products + a local cart and nothing calls `CartService.addItem`/`ProductService`, so `DirectCartCheckoutModal` order creation fails with EMPTY_CART (see `PROJECT_COMPLETION_ROADMAP.md` §0; fix = Phase 5). Real service calls exist in `DirectOrderTrackingModal` (history), address handling, `DietPlanBuilder`, `CustomerPlanReview`, `HealthProfile*`, `NutritionistDashboard` (publish), `ChefDashboard` (recipes), but `App.tsx` still seeds profile/requests/orders and many tabs from mock constants, and `CustomerHome`, `PackagedFoodsSection`, `CustomerDashboard`, `DietPlanBuilder` still read static `data/` files.
 - Backend Kerala Mess (plans, register, pause-meal, gate-pass verify) exists with service logic but no tests and is not the intended production workflow.
 - Orders stop at `status=PENDING, paymentStatus=PENDING`; no status-transition workflow.
 
@@ -142,6 +142,9 @@ Seed/import sources (`server/prisma/seed*.ts`, `src/data/recipes/*`) may remain.
 5. No secrets committed; no `.env` changes; no new mock runtime dependency.
 6. `IMPLEMENTATION_STATUS.md` updated conservatively (VERIFIED only with tests/evidence).
 7. Report: what changed, what was verified, what remains.
+
+## 22b. Roadmap
+`PROJECT_COMPLETION_ROADMAP.md` is the master completion plan (domain/role matrices, dependency graph, phases P5–P22, decisions D1–D21, external dependencies). Work one approved phase at a time; update its statuses conservatively.
 
 ## 23. Rules for future Claude Code sessions
 - Start by reading this file, then `git status` and `npx prisma migrate status`. Verify docs against code.
