@@ -3,6 +3,7 @@ import { AuthService } from './auth.service.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { env } from '../../config/env.js';
 import { AuditService } from '../audit/audit.service.js';
+import { InvitationService } from '../admin/invitation.service.js';
 
 const REFRESH_COOKIE_NAME = 'pb_refresh_token';
 
@@ -75,6 +76,15 @@ export class AuthController {
       res.clearCookie(REFRESH_COOKIE_NAME, clearCookieOptions);
 
       return ApiResponse.success(res, null, 'Logged out successfully');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async acceptStaffInvite(req: Request, res: Response, next: NextFunction) {
+    try {
+      await InvitationService.accept(req.body.token, req.body.password, AuditService.contextFromRequest(req));
+      return ApiResponse.success(res, { activated: true }, 'Your staff account is now active. You can sign in with your new password.');
     } catch (error) {
       next(error);
     }

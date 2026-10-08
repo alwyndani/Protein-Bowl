@@ -22,6 +22,8 @@ import hrmRoutes from './modules/hrm/hrm.routes.js';
 import financeRoutes from './modules/finance/finance.routes.js';
 import cmsRoutes from './modules/cms/cms.routes.js';
 import recipeRoutes from './modules/recipe/recipe.routes.js';
+import adminRoutes from './modules/admin/admin.routes.js';
+import staffRoutes from './modules/admin/staff.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { enforceAllowedOrigin, isAllowedOrigin } from './middleware/origin.middleware.js';
 import { generalRateLimiter } from './middleware/rateLimiter.middleware.js';
@@ -76,6 +78,8 @@ app.use('/api/v1/md', mdRoutes);
 app.use('/api/v1/hrm', hrmRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/cms', cmsRoutes);
+app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/staff', staffRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

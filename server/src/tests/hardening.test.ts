@@ -289,14 +289,18 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
 
       const savedNodeEnv = process.env.NODE_ENV;
       const savedCors = process.env.CORS_ALLOWED_ORIGINS;
+      const savedInvite = process.env.INVITE_DELIVERY;
       vi.resetModules();
       process.env.NODE_ENV = 'production';
+      process.env.INVITE_DELIVERY = 'manual'; // an otherwise valid production configuration
       delete process.env.CORS_ALLOWED_ORIGINS;
       try {
         await expect(import('../config/env.js')).rejects.toThrow(/CORS_ALLOWED_ORIGINS/);
       } finally {
         process.env.NODE_ENV = savedNodeEnv;
         process.env.CORS_ALLOWED_ORIGINS = savedCors;
+        if (savedInvite === undefined) delete process.env.INVITE_DELIVERY;
+        else process.env.INVITE_DELIVERY = savedInvite;
         vi.resetModules();
       }
     });

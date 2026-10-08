@@ -162,3 +162,31 @@ Backend 183/183 (p6a 51 new), web 50/50 (7 new), `tsc` ×3 clean, web build OK, 
 | SUPER_ADMIN health break-glass | **NOT IMPLEMENTED** (requires separate design) |
 
 Notes: SUPER_ADMIN no longer has the nutritionist workstation routes (consequence of D4). Mess gate-pass still allows MD (review in the Mess phase). Dev DB still holds the P5 manual-E2E order and address as test data.
+
+---
+
+## 🧑‍💼 P6B — Staff administration APIs & secure onboarding (2026-10-08)
+
+Backend 263/263 (new: p6b 60, p6b.isolated 12, ratelimit-p6b 3, invite-config 5), web 50/50 (unchanged), `tsc` ×3 clean, web build OK, 9-migration chain replayed on a disposable DB with no drift. **P6A and P6B are VERIFIED; P6C (web workspace) is PENDING.**
+
+| Item | Status |
+|------|--------|
+| `StaffInvitation` model/migration (`20261008091939_p6b_staff_invitation`) — only the token SHA-256 is stored | **VERIFIED** |
+| Staff create/invite → PENDING account with unusable placeholder credential; manual one-time hand-off (`deliveryMode: "manual"`, nothing emailed) | **VERIFIED** |
+| `POST /auth/staff/accept-invite` (public, rate-limited, uniform safe errors, atomic single-use activation, session revocation) | **VERIFIED** |
+| 12-character staff password policy (customer policy unchanged) | **VERIFIED** |
+| Staff list/detail/update (server-side pagination, search, status/role/branch filters; no secrets, HR data or customers) | **VERIFIED** |
+| Role assign/revoke with guardrails (SUPER_ADMIN/CUSTOMER/MESS_CUSTOMER never assignable, no self-change, no mixed identity, last-role protection) | **VERIFIED** |
+| Branch assign/revoke with primary-branch consistency; branch administration (create/update/deactivate policy) | **VERIFIED** |
+| Activate/deactivate (reason, session + invitation revocation, last-SUPER_ADMIN protection incl. concurrent race) | **VERIFIED** |
+| Invitation reissue (PENDING only; not a password-reset path) | **VERIFIED** |
+| Password step-up proof (short-lived, user- and password-bound) on create/reissue/role/**branch**/deactivate/activate | **VERIFIED** (time-limited, not single-use; never logged/audited) |
+| Production `INVITE_DELIVERY` must be explicit (missing/unsupported fails startup); dev/test default `manual`; manual mode never claims email | **VERIFIED** |
+| CLI-only SUPER_ADMIN bootstrap (`npm run admin:bootstrap`) | **VERIFIED** (tested on a disposable database) |
+| `/staff/me`, permission catalogue, audit history API (SUPER_ADMIN-only, output re-sanitized) | **VERIFIED** |
+| Audit events for all admin mutations, written transactionally; secrets never audited | **VERIFIED** |
+| Super Admin web workspace, accept-invite page, step-up UI, `super_admin` UI role | **P6C — PENDING** |
+| Email invitation delivery | **DEFERRED** (P14; adapter seam `InvitationDelivery` exists) |
+| Staff 2FA; single-use step-up proofs | **DEFERRED** |
+
+Notes: dev DB has 0 audit rows and 0 invitations from P6B work (all P6B testing ran against the test DB and disposable databases). Production MUST set `INVITE_DELIVERY=manual` explicitly (startup validation fails otherwise).

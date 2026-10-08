@@ -34,8 +34,23 @@ const envSchema = z.object({
   RL_REFRESH_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_GENERAL_MAX: positiveInt(600),
   RL_GENERAL_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_ACCEPT_INVITE_MAX: positiveInt(10),
+  RL_ACCEPT_INVITE_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_STEPUP_MAX: positiveInt(10),
+  RL_STEPUP_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.
-  RL_DISABLED: z.enum(['true', 'false']).default('false')
+  RL_DISABLED: z.enum(['true', 'false']).default('false'),
+
+  // Staff onboarding. Until an email provider exists the ONLY supported mode is "manual": the one-time setup link is
+  // returned once to the authorizing SUPER_ADMIN, who hands it over out of band. Nothing is emailed.
+  // REQUIRED in production (startup fails without it); development/test default to "manual". Unsupported values fail validation.
+  INVITE_DELIVERY: z.enum(['manual']).optional(),
+  // Invitation lifetime in hours (default 72h = 3 days; max 14 days).
+  INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 14).default(72),
+  // Public web origin used to build the setup link (defaults to the first allowed CORS origin).
+  STAFF_INVITE_BASE_URL: z.string().url().optional(),
+  // Lifetime of the password step-up proof in seconds (default 5 min; max 15 min).
+  STEP_UP_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(300)
 });
 
 const _env = envSchema.safeParse(process.env);
@@ -82,8 +97,18 @@ function resolveAllowedOrigins(data: z.infer<typeof envSchema>): string[] {
   return parseAllowedOrigins(data.CLIENT_URL);
 }
 
+function resolveInviteDelivery(data: z.infer<typeof envSchema>): 'manual' {
+  // Production must be explicit: delivery of staff invitations is a conscious deployment decision, never a silent default.
+  // Development/test default to "manual". (Unsupported values are rejected by the schema above.)
+  if (!data.INVITE_DELIVERY && data.NODE_ENV === 'production') {
+    throw new Error("INVITE_DELIVERY must be set explicitly in production (supported: 'manual' - no email is sent; the one-time setup link is returned once to the SUPER_ADMIN)");
+  }
+  return data.INVITE_DELIVERY ?? 'manual';
+}
+
 export const env = {
   ..._env.data,
+  inviteDelivery: resolveInviteDelivery(_env.data),
   allowedOrigins: resolveAllowedOrigins(_env.data),
   rateLimitDisabled: _env.data.NODE_ENV !== 'production' && _env.data.RL_DISABLED === 'true'
 };

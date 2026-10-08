@@ -4,7 +4,8 @@ import { validateBody } from '../../middleware/validate.middleware.js';
 import { registerSchema, loginSchema } from './auth.validator.js';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { requireRoles } from '../../middleware/rbac.middleware.js';
-import { loginRateLimiter, registerRateLimiter, refreshRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { loginRateLimiter, registerRateLimiter, refreshRateLimiter, acceptInviteRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { acceptInviteBodySchema } from '../admin/admin.validator.js';
 import { RoleEnum } from '@prisma/client';
 import { env } from '../../config/env.js';
 
@@ -14,6 +15,9 @@ router.post('/register', registerRateLimiter, validateBody(registerSchema), Auth
 router.post('/login', loginRateLimiter, validateBody(loginSchema), AuthController.login);
 router.post('/refresh', refreshRateLimiter, AuthController.refresh);
 router.post('/logout', AuthController.logout);
+
+// Staff invitation acceptance (public, strongly rate-limited). Uniform errors: never reveals whether an account exists.
+router.post('/staff/accept-invite', acceptInviteRateLimiter, validateBody(acceptInviteBodySchema), AuthController.acceptStaffInvite);
 
 // Protected Routes
 router.get('/me', authenticateToken, AuthController.me);

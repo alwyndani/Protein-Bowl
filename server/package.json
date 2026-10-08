@@ -13,7 +13,8 @@
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "admin:bootstrap": "tsx scripts/bootstrapSuperAdmin.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

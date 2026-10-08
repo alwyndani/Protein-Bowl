@@ -49,6 +49,8 @@ model User {
   assignedDietRequests DietPlanRequest[]
   auditLogs           AuditLog[]
   branchAssignmentsMade EmployeeBranchAssignment[] @relation("BranchAssignedBy")
+  staffInvitations    StaffInvitation[]    @relation("StaffInvitationUser")
+  staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreatedBy")
 
   @@index([email])
   @@index([phone])
@@ -144,6 +146,26 @@ model EmployeeBranchAssignment {
   @@unique([employeeProfileId, branchId])
   @@index([branchId])
   @@map("employee_branch_assignments")
+}
+
+/// Single-use, expiring staff onboarding invitation. ONLY the SHA-256 hash of the token is stored - never the raw token.
+/// Active invitation = usedAt IS NULL AND revokedAt IS NULL AND expiresAt > now().
+model StaffInvitation {
+  id          String    @id @default(uuid())
+  userId      String
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation("StaffInvitationUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation("StaffInvitationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("staff_invitations")
 }
 
 model CustomerProfile {

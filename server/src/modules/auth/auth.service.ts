@@ -109,14 +109,12 @@ export class AuthService {
    * Authenticate user with credentials.
    */
   static async login(dto: LoginDto) {
-    const user = await prisma.user.findUnique({
-      where: { email: dto.email },
-      include: {
-        roles: true,
-        customerProfile: true,
-        employeeProfile: true
-      }
-    });
+    const include = { roles: true, customerProfile: true, employeeProfile: true } as const;
+    let user = await prisma.user.findUnique({ where: { email: dto.email }, include });
+    // Staff emails are stored lowercase; tolerate a differently-cased login without ever matching a different account.
+    if (!user && dto.email !== dto.email.toLowerCase()) {
+      user = await prisma.user.findUnique({ where: { email: dto.email.toLowerCase() }, include });
+    }
 
     if (!user || !user.passwordHash) {
       throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');

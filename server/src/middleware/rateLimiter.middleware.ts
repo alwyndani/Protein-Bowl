@@ -23,6 +23,8 @@ function createRateLimiter(name: string, max: number, windowMs: number, skip?: (
 export const loginRateLimiter = createRateLimiter('LOGIN', env.RL_LOGIN_MAX, env.RL_LOGIN_WINDOW_MS);
 export const registerRateLimiter = createRateLimiter('REGISTER', env.RL_REGISTER_MAX, env.RL_REGISTER_WINDOW_MS);
 export const refreshRateLimiter = createRateLimiter('REFRESH', env.RL_REFRESH_MAX, env.RL_REFRESH_WINDOW_MS);
+export const acceptInviteRateLimiter = createRateLimiter('ACCEPT_INVITE', env.RL_ACCEPT_INVITE_MAX, env.RL_ACCEPT_INVITE_WINDOW_MS);
+export const stepUpRateLimiter = createRateLimiter('STEPUP', env.RL_STEPUP_MAX, env.RL_STEPUP_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(
   'GENERAL',
   env.RL_GENERAL_MAX,

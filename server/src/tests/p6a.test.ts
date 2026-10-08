@@ -514,8 +514,10 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   describe('RBAC diagnostic route', () => {
     it('20. /auth/rbac-test does not exist in production', async () => {
       const savedEnv = process.env.NODE_ENV;
+      const savedInvite = process.env.INVITE_DELIVERY;
       vi.resetModules();
       process.env.NODE_ENV = 'production';
+      process.env.INVITE_DELIVERY = 'manual'; // an otherwise valid production configuration
       try {
         const prodApp = (await import('../app.js')).default;
         const res = await request(prodApp).get('/api/v1/auth/rbac-test').set(bearer(u.admin.token));
@@ -524,6 +526,8 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
         await prodPrisma.$disconnect();
       } finally {
         process.env.NODE_ENV = savedEnv;
+        if (savedInvite === undefined) delete process.env.INVITE_DELIVERY;
+        else process.env.INVITE_DELIVERY = savedInvite;
         vi.resetModules();
       }
     });

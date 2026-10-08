@@ -4,6 +4,7 @@ import { AppError } from './error.middleware.js';
 import { RoleEnum } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import { Permission, rolesHavePermission } from '../authz/permissions.js';
+import { isStaffRole } from '../authz/roleScopes.js';
 
 declare global {
   namespace Express {
@@ -128,4 +129,15 @@ export function requireExactRoles(allowedRoles: RoleEnum[]) {
 
     next();
   };
+}
+
+/** Staff identities only (any non-customer role). Customers and anonymous callers are rejected. */
+export function requireStaffIdentity(req: Request, _res: Response, next: NextFunction) {
+  if (!req.user) {
+    return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+  }
+  if (!(req.user.roles || []).some(isStaffRole)) {
+    return next(new AppError('Access denied. Staff account required.', 403, 'FORBIDDEN'));
+  }
+  return next();
 }

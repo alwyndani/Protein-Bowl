@@ -12,11 +12,19 @@ export type Permission =
   | 'pos:read'
   | 'pos:write'
   | 'delivery:read'
-  | 'delivery:write';
+  | 'delivery:write'
+  | 'staff:admin'
+  | 'audit:read'
+  | 'branch:read'
+  | 'branch:write';
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
-  [RoleEnum.SUPER_ADMIN]: ['kds:read', 'kds:write', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:write'],
-  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read'],
+  [RoleEnum.SUPER_ADMIN]: [
+    'kds:read', 'kds:write', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:write',
+    // Platform administration (decision D10: audit history is SUPER_ADMIN-only; MD gets branch READ only)
+    'staff:admin', 'audit:read', 'branch:read', 'branch:write'
+  ],
+  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read'],
   [RoleEnum.CHEF]: ['kds:read', 'kds:write'],
   [RoleEnum.PROCUREMENT]: ['procurement:read', 'procurement:write'],
   [RoleEnum.POS]: ['pos:read', 'pos:write'],
