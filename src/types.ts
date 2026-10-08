@@ -1,4 +1,4 @@
-export type UserRole = 'customer' | 'mess_customer' | 'md' | 'nutritionist' | 'trainer' | 'chef' | 'procurement' | 'delivery' | 'pos' | 'bakery_fmcg' | 'tepache_erp' | 'swiggy_zomato';
+export type UserRole = 'customer' | 'mess_customer' | 'super_admin' | 'md' | 'nutritionist' | 'trainer' | 'chef' | 'procurement' | 'delivery' | 'pos' | 'bakery_fmcg' | 'tepache_erp' | 'swiggy_zomato';
 
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'athlete';
 export type HealthGoal = 'weight_loss' | 'muscle_gain' | 'maintenance' | 'wellness' | 'diabetic' | 'other';

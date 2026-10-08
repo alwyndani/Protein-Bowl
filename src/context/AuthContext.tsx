@@ -19,8 +19,11 @@ export function mapBackendRoleToUserRole(backendRoles?: string[]): UserRole {
     BAKERY_FMCG: 'bakery_fmcg',
     TEPACHE_ERP: 'tepache_erp',
     SWIGGY_ZOMATO: 'swiggy_zomato',
-    SUPER_ADMIN: 'md'
+    SUPER_ADMIN: 'super_admin'
   };
+
+  // SUPER_ADMIN always lands in the Super Admin workspace (never the MD dashboard); the two experiences stay separate.
+  if (backendRoles.includes('SUPER_ADMIN')) return 'super_admin';
 
   for (const role of backendRoles) {
     if (roleMap[role]) {

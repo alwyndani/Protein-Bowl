@@ -79,6 +79,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
     customer: { title: 'Customer Portal', icon: <User className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-800' },
     mess_customer: { title: '🍛 Kerala Mess', icon: <Utensils className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
     swiggy_zomato: { title: '⚡ Swiggy/Zomato', icon: <Layers className="w-4 h-4" />, color: 'bg-orange-100 text-orange-800' },
+    super_admin: { title: 'Super Admin', icon: <ShieldAlert className="w-4 h-4" />, color: 'bg-rose-100 text-rose-800' },
     md: { title: 'MD Dashboard', icon: <Building2 className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
     pos: { title: 'POS Billing', icon: <Calculator className="w-4 h-4" />, color: 'bg-indigo-100 text-indigo-800' },
     nutritionist: { title: 'Dietician', icon: <Stethoscope className="w-4 h-4" />, color: 'bg-teal-100 text-teal-800' },

@@ -3,12 +3,13 @@ import type { UserRole } from '../types';
 /**
  * UI role (dashboard presentation) -> backend roles that legitimately allow it.
  * This is PRESENTATION hygiene only: the backend authorizes every API call independently of anything the UI shows.
- * (SUPER_ADMIN currently maps to the MD dashboard until the dedicated administration workspace exists.)
+ * SUPER_ADMIN has its own workspace and is NOT allowed the MD dashboard (and vice versa).
  */
 const BACKEND_ROLES_FOR_UI_ROLE: Record<UserRole, readonly string[]> = {
   customer: ['CUSTOMER', 'MESS_CUSTOMER'],
   mess_customer: ['CUSTOMER', 'MESS_CUSTOMER'],
-  md: ['MD', 'SUPER_ADMIN'],
+  super_admin: ['SUPER_ADMIN'],
+  md: ['MD'],
   nutritionist: ['NUTRITIONIST'],
   trainer: ['TRAINER'],
   chef: ['CHEF'],

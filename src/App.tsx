@@ -61,6 +61,7 @@ import { SwiggyZomatoAggregatorPortal } from './components/mess/SwiggyZomatoAggr
 
 // ERP Staff Dashboards
 import { MDDashboard } from './components/erp/MDDashboard';
+import { AdminWorkspace } from './components/admin/AdminWorkspace';
 import { NutritionistDashboard } from './components/erp/NutritionistDashboard';
 import { TrainerDashboard } from './components/erp/TrainerDashboard';
 import { ChefDashboard } from './components/erp/ChefDashboard';
@@ -611,6 +612,9 @@ export function App() {
             )}
           </>
         )}
+
+        {/* SUPER ADMIN WORKSPACE (platform administration; separate from the MD experience) */}
+        {currentRole === 'super_admin' && <AdminWorkspace />}
 
         {/* ERP STAFF PORTAL VIEWS */}
         {currentRole === 'md' && (

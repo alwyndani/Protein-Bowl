@@ -157,7 +157,7 @@ Backend 183/183 (p6a 51 new), web 50/50 (7 new), `tsc` ×3 clean, web build OK, 
 | `/auth/rbac-test` not registered in production; web role-demo switcher DEV-only; production UI-role guard | **VERIFIED** |
 | Existing-data identity audit: 0 users hold both customer and staff roles (dev and test DBs) | **VERIFIED** |
 | Staff admin APIs, invitations, CLI bootstrap, password step-up, 12-char policy, audit read API | **P6B — PENDING** |
-| Super Admin workspace, `super_admin` UI role | **P6C — PENDING** |
+| Super Admin workspace, `super_admin` UI role | **P6C — VERIFIED** (see the P6C section) |
 | Staff 2FA | **DEFERRED** (authentication/platform security completion phase) |
 | SUPER_ADMIN health break-glass | **NOT IMPLEMENTED** (requires separate design) |
 
@@ -167,7 +167,7 @@ Notes: SUPER_ADMIN no longer has the nutritionist workstation routes (consequenc
 
 ## 🧑‍💼 P6B — Staff administration APIs & secure onboarding (2026-10-08)
 
-Backend 263/263 (new: p6b 60, p6b.isolated 12, ratelimit-p6b 3, invite-config 5), web 50/50 (unchanged), `tsc` ×3 clean, web build OK, 9-migration chain replayed on a disposable DB with no drift. **P6A and P6B are VERIFIED; P6C (web workspace) is PENDING.**
+Backend 263/263 (new: p6b 60, p6b.isolated 12, ratelimit-p6b 3, invite-config 5), web 50/50 (unchanged), `tsc` ×3 clean, web build OK, 9-migration chain replayed on a disposable DB with no drift. **P6A and P6B are VERIFIED; P6C (web workspace) is VERIFIED — see the next section.**
 
 | Item | Status |
 |------|--------|
@@ -185,8 +185,36 @@ Backend 263/263 (new: p6b 60, p6b.isolated 12, ratelimit-p6b 3, invite-config 5)
 | CLI-only SUPER_ADMIN bootstrap (`npm run admin:bootstrap`) | **VERIFIED** (tested on a disposable database) |
 | `/staff/me`, permission catalogue, audit history API (SUPER_ADMIN-only, output re-sanitized) | **VERIFIED** |
 | Audit events for all admin mutations, written transactionally; secrets never audited | **VERIFIED** |
-| Super Admin web workspace, accept-invite page, step-up UI, `super_admin` UI role | **P6C — PENDING** |
+| Super Admin web workspace, accept-invite page, step-up UI, `super_admin` UI role | **P6C — VERIFIED** (see the P6C section) |
 | Email invitation delivery | **DEFERRED** (P14; adapter seam `InvitationDelivery` exists) |
 | Staff 2FA; single-use step-up proofs | **DEFERRED** |
 
 Notes: dev DB has 0 audit rows and 0 invitations from P6B work (all P6B testing ran against the test DB and disposable databases). Production MUST set `INVITE_DELIVERY=manual` explicitly (startup validation fails otherwise).
+
+---
+
+## 🛡️ P6C — Production Super Admin web workspace (2026-10-08)
+
+Backend 263/263 (unchanged), web **127/127** (50 earlier + 77 new: adminService 9, accept-invite 9, workspace/step-up 50, security/static 9), `tsc` ×3 clean, web build OK, 9 migrations (none added), `git diff --check` clean. Manual end-to-end run against the local dev stack completed (below).
+
+| Item | Status |
+|------|--------|
+| Dedicated Super Admin workspace on the real P6B APIs; `super_admin` UI role separate from MD (SUPER_ADMIN no longer renders the MD dashboard; MD never renders the admin workspace) | **VERIFIED** |
+| Authorization UX: not-authorized screen for every non-SUPER_ADMIN; no admin API call and no admin data rendered before the session resolves and holds SUPER_ADMIN | **VERIFIED** |
+| Staff list: server-side search/status/role/branch filters + pagination; staff detail; profile edit (no step-up) | **VERIFIED** |
+| Invite staff (SUPER_ADMIN/CUSTOMER/MESS_CUSTOMER not offered; branches required for branch roles) with manual one-time hand-off ("NO EMAIL WAS SENT"); reissue shows a NEW link; links never persisted | **VERIFIED** |
+| Role assign/revoke, branch assign/revoke, activate/deactivate (reason + confirmation), reissue — all through step-up; backend guardrail errors surfaced | **VERIFIED** |
+| `StepUpProvider`/`StepUpDialog`: memory-only proof, `X-Step-Up-Token` only, discarded on logout/user change/reload/rejection, shared prompt for concurrent actions | **VERIFIED** |
+| Public `/staff/accept-invite`: fragment token captured then scrubbed, password policy errors, uniform invalid-invitation message, success → staff sign-in | **VERIFIED** |
+| Branch administration (create/edit/deactivate with confirmation; `BRANCH_HAS_ACTIVE_STAFF` shown) | **VERIFIED** |
+| Audit log UI (SUPER_ADMIN-only, server-side filters/pagination, read-only, secrets redacted) and informational permissions view | **VERIFIED** |
+| Consistent 401/403/409/422/429/network handling; duplicate-mutation prevention | **VERIFIED** |
+| Production bundle contains no demo admin credentials, no `setupToken`, no role-demo sandbox | **VERIFIED** |
+| Staff 2FA, email delivery, single-use step-up, staff password self-service | **DEFERRED** |
+| Static `/staff/accept-invite` needs an SPA fallback in production hosting | **PRODUCT/DEPLOYMENT NOTE** |
+
+Backend change: none. Web fix made along the way: `ApiClient` no longer refresh-retries a `401 STEP_UP_FAILED` (a wrong step-up password is not an expired session). Test intentionally updated: `roleGuard.test.tsx` previously asserted SUPER_ADMIN may present the MD dashboard; it now asserts the separation.
+
+**Manual E2E (dev stack, 2026-10-08):** SUPER_ADMIN login → Admin workspace listed real staff → invite with wrong step-up password rejected (session kept) → correct password → temp CHEF created with Kochi branch, "NO EMAIL WAS SENT" + one-time link shown, dismissal removed it from the DOM, no browser storage used → link opened: fragment scrubbed, weak/common and name-containing passwords rejected by the server, strong password activated the account, link not reusable → temp CHEF signed in, saw only the Chef dashboard; `/admin/*` returned 403 for the CHEF → SUPER_ADMIN assigned POS (step-up), revoked POS (proof reused, no second prompt), assigned and revoked Kozhikode → deactivation needed reason + confirmation → afterwards the old CHEF access token returned 401 `ACCOUNT_INACTIVE` and login returned 403 → audit UI showed STAFF_CREATED, STAFF_INVITED, STAFF_INVITATION_ACCEPTED, ROLE_ASSIGNED/REVOKED, BRANCH_ASSIGNED/REVOKED, STAFF_DEACTIVATED, STEP_UP_FAILED, STAFF_INVITATION_REJECTED with no secrets.
+
+**Temporary dev records left in the dev DB (not cleaned up):** User `p6c.temp.chef@proteinbowl.test` (id `631c7b83-756c-4501-ae3d-f3e8afe0fefb`, status DEACTIVATED, role CHEF) with its EmployeeProfile (`1366d928-5b72-42a1-be90-ee9dc2794da8`) and Kochi branch assignment, one StaffInvitation (`b256f5fb-5f28-4363-8420-163b0bf4fb57`, USED), refresh-token rows (from the E2E logins), and 10 audit rows (audit is append-only by design). Dev servers were stopped afterwards.

@@ -79,7 +79,7 @@ export class ApiClient {
       const data: ApiResponseEnvelope<T> = await response.json();
 
       // Handle 401 Unauthorized safely (Attempt refresh token rotation ONCE)
-      if (!response.ok && response.status === 401 && !isRetry && endpoint !== '/auth/refresh' && endpoint !== '/auth/login') {
+      if (!response.ok && response.status === 401 && !isRetry && endpoint !== '/auth/refresh' && endpoint !== '/auth/login' && data.error !== 'STEP_UP_FAILED') {
         if (!this.isRefreshing) {
           this.isRefreshing = true;
           try {
