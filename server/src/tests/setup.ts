@@ -40,3 +40,6 @@ process.env.COMMERCE_PACKAGING_TAXABLE = 'false';
 process.env.COMMERCE_MAX_LINE_QUANTITY = '20';
 process.env.COMMERCE_MAX_CART_UNITS = '50';
 process.env.COMMERCE_COD_ENABLED = 'false';
+
+// Payments (P7B): the tests always run against the in-process MockPaymentProvider with the default (approved) timings.
+process.env.PAYMENT_PROVIDER = 'mock';

@@ -662,6 +662,8 @@ model Order {
   cancellationReason     String?
   pricingSnapshot        Json?
   requestFingerprint     String?
+  // P7B: the ProviderPayment ledger row that made this order PAID (set once by a compare-and-set under the order lock).
+  paidByProviderPaymentId String?           @unique
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -672,6 +674,7 @@ model Order {
   kot                    KitchenOrderTicket?
   delivery               DeliveryAssignment?
   events                 OrderEvent[]
+  providerPayments       ProviderPayment[]
 
   // Idempotency keys are scoped to the customer (NULLs are distinct, so legacy/no-key rows are unaffected)
   @@unique([customerProfileId, idempotencyKey])
@@ -720,21 +723,96 @@ model OrderItem {
   @@map("order_items")
 }
 
+// P7B: a Payment row is a PB payment SESSION (one provider order). Real provider payments live in ProviderPayment.
 model Payment {
   id                   String          @id @default(uuid())
   orderId              String
   customerProfileId    String?
-  gatewayTransactionId String?
+  gatewayTransactionId String?         // legacy, never written
   amount               Decimal         @db.Decimal(10, 2)
   currency             String          @default("INR")
-  status               String          @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED (never default to SUCCESS)
-  method               String          // CARD, UPI, NET_BANKING, WALLET, CASH
-  payload              Json?
+  status               String          @default("PENDING") // CREATED, PENDING, UNKNOWN, SUCCESS, EXPIRED, FAILED, ABANDONED (legacy rows: PENDING, SUCCESS, FAILED, REFUNDED)
+  method               String?         // legacy; instrument type now lives on ProviderPayment
+  payload              Json?           // DEPRECATED: never written (no provider payloads are stored)
+  provider             String?         // 'razorpay' | 'mock'; null only on legacy rows
+  providerOrderId      String?
+  providerStatus       String?         // provider order status as last observed (created/attempted/paid)
+  expiresAt            DateTime?       // application session TTL (NOT provider order expiry)
+  supersededById       String?
+  reviewFlag           String?
+  lastError            String?         // short, safe error code
+  nextAttemptAt        DateTime?       // reconciliation schedule
+  attemptCount         Int             @default(0)
+  lockedUntil          DateTime?       // reconciliation lease
+  lockedBy             String?
   createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @default(now()) @updatedAt
 
   order                Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  providerPayments     ProviderPayment[]
 
+  @@unique([provider, providerOrderId])
+  @@index([orderId, createdAt])
+  @@index([status, nextAttemptAt])
   @@map("payments")
+}
+
+// P7B: normalized ledger, one row per REAL provider payment id. Rows are never deleted or overwritten by another payment.
+model ProviderPayment {
+  id                   String    @id @default(uuid())
+  provider             String
+  providerPaymentId    String
+  providerOrderId      String
+  paymentId            String
+  orderId              String
+  amount               Decimal   @db.Decimal(10, 2)
+  currency             String
+  providerStatus       String    // CREATED | AUTHORIZED | CAPTURED | FAILED | REFUNDED (monotonic)
+  method               String?   // instrument TYPE only
+  errorCode            String?
+  errorReason          String?
+  firstCapturedSeenAt  DateTime? // server observation time (the provider's capture timestamp is not relied on)
+  firstSeenVia         String    // CHECKOUT_VERIFY | WEBHOOK | RECONCILIATION
+  reconciliationStatus String    @default("PENDING") // PENDING | APPLIED | DUPLICATE | AFTER_CANCELLATION | AMOUNT_MISMATCH | CURRENCY_MISMATCH | REVIEWED
+  appliedAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
+
+  payment              Payment   @relation(fields: [paymentId], references: [id])
+  order                Order     @relation(fields: [orderId], references: [id])
+
+  @@unique([provider, providerPaymentId])
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([reconciliationStatus])
+  @@map("provider_payments")
+}
+
+// P7B: durable webhook record + retry state. Only normalized, PII-free data and the body hash are stored (never the raw body).
+model PaymentWebhookEvent {
+  id                String    @id @default(uuid())
+  provider          String
+  eventId           String
+  eventType         String
+  eventCreatedAt    DateTime?
+  payloadHash       String
+  providerOrderId   String?
+  providerPaymentId String?
+  normalized        Json?
+  status            String    @default("RECEIVED") // RECEIVED | PROCESSED | IGNORED | RETRY_PENDING | FAILED
+  ignoredReason     String?
+  lastError         String?
+  attemptCount      Int       @default(0)
+  nextAttemptAt     DateTime?
+  lockedUntil       DateTime?
+  lockedBy          String?
+  receivedAt        DateTime  @default(now())
+  processedAt       DateTime?
+
+  @@unique([provider, eventId])
+  @@index([status, nextAttemptAt])
+  @@index([providerOrderId])
+  @@map("payment_webhook_events")
 }
 
 model Subscription {

@@ -951,7 +951,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
           if (statSync(full).isDirectory()) {
             if (name === 'tests') continue;
             walk(full);
-          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts')) {
+          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts') && !full.endsWith('paymentSettlement.service.ts')) {
             const text = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
             if (/\.order\.(update|updateMany|upsert)\s*\(/.test(text) || /\border\.(update|updateMany|upsert)\s*\(/.test(text)) offenders.push(full);
           }
@@ -959,6 +959,15 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       };
       walk(root);
       expect(offenders).toEqual([]);
+
+      // The payment settlement service may update ORDER PAYMENT fields (paymentStatus + the paid-provider-payment reference, a
+      // compare-and-set) but must never write Order.status: confirmation goes through OrderTransitionService.
+      const settlement = readFileSync(join(root, 'modules', 'payment', 'paymentSettlement.service.ts'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const orderWrites = settlement.match(/order\.update(?:Many)?\(\{[\s\S]*?\}\);/g) ?? [];
+      expect(orderWrites.length).toBeGreaterThan(0);
+      for (const w of orderWrites) expect(w).not.toMatch(/(^|[^A-Za-z])status\s*:/);
     });
   });
 });

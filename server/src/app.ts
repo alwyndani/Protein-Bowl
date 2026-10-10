@@ -24,9 +24,11 @@ import cmsRoutes from './modules/cms/cms.routes.js';
 import recipeRoutes from './modules/recipe/recipe.routes.js';
 import adminRoutes from './modules/admin/admin.routes.js';
 import staffRoutes from './modules/admin/staff.routes.js';
+import paymentRoutes, { paymentWebhookHandler } from './modules/payment/payment.routes.js';
+import paymentAdminRoutes from './modules/payment/paymentAdmin.routes.js';
 import { errorHandler } from './middleware/error.middleware.js';
 import { enforceAllowedOrigin, isAllowedOrigin } from './middleware/origin.middleware.js';
-import { generalRateLimiter } from './middleware/rateLimiter.middleware.js';
+import { generalRateLimiter, webhookRateLimiter } from './middleware/rateLimiter.middleware.js';
 import { ApiResponse } from './utils/apiResponse.js';
 
 const app: Application = express();
@@ -37,6 +39,11 @@ if (env.TRUST_PROXY) {
   const trust = Number(env.TRUST_PROXY);
   app.set('trust proxy', Number.isNaN(trust) ? env.TRUST_PROXY : trust);
 }
+
+// Payment-provider webhook (P7B). Mounted BEFORE cors/origin/express.json on purpose: the signature is verified over the EXACT raw
+// bytes (express.json would consume and re-serialize them), the route is authenticated only by that signature (no cookies, no
+// customer session) and it has its own generous limiter instead of the general API limiter. Nothing else is exempted.
+app.post('/api/v1/payments/webhook', webhookRateLimiter, express.raw({ type: () => true, limit: '256kb' }), paymentWebhookHandler);
 
 // CORS: only configured origins receive CORS headers (credentials included). Requests without an
 // Origin header (native mobile, curl, server-to-server) are not browser cross-origin requests and pass.
@@ -65,6 +72,7 @@ app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/recipes', recipeRoutes);
 app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
+app.use('/api/v1/orders', paymentRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/mess', messRoutes);
 app.use('/api/v1/diets', dietRoutes);
@@ -78,6 +86,7 @@ app.use('/api/v1/md', mdRoutes);
 app.use('/api/v1/hrm', hrmRoutes);
 app.use('/api/v1/finance', financeRoutes);
 app.use('/api/v1/cms', cmsRoutes);
+app.use('/api/v1/admin', paymentAdminRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/staff', staffRoutes);
 

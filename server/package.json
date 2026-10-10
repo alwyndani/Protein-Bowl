@@ -14,7 +14,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
-    "admin:bootstrap": "tsx scripts/bootstrapSuperAdmin.ts"
+    "admin:bootstrap": "tsx scripts/bootstrapSuperAdmin.ts",
+    "payments:reconcile": "tsx scripts/reconcilePayments.ts",
+    "payments:recovery": "tsx scripts/paymentsRecovery.ts",
+    "payments:mock-webhook": "tsx scripts/mockPaymentWebhook.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

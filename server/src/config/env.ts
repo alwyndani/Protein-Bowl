@@ -38,6 +38,12 @@ const envSchema = z.object({
   RL_ACCEPT_INVITE_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_STEPUP_MAX: positiveInt(10),
   RL_STEPUP_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_PAYMENT_ATTEMPT_MAX: positiveInt(20),
+  RL_PAYMENT_ATTEMPT_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_PAYMENT_VERIFY_MAX: positiveInt(30),
+  RL_PAYMENT_VERIFY_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_WEBHOOK_MAX: positiveInt(3000),
+  RL_WEBHOOK_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.
   RL_DISABLED: z.enum(['true', 'false']).default('false'),
 

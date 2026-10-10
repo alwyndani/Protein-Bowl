@@ -518,9 +518,15 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     it('20. /auth/rbac-test does not exist in production', async () => {
       const savedEnv = process.env.NODE_ENV;
       const savedInvite = process.env.INVITE_DELIVERY;
+      const savedPayment = { p: process.env.PAYMENT_PROVIDER, k: process.env.RAZORPAY_KEY_ID, s: process.env.RAZORPAY_KEY_SECRET, w: process.env.RAZORPAY_WEBHOOK_SECRET };
       vi.resetModules();
       process.env.NODE_ENV = 'production';
       process.env.INVITE_DELIVERY = 'manual'; // an otherwise valid production configuration
+      // P7B: production refuses the mock payment provider, so a production boot needs an explicit (fake, test-only) Razorpay configuration
+      process.env.PAYMENT_PROVIDER = 'razorpay';
+      process.env.RAZORPAY_KEY_ID = 'rzp_test_dummy';
+      process.env.RAZORPAY_KEY_SECRET = 'dummy-secret-for-boot-test';
+      process.env.RAZORPAY_WEBHOOK_SECRET = 'dummy-webhook-secret-for-boot-test';
       try {
         const prodApp = (await import('../app.js')).default;
         const res = await request(prodApp).get('/api/v1/auth/rbac-test').set(bearer(u.admin.token));
@@ -531,6 +537,10 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
         process.env.NODE_ENV = savedEnv;
         if (savedInvite === undefined) delete process.env.INVITE_DELIVERY;
         else process.env.INVITE_DELIVERY = savedInvite;
+        for (const [key, value] of [['PAYMENT_PROVIDER', savedPayment.p], ['RAZORPAY_KEY_ID', savedPayment.k], ['RAZORPAY_KEY_SECRET', savedPayment.s], ['RAZORPAY_WEBHOOK_SECRET', savedPayment.w]] as const) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
         vi.resetModules();
       }
     });
