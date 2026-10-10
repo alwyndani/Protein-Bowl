@@ -97,9 +97,12 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     customerProfileId = customer.customerProfile!.id;
 
     // Operational data in both branches
-    const mkOrder = (suffix: string) =>
-      prisma.order.create({ data: { orderNumber: `P6A-${suffix}-${ts}`, totalAmount: 100, netAmount: 100 } });
-    const [oA, oB, oD1, oD2] = await Promise.all([mkOrder('KA'), mkOrder('KB'), mkOrder('D1'), mkOrder('D2')]);
+    const mkOrder = (suffix: string, extra: Record<string, unknown> = {}) =>
+      prisma.order.create({ data: { orderNumber: `P6A-${suffix}-${ts}`, totalAmount: 100, netAmount: 100, ...extra } });
+    // Since P7A the kitchen can only start an order that is paid, confirmed and routed to a branch (central transition policy),
+    // so the Branch A kitchen order is set up in that eligible state. Branch B's ticket is never started (it is denied earlier).
+    const eligibleForBranchA = { status: 'CONFIRMED', paymentStatus: 'PAID', paymentMethod: 'ONLINE', kitchenBranchId: branchA.id };
+    const [oA, oB, oD1, oD2] = await Promise.all([mkOrder('KA', eligibleForBranchA), mkOrder('KB'), mkOrder('D1'), mkOrder('D2')]);
     kotA = await prisma.kitchenOrderTicket.create({ data: { orderId: oA.id, branchId: branchA.id, kotNumber: `KOT-A-${ts}`, itemsJson: [] } });
     kotB = await prisma.kitchenOrderTicket.create({ data: { orderId: oB.id, branchId: branchB.id, kotNumber: `KOT-B-${ts}`, itemsJson: [] } });
 

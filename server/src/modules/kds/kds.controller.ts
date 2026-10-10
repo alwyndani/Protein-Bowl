@@ -2,7 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { KDSService } from './kds.service.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AppError } from '../../middleware/error.middleware.js';
-import { assertResourceBranchAccess, authorizeBranch } from '../../authz/branchScope.js';
+import { assertResourceBranchAccess, authorizeBranch, getRequestScope } from '../../authz/branchScope.js';
+import { AuditService } from '../audit/audit.service.js';
+import type { TransitionActor } from '../order/orderTransition.service.js';
 
 export class KDSController {
   public static async getTickets(req: Request, res: Response, next: NextFunction) {
@@ -26,7 +28,9 @@ export class KDSController {
       if (!ticketBranchId) throw new AppError('KOT not found', 404, 'NOT_FOUND');
       await assertResourceBranchAccess(req, 'write', ticketBranchId, 'KitchenOrderTicket');
 
-      const updated = await KDSService.updateKOTStatus(kotId, status);
+      const scope = await getRequestScope(req);
+      const actor: TransitionActor = { kind: 'USER', userId: scope.userId, roles: scope.roles, branchIds: scope.branchIds, isGlobal: scope.isGlobal };
+      const updated = await KDSService.updateKOTStatus(kotId, status, actor, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, updated, 'KOT status updated');
     } catch (err) {
       next(err);

@@ -245,3 +245,42 @@ Design review only. No application code, schema or migration changed. Baseline r
 P7-D1 tax mode inclusive vs exclusive (keep exclusive-as-built until the accountant decides) → P7A · P7-D2 per-product rates, remove code fallback → P7A · P7-D3 delivery/packaging taxable (default: no, pending accountant) → P7A · P7-D4 delivery fee + free threshold (owner supplies values; threshold on pre-tax item subtotal) → P7A · P7-D5 packaging fee, order-level flat → P7A · P7-D6 minimum order value and basis → P7A · P7-D7 max quantity per line/order → P7A · P7-D8 order confirmation timing (online: auto on verified payment; COD: auto when enabled) → P7A/B · P7-D9 payment expiry (default 30 min) → P7A/B · P7-D10 retry policy (default: retries within expiry, max 5 attempts) → P7B · P7-D11 provider (Razorpay, adapter + mock first) → live P7B only · P7-D12 methods (whatever Razorpay checkout enables; no wallet) → P7B · P7-D13 auto-capture (yes) → P7B · P7-D14 COD enabled (default off; primitive built) → P7B · P7-D15 COD collection authority (assigned DELIVERY driver in P9, POS in P15, never arbitrary) → P9/P15 · P7-D16 customer cancellation window/statuses → P7C · P7-D17 staff cancellation authority (SUPER_ADMIN with reason + step-up in P7; CHEF reject in P8) → P7C · P7-D18 refund eligibility incl. delivery fee and deposit → P7C · P7-D19 partial refunds (SUPER_ADMIN only) → P7C · P7-D20 container deposit refund mechanics (roadmap D4) → P7C/P16 · P7-D21 branch routing (roadmap D8) → P8 (P7 leaves branch nullable, PREPARING refuses without it) · P7-D22 receipts/GST invoice format → P7D/P17 · P7-D23 INR only.
 
 External credentials: none needed for P7A/P7C or for P7B with the Mock provider. Live Razorpay key id/secret/webhook secret are **BLOCKED_BY_EXTERNAL_SERVICE** until supplied; they must never enter Git.
+
+---
+
+## 🧾 P7A — Commerce policy & order lifecycle foundation: VERIFIED (2026-10-10)
+
+P7B (payments/webhooks), P7C (cancellation/refunds) and P7D (web payment UI) are **NOT IMPLEMENTED**. No Razorpay code, no payment schema, no refund model.
+
+Backend **399/399** (263 earlier + 59 `p7a.unit` + 66 `p7a` + 10 `p7a.tax` + 1 `p7a.migration`), web **136/136** (127 + 9), `tsc` ×3 clean, web build OK, **11 migrations** (two added: `20261010113056_p7a_order_lifecycle_foundation` and the correction `20261010120451_p7a_remove_tax_rate_defaults`), no drift (replayed on a scratch DB; dev DB diff = none), manual E2E on the dev stack passed (22/22 API checks + KDS/gate checks).
+
+| Item | Status |
+|------|--------|
+| `CommercePolicy` + provider (env-backed, validated at startup; production has no defaults; tests inject) | **VERIFIED** |
+| `PricingService` policy-driven, Decimal-safe, explicit HALF_UP per-line rounding; ₹40 / ₹499 / 5 % fallback removed from code | **VERIFIED** |
+| Immutable `Order.pricingSnapshot` (policy, tax mode, fee rules, limits, SHA-256 policy hash) | **VERIFIED** |
+| Minimum order (preview reports enabled/required/met/shortfall; creation enforces `MINIMUM_ORDER_NOT_MET`) | **VERIFIED** (value = PRODUCT DECISION) |
+| Quantity validation (no coercion), per-line and per-cart caps, money-overflow guard | **VERIFIED** |
+| `paymentMethod` allow-list (ONLINE/COD), `COD_NOT_ALLOWED` by policy | **VERIFIED** |
+| Idempotency: key required, bounded format, customer-scoped unique, request fingerprint, `IDEMPOTENCY_KEY_REUSED`, no cross-customer leak | **VERIFIED** |
+| Concurrency: per-customer row lock; same-key, different-key and cart-edit races tested on the real DB; order-number collision retry | **VERIFIED** |
+| `OrderTransitionService` + typed status catalogue; payment gate; role/branch/ownership rules; `OrderEvent`; `ORDER_CREATED` / `ORDER_STATUS_CHANGED` audit (transactional) | **VERIFIED** |
+| KDS and delivery order-status writes routed through the transition service (atomic with the ticket/assignment) | **VERIFIED** |
+| Customer order DTO (no idempotency key/fingerprint/snapshot/ids), customer-safe timeline | **VERIFIED** |
+| Audit redaction extended (signature, cvv, cvc, vpa, card) | **VERIFIED** |
+| No silent tax default: `Product.taxRate` / `OrderItem.taxRate` have no schema/database default (NOT NULL kept, stored values preserved); creation without an explicit rate fails; seeds/fixtures explicit | **VERIFIED** |
+| Real fee/threshold/packaging/min-order/quantity caps/tax rates/COD/cancellation window | **PRODUCT DECISION REQUIRED** (placeholders are development-only) |
+| Payment provider, verification, webhook, COD confirmation | **P7B — NOT IMPLEMENTED** |
+| Cancellation workflow, refunds | **P7C — NOT IMPLEMENTED** |
+| Web payment/retry/cancel/refund UI | **P7D — NOT IMPLEMENTED** |
+| KOT creation, branch routing (`kitchenBranchId` never set), delivery assignment creation, stock checks | **P8 / P9 / P12 — NOT IMPLEMENTED** |
+
+**Intentional changes to existing tests (3):** commerce #35 (a second customer reusing the key used to get 409; keys are now customer-scoped, so it must neither replay nor reveal the first order), commerce #33 (now sends the required idempotency key so it still tests an invalid address) and p6a #8c (the Branch A kitchen order fixture is now paid/confirmed/branch-routed, because the kitchen may only start eligible orders). Commerce #28 now counts only the customer's orders (it was flaky against parallel test files).
+
+**Mutation checks (temporary, restored):** removing each of the following made at least one test fail — customer ownership filter (2), fingerprint comparison (3), checkout row lock (1), payment gating (5), transition allow-list (5), role guard (2), branch-scope check (1), DTO leak (2), minimum-order enforcement (1), quantity validation (4), customer-scoped key lookup (2), COD policy check (2).
+
+**Tax-default correction (review finding):** the 0.05 column defaults on `products.taxRate` and `order_items.taxRate` were dropped by a second, tiny P7A migration (the first P7A migration was already applied to dev/test, and Prisma offers no supported way to re-apply an edited migration: `migrate resolve` refuses it and `status`/`deploy` do not even notice the edit, so editing it would have silently left dev/test with the old defaults or required hand-editing `_prisma_migrations`, which project rules forbid). Dev and test databases were brought up to date with plain `migrate deploy`; before/after snapshots of every product and order-item tax value are identical (dev: 23 products at 0.0500, 3 order items at 0.0500; test: 206 products, 370 order items). Production code never relied on the default; only `prisma/seed.ts` and two commerce test fixtures did, and they now pass explicit rates.
+
+**Unresolved production configuration (nothing invented):** `COMMERCE_TAX_MODE` (EXCLUSIVE only is supported), per-product tax rates (explicit per product; existing demo/seed products carry an explicit stored 0.05 that is demo data, not policy), delivery fee, free-delivery threshold (or disabled), packaging fee, minimum order, max quantity per line/cart, COD enabled, fee taxability (must stay untaxed).
+
+**Dev records created by the E2E (not cleaned up):** customer `customer@proteinbowl.in`: order `PB-261010-SFEYV5` (id `a82f1dd9-dfb6-4c73-b3c2-134a1eb25571`, PENDING/PENDING, ONLINE) with its creation `OrderEvent` and `ORDER_CREATED` audit row, one kitchen ticket fixture `KOT-P7A-E2E-*` (QUEUED) attached to that order in the Kochi branch (used to prove the kitchen cannot start an unpaid order), one leftover cart line, and login refresh tokens. The earlier P5 dev order received a backfilled creation event by the migration. Dev DB now: 2 orders, 2 order events, 1 KOT, 0 payments.

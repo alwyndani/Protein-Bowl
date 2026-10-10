@@ -1,5 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
+import { AuditContext } from '../audit/audit.service.js';
+import { OrderTransitionService, TransitionActor } from '../order/orderTransition.service.js';
 
 export const DELIVERY_STATUSES = ['ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'DELIVERED', 'FAILED'] as const;
 
@@ -48,27 +50,47 @@ export class DeliveryService {
     });
   }
 
-  public static async updateDeliveryStatus(assignmentId: string, status: string, podImageUrl?: string, temp?: number) {
+  /**
+   * Update a delivery assignment. The ORDER status changes only through OrderTransitionService in the SAME transaction
+   * (IN_TRANSIT -> order DISPATCHED, DELIVERED -> order DELIVERED); if the order may not make that move the whole update
+   * is rejected. A delivered assignment is final. Nothing here writes Order.status directly.
+   */
+  public static async updateDeliveryStatus(
+    assignmentId: string,
+    status: string,
+    actor: TransitionActor,
+    context?: AuditContext,
+    podImageUrl?: string,
+    temp?: number
+  ) {
     if (!(DELIVERY_STATUSES as readonly string[]).includes(status)) {
       throw new AppError('Invalid delivery status', 400, 'INVALID_STATUS');
     }
 
-    const updated = await prisma.deliveryAssignment.update({
-      where: { id: assignmentId },
-      data: {
-        status,
-        podImageUrl: podImageUrl || undefined,
-        temperatureC: temp || undefined,
-        deliveryTime: status === 'DELIVERED' ? new Date() : undefined
-      },
-      include: { order: { select: { id: true, orderNumber: true, status: true } } }
-    });
+    return await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "delivery_assignments" WHERE "id" = ${assignmentId} FOR UPDATE`;
+      const current = await tx.deliveryAssignment.findUnique({ where: { id: assignmentId }, select: { id: true, orderId: true, status: true } });
+      if (!current) throw new AppError('Delivery assignment not found', 404, 'NOT_FOUND');
+      if (current.status === 'DELIVERED' && status !== 'DELIVERED') {
+        throw new AppError('A delivered assignment can no longer be changed', 409, 'INVALID_DELIVERY_TRANSITION');
+      }
 
-    if (status === 'DELIVERED') {
-      await prisma.order.update({ where: { id: updated.orderId }, data: { status: 'DELIVERED' } });
-    } else if (status === 'IN_TRANSIT') {
-      await prisma.order.update({ where: { id: updated.orderId }, data: { status: 'DISPATCHED' } });
-    }
-    return updated;
+      if (status === 'DELIVERED') {
+        await OrderTransitionService.transition({ orderId: current.orderId, to: 'DELIVERED', actor, context }, tx);
+      } else if (status === 'IN_TRANSIT') {
+        await OrderTransitionService.transition({ orderId: current.orderId, to: 'DISPATCHED', actor, context }, tx);
+      }
+
+      return await tx.deliveryAssignment.update({
+        where: { id: assignmentId },
+        data: {
+          status,
+          podImageUrl: podImageUrl || undefined,
+          temperatureC: temp || undefined,
+          deliveryTime: status === 'DELIVERED' && current.status !== 'DELIVERED' ? new Date() : undefined
+        },
+        include: { order: { select: { id: true, orderNumber: true, status: true } } }
+      });
+    });
   }
 }

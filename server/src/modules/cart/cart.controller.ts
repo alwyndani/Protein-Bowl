@@ -26,7 +26,7 @@ export class CartController {
     try {
       const userId = req.user!.userId;
       const validatedData = addCartItemSchema.parse(req.body);
-      const cart = await CartService.addItemToCart(userId, validatedData as any);
+      const cart = await CartService.addItemToCart(userId, validatedData as { productId: string; variantId?: string | null; quantity?: unknown });
       res.status(201).json({
         success: true,
         message: 'Item added to cart',
@@ -44,7 +44,7 @@ export class CartController {
     try {
       const userId = req.user!.userId;
       const { itemId } = req.params;
-      const { quantity } = req.body;
+      const { quantity } = updateCartItemSchema.parse(req.body);
       const cart = await CartService.updateCartItemQuantity(userId, itemId, quantity);
       res.json({
         success: true,

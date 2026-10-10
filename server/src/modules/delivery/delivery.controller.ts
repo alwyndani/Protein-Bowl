@@ -5,6 +5,7 @@ import { ApiResponse } from '../../utils/apiResponse.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditService } from '../audit/audit.service.js';
 import { BranchScope, getRequestScope } from '../../authz/branchScope.js';
+import type { TransitionActor } from '../order/orderTransition.service.js';
 
 async function denyDriverAccess(req: Request, scope: BranchScope, action: string, payload: Record<string, unknown>): Promise<never> {
   await AuditService.recordSafe({
@@ -64,7 +65,8 @@ export class DeliveryController {
         }
       }
 
-      const updated = await DeliveryService.updateDeliveryStatus(assignmentId, status, podImageUrl, temperatureC);
+      const actor: TransitionActor = { kind: 'USER', userId: scope.userId, roles: scope.roles, branchIds: scope.branchIds, isGlobal: scope.isGlobal };
+      const updated = await DeliveryService.updateDeliveryStatus(assignmentId, status, actor, AuditService.contextFromRequest(req), podImageUrl, temperatureC);
       return ApiResponse.success(res, updated, 'Delivery status updated');
     } catch (err) { next(err); }
   }

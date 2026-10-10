@@ -119,11 +119,20 @@ export interface CheckoutPreviewAddress {
   recipientName: string;
 }
 
+/** Server-evaluated minimum-order rule for the current cart (display only; the server enforces it on order creation). */
+export interface MinimumOrderStatus {
+  enabled: boolean;
+  requiredAmount: number;
+  met: boolean;
+  shortfall: number;
+}
+
 /** POST /checkout/preview */
 export interface CheckoutPreview {
   cartId: string;
   items: CheckoutPreviewLineItem[];
   summary: CheckoutPreviewSummary;
+  minimumOrder?: MinimumOrderStatus;
   deliveryAddress: CheckoutPreviewAddress | null;
 }
 
@@ -173,6 +182,10 @@ export interface ApiOrder {
   netAmount: Money;
   deliveryAddress: string | null;
   deliveryAddressSnapshot: ApiOrderAddressSnapshot | null;
+  confirmedAt?: string | null;
+  cancelledAt?: string | null;
   createdAt: string;
   items: ApiOrderItem[];
+  /** Customer-safe status history (detail view only). */
+  timeline?: Array<{ fromStatus: string | null; toStatus: string; at: string }>;
 }

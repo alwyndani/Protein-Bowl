@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { OrderService } from './order.service.js';
 import { checkoutPreviewSchema, createOrderSchema } from './order.validator.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
+import { AuditService } from '../audit/audit.service.js';
+import { resolveIdempotencyKey } from './idempotency.js';
 
 export class OrderController {
   /**
@@ -33,11 +35,10 @@ export class OrderController {
       }
 
       const validatedData = createOrderSchema.parse(req.body);
-      const idempotencyKey = (req.headers['x-idempotency-key'] as string) || 
-                             validatedData.idempotencyKey || 
-                             `IK-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      // The client must supply the key: the server never invents one (a generated key would defeat idempotency).
+      const idempotencyKey = resolveIdempotencyKey(req.headers['x-idempotency-key'], validatedData.idempotencyKey);
 
-      const order = await OrderService.createOrder(userId, idempotencyKey, validatedData);
+      const order = await OrderService.createOrder(userId, idempotencyKey, validatedData, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, order, 'Order created successfully', 201);
     } catch (err) {
       next(err);

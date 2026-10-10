@@ -213,6 +213,8 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
 
   if (!isOpen) return null;
 
+  // Display-only: the server decides and enforces the minimum order (MINIMUM_ORDER_NOT_MET) when the order is created.
+  const minimumUnmet = !!preview?.minimumOrder && preview.minimumOrder.enabled && !preview.minimumOrder.met;
   const items = cart.cart?.items ?? [];
   const cartBusy = cart.isMutating;
 
@@ -547,6 +549,18 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                     <SummaryRow label="Total" value={preview.summary.netAmount} strong />
                   </div>
 
+                  {minimumUnmet && preview.minimumOrder && (
+                    <div role="alert" data-testid="minimum-order-notice" className="flex items-start gap-2 text-xs text-amber-100 bg-amber-500/10 border border-amber-500/40 rounded-xl px-3 py-2">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span>
+                        The minimum order is <strong>{formatInr(preview.minimumOrder.requiredAmount)}</strong>. Add <strong>{formatInr(preview.minimumOrder.shortfall)}</strong> more to place your order.{' '}
+                        <button type="button" onClick={() => setStep('cart')} className="underline font-bold">
+                          Back to cart
+                        </button>
+                      </span>
+                    </div>
+                  )}
+
                   <div className="flex items-start gap-2 text-[11px] text-stone-400 bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
                     <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                     <span>
@@ -566,7 +580,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                     </button>
                     <button
                       type="button"
-                      disabled={submitting}
+                      disabled={submitting || minimumUnmet}
                       onClick={() => void handlePlaceOrder()}
                       className="bg-amber-500 hover:bg-amber-400 text-stone-950 font-black px-5 py-3 rounded-2xl text-sm flex items-center gap-2 disabled:opacity-60"
                     >

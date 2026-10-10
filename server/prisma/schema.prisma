@@ -571,7 +571,7 @@ model Product {
   isActive        Boolean          @default(true)
   basePrice       Decimal          @db.Decimal(10, 2)
   containerDeposit Decimal         @default(0.00) @db.Decimal(10, 2)
-  taxRate         Decimal          @default(0.0500) @db.Decimal(5, 4)
+  taxRate         Decimal          @db.Decimal(5, 4)
   rating          Float            @default(4.8)
   reviewsCount    Int              @default(0)
   createdAt       DateTime         @default(now())
@@ -637,7 +637,7 @@ model CartItem {
 model Order {
   id                     String             @id @default(uuid())
   orderNumber            String             @unique
-  idempotencyKey         String?            @unique
+  idempotencyKey         String?
   customerProfileId      String?
   kitchenBranchId        String?
   status                 String             @default("PENDING") // PENDING, CONFIRMED, ACCEPTED, PREPARING, READY, DISPATCHED, DELIVERED, CANCELLED
@@ -656,6 +656,12 @@ model Order {
   isGuest                Boolean            @default(false)
   guestEmail             String?
   guestPhone             String?
+  // P7A: lifecycle timestamps, immutable pricing-policy snapshot and request fingerprint (idempotency integrity)
+  confirmedAt            DateTime?
+  cancelledAt            DateTime?
+  cancellationReason     String?
+  pricingSnapshot        Json?
+  requestFingerprint     String?
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -665,10 +671,31 @@ model Order {
   payments               Payment[]
   kot                    KitchenOrderTicket?
   delivery               DeliveryAssignment?
+  events                 OrderEvent[]
 
+  // Idempotency keys are scoped to the customer (NULLs are distinct, so legacy/no-key rows are unaffected)
+  @@unique([customerProfileId, idempotencyKey])
   @@index([orderNumber])
   @@index([customerProfileId])
+  @@index([customerProfileId, createdAt])
   @@map("orders")
+}
+
+// P7A: durable, append-only order status history. Written in the same transaction as every status change.
+model OrderEvent {
+  id          String   @id @default(uuid())
+  orderId     String
+  fromStatus  String?
+  toStatus    String
+  actorUserId String?
+  actorRole   String?
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@map("order_events")
 }
 
 model OrderItem {
@@ -682,7 +709,7 @@ model OrderItem {
   sku              String?
   unitPrice        Decimal  @db.Decimal(10, 2)
   quantity         Int
-  taxRate          Decimal  @default(0.0500) @db.Decimal(5, 4)
+  taxRate          Decimal  @db.Decimal(5, 4)
   taxAmount        Decimal  @default(0.00) @db.Decimal(10, 2)
   containerDeposit Decimal  @default(0.00) @db.Decimal(10, 2)
   totalPrice       Decimal  @db.Decimal(10, 2)

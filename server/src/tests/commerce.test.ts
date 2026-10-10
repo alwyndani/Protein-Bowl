@@ -105,6 +105,7 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
         name: 'Secret Draft Energy Bar',
         description: 'Unpublished draft item',
         basePrice: 99.0,
+        taxRate: 0.05, // explicit test fixture (there is no schema default any more)
         isPublished: false,
         isActive: true,
       },
@@ -118,6 +119,7 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
         name: 'Discontinued Bar',
         description: 'Inactive product',
         basePrice: 89.0,
+        taxRate: 0.05, // explicit test fixture (there is no schema default any more)
         isPublished: true,
         isActive: false,
       },
@@ -524,14 +526,15 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
   });
 
   it('28. Checkout preview does NOT create an Order', async () => {
-    const countBefore = await prisma.order.count();
+    // Scoped to this customer: other test files create orders concurrently against the same database.
+    const countBefore = await prisma.order.count({ where: { customerProfileId: profileAId } });
 
     await request(app)
       .post('/api/v1/checkout/preview')
       .set('Authorization', `Bearer ${tokenA}`)
       .send({ addressId: addressAId });
 
-    const countAfter = await prisma.order.count();
+    const countAfter = await prisma.order.count({ where: { customerProfileId: profileAId } });
     expect(countAfter).toBe(countBefore); // Zero orders created by preview!
   });
 
@@ -614,12 +617,14 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
     const failRes = await request(app)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${tokenA}`)
+      .set('x-idempotency-key', `IK-TEST-${ts}-INVALID-ADDR`)
       .send({
         addressId: 'invalid-address-id',
         paymentMethod: 'ONLINE',
       });
 
     expect(failRes.status).toBe(400);
+    expect(failRes.body.error).toBe('INVALID_ADDRESS');
 
     // Cart should still contain the item!
     const cartRes = await request(app)
@@ -643,8 +648,10 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
     expect(retryRes.body.data.id).toBe(createdOrderId); // Identical order returned!
   });
 
-  it('35. Same idempotency key cannot be used by a second customer account', async () => {
-    const conflictRes = await request(app)
+  it('35. Idempotency keys are scoped per customer: a second customer reusing the key cannot replay or detect the first order', async () => {
+    // P7A: the key is unique per customer, so Customer B is evaluated on its own (no cross-customer 409 that would
+    // reveal the key exists, and never Customer A's order). B has no cart / uses A's address, so the request simply fails.
+    const res = await request(app)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${tokenB}`)
       .set('x-idempotency-key', orderIdempotencyKey)
@@ -653,7 +660,9 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
         paymentMethod: 'ONLINE',
       });
 
-    expect(conflictRes.status).toBe(409); // Conflict!
+    expect(res.status).not.toBe(409);
+    expect(res.status).not.toBe(201);
+    expect(JSON.stringify(res.body)).not.toContain(createdOrderId);
   });
 
   it('36. Customer A cannot view Customer B Order', async () => {

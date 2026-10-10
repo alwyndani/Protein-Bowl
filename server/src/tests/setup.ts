@@ -25,3 +25,18 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+// Deterministic commerce policy for the whole test run, independent of any developer .env.
+// These are TEST FIXTURE values (they keep the pre-P7A expectations such as a 40.00 delivery fee under a 499.00 threshold
+// stable); they are not Protein Bowl business policy.
+process.env.COMMERCE_TAX_MODE = 'EXCLUSIVE';
+process.env.COMMERCE_DELIVERY_FEE = '40.00';
+process.env.COMMERCE_FREE_DELIVERY_ENABLED = 'true';
+process.env.COMMERCE_FREE_DELIVERY_THRESHOLD = '499.00';
+process.env.COMMERCE_PACKAGING_FEE = '0.00';
+process.env.COMMERCE_MIN_ORDER_VALUE = '0';
+process.env.COMMERCE_DELIVERY_TAXABLE = 'false';
+process.env.COMMERCE_PACKAGING_TAXABLE = 'false';
+process.env.COMMERCE_MAX_LINE_QUANTITY = '20';
+process.env.COMMERCE_MAX_CART_UNITS = '50';
+process.env.COMMERCE_COD_ENABLED = 'false';

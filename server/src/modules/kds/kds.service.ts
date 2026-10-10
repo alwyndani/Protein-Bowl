@@ -1,8 +1,18 @@
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { BranchFilter, branchWhere } from '../../authz/branchScope.js';
+import { AuditContext } from '../audit/audit.service.js';
+import { OrderTransitionService, TransitionActor } from '../order/orderTransition.service.js';
 
 export const KOT_STATUSES = ['QUEUED', 'PREPARING', 'READY', 'SERVED'] as const;
+
+/** Tickets only move forward; SERVED is terminal (no regression). Same-status requests are idempotent no-ops. */
+const KOT_TRANSITIONS: Record<string, readonly string[]> = {
+  QUEUED: ['PREPARING'],
+  PREPARING: ['READY'],
+  READY: ['SERVED'],
+  SERVED: []
+};
 
 export class KDSService {
   /**
@@ -36,23 +46,35 @@ export class KDSService {
     return ticket?.branchId ?? null;
   }
 
-  public static async updateKOTStatus(kotId: string, status: string) {
+  /**
+   * Move a ticket forward. The ORDER status is changed only through OrderTransitionService, in the SAME transaction:
+   * if the order may not enter that status (unpaid, no branch, wrong state, role/branch not permitted) the whole change
+   * is rejected and the ticket is left untouched. Nothing here writes Order.status directly.
+   */
+  public static async updateKOTStatus(kotId: string, status: string, actor: TransitionActor, context?: AuditContext) {
     if (!(KOT_STATUSES as readonly string[]).includes(status)) {
       throw new AppError('Invalid KOT status', 400, 'INVALID_STATUS');
     }
 
-    const updated = await prisma.kitchenOrderTicket.update({
-      where: { id: kotId },
-      data: { status },
-      include: { order: { select: { id: true, orderNumber: true, status: true } } }
-    });
+    return await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "kitchen_order_tickets" WHERE "id" = ${kotId} FOR UPDATE`;
+      const ticket = await tx.kitchenOrderTicket.findUnique({ where: { id: kotId }, select: { id: true, orderId: true, status: true } });
+      if (!ticket) throw new AppError('KOT not found', 404, 'NOT_FOUND');
 
-    // Sync order status
-    if (status === 'PREPARING') {
-      await prisma.order.update({ where: { id: updated.orderId }, data: { status: 'PREPARING' } });
-    } else if (status === 'READY') {
-      await prisma.order.update({ where: { id: updated.orderId }, data: { status: 'READY' } });
-    }
-    return updated;
+      if (ticket.status !== status) {
+        if (!(KOT_TRANSITIONS[ticket.status] ?? []).includes(status)) {
+          throw new AppError(`A ticket that is ${ticket.status} cannot become ${status}`, 409, 'INVALID_KOT_TRANSITION');
+        }
+        if (status === 'PREPARING' || status === 'READY') {
+          await OrderTransitionService.transition({ orderId: ticket.orderId, to: status, actor, context }, tx);
+        }
+        await tx.kitchenOrderTicket.update({ where: { id: kotId }, data: { status } });
+      }
+
+      return await tx.kitchenOrderTicket.findUnique({
+        where: { id: kotId },
+        include: { order: { select: { id: true, orderNumber: true, status: true } } }
+      });
+    });
   }
 }

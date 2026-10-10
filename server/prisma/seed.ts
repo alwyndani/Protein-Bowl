@@ -216,6 +216,7 @@ async function main() {
       slug: 'kerala-spiced-chicken-bowl',
       description: 'Marinated roasted chicken breast with brown rice, steamed broccoli, and roasted pepper dip.',
       basePrice: 299.00,
+      taxRate: 0.0500, // explicit DEMO seed data (not a schema default, not production policy)
       variants: {
         create: { name: 'Standard (45g Protein)', sku: 'PB-BOWL-01', price: 299.00, calories: 520, protein: 45, carbs: 48, fat: 12 }
       }
@@ -232,6 +233,7 @@ async function main() {
       description: 'Living probiotic fermented pineapple brew infused with star anise and wild cinnamon.',
       isTepache: true,
       basePrice: 149.00,
+      taxRate: 0.0500, // explicit DEMO seed data (not a schema default, not production policy)
       variants: {
         create: { name: '500ml Glass Bottle', sku: 'PB-TEP-500', price: 149.00, calories: 45, protein: 1, carbs: 10, fat: 0 }
       }

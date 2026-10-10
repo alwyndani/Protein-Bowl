@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { prisma } from '../../config/database.js';
 
 /** Keys whose values must never be written to the audit log (matched case-insensitively, anywhere in the payload). */
-const SENSITIVE_KEY_PATTERN = /pass(word)?|hash|token|secret|authorization|cookie|api[-_]?key|credential|otp|pin\b/i;
+const SENSITIVE_KEY_PATTERN = /pass(word)?|hash|token|secret|authorization|cookie|api[-_]?key|credential|otp|pin\b|signature|cvv|cvc|vpa|(?:^|[^a-z])card/i;
 const REDACTED = '[REDACTED]';
 const MAX_STRING_LENGTH = 500;
 const MAX_DEPTH = 6;
