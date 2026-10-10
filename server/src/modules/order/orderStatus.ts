@@ -38,8 +38,9 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   // Confirmation is never a human/customer action: only the trusted payment path (P7B) may confirm an ONLINE order.
   'PENDING->CONFIRMED': ['SYSTEM'],
   'PENDING->CANCELLED': ['SYSTEM', 'CUSTOMER_OWNER', RoleEnum.SUPER_ADMIN],
-  // Technically cancellable later, but only by SUPER_ADMIN (customer cancellation windows are a P7C policy decision).
-  'CONFIRMED->CANCELLED': [RoleEnum.SUPER_ADMIN],
+  // P7C approved policy: the owning customer may cancel until the kitchen accepts (PENDING, CONFIRMED). ACCEPTED and later: SUPER_ADMIN only.
+  // A PAID order can only be cancelled together with a registered refund intent (see PAID_CANCELLATION_REQUIRES_REFUND_INTENT).
+  'CONFIRMED->CANCELLED': ['CUSTOMER_OWNER', RoleEnum.SUPER_ADMIN],
   'ACCEPTED->CANCELLED': [RoleEnum.SUPER_ADMIN],
   'PREPARING->CANCELLED': [RoleEnum.SUPER_ADMIN],
   'READY->CANCELLED': [RoleEnum.SUPER_ADMIN],
@@ -56,10 +57,12 @@ export function transitionKey(from: OrderStatus, to: OrderStatus): string {
 }
 
 /**
- * Cancelling an order that has been paid needs the refund workflow (P7C). Until it exists a paid order cannot be
- * cancelled, so money can never be stranded without a refund path.
+ * P7C: cancelling an order whose money has been received is only possible through the cancellation service, which creates the
+ * full Refund intent in the SAME transaction and passes its id to the transition. The transition verifies that intent really
+ * exists (REQUESTED, same order) and that the order is CONFIRMED or ACCEPTED. PREPARING/READY (and later) stay blocked for paid
+ * orders: their financial handling belongs to P8/P9. There is no flag, role or test bypass.
  */
-export const PAID_ORDER_CANCELLATION_SUPPORTED = false;
+export const PAID_CANCELLATION_REQUIRES_REFUND_INTENT = true;
 
 /** Payment statuses meaning money has been received for the order. */
 export const PAID_PAYMENT_STATUSES: readonly string[] = ['PAID', 'PARTIALLY_REFUNDED', 'REFUNDED'];

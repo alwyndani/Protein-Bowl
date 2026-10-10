@@ -9,6 +9,7 @@ import { CreateOrderDto } from './order.validator.js';
 import { computeRequestFingerprint } from './idempotency.js';
 import { nextOrderNumber } from './orderNumber.js';
 import { toCustomerOrderDto, CustomerOrderDto } from './order.dto.js';
+import { RefundViewService } from '../refund/refundView.service.js';
 
 export const PAYMENT_METHODS = ['ONLINE', 'COD'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
@@ -331,7 +332,8 @@ export class OrderService {
       orderBy: { createdAt: 'asc' },
       select: { fromStatus: true, toStatus: true, createdAt: true }
     });
-    return toCustomerOrderDto(order, events);
+    const derived = (await RefundViewService.deriveForOrders([order])).get(order.id);
+    return toCustomerOrderDto(order, events, derived);
   }
 
   /**
@@ -351,7 +353,8 @@ export class OrderService {
       include: { items: true },
       orderBy: { createdAt: 'desc' }
     });
-    return orders.map((o) => toCustomerOrderDto(o));
+    const derived = await RefundViewService.deriveForOrders(orders);
+    return orders.map((o) => toCustomerOrderDto(o, undefined, derived.get(o.id)));
   }
 
   /**

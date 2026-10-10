@@ -2,12 +2,12 @@ import { Prisma, RoleEnum } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
+import { PAID_CANCELLATION_FROM_STATES } from '../refund/cancellationPolicy.js';
 import {
   KITCHEN_BRANCH_REQUIRED_FOR,
   OPERATIONAL_ORDER_STATUSES,
   ORDER_TRANSITIONS,
   OrderStatus,
-  PAID_ORDER_CANCELLATION_SUPPORTED,
   PAID_PAYMENT_STATUSES,
   TERMINAL_ORDER_STATUSES,
   TRANSITION_PARTIES,
@@ -35,6 +35,8 @@ export interface TransitionRequest {
   to: OrderStatus;
   actor: TransitionActor;
   reason?: string | null;
+  /** P7C: id of the Refund intent created in the SAME transaction (required to cancel an order whose money was received). Only the cancellation service passes it. */
+  refundIntentId?: string;
   context?: AuditContext;
 }
 
@@ -107,7 +109,7 @@ export class OrderTransitionService {
     this.assertActorMayPerform(actor, from, to, order.customerProfileId);
 
     if (to === 'CANCELLED') {
-      this.assertCancellable(order.paymentStatus, actor, request.reason);
+      await this.assertCancellable(tx, { id: order.id, paymentStatus: order.paymentStatus }, from, actor, request);
     }
 
     if ((OPERATIONAL_ORDER_STATUSES as readonly string[]).includes(to)) {
@@ -188,11 +190,17 @@ export class OrderTransitionService {
     }
   }
 
-  private static assertCancellable(paymentStatus: string, actor: TransitionActor, reason?: string | null): void {
-    if (!PAID_ORDER_CANCELLATION_SUPPORTED && (PAID_PAYMENT_STATUSES as readonly string[]).includes(paymentStatus)) {
-      throw new AppError('A paid order cannot be cancelled until the refund workflow is available', 409, 'ORDER_NOT_CANCELLABLE');
+  private static async assertCancellable(tx: Tx, order: { id: string; paymentStatus: string }, from: OrderStatus, actor: TransitionActor, request: TransitionRequest): Promise<void> {
+    if ((PAID_PAYMENT_STATUSES as readonly string[]).includes(order.paymentStatus)) {
+      const intentOk =
+        !!request.refundIntentId &&
+        (PAID_CANCELLATION_FROM_STATES as readonly string[]).includes(from) &&
+        (await tx.refund.count({ where: { id: request.refundIntentId, orderId: order.id, status: 'REQUESTED' } })) === 1;
+      if (!intentOk) {
+        throw new AppError('A paid order can only be cancelled together with its refund', 409, 'ORDER_NOT_CANCELLABLE');
+      }
     }
-    if (actor.kind === 'USER' && actor.roles.includes(RoleEnum.SUPER_ADMIN) && (!reason || reason.trim().length < 3)) {
+    if (actor.kind === 'USER' && actor.roles.includes(RoleEnum.SUPER_ADMIN) && (!request.reason || request.reason.trim().length < 3)) {
       throw new AppError('A reason is required to cancel an order as an administrator', 422, 'REASON_REQUIRED');
     }
   }

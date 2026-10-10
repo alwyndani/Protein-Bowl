@@ -314,13 +314,13 @@ describe('P7A order status catalogue', () => {
     for (const from of ORDER_STATUSES) for (const to of ORDER_TRANSITIONS[from]) expect(ORDER_STATUSES).toContain(to);
   });
 
-  it('every legal edge has an explicit list of parties; no edge lists CUSTOMER_OWNER except cancelling an unconfirmed order', () => {
+  it('every legal edge has an explicit list of parties; CUSTOMER_OWNER appears only on the approved P7C customer cancellation edges (PENDING, CONFIRMED)', () => {
     for (const from of ORDER_STATUSES) {
       for (const to of ORDER_TRANSITIONS[from]) {
         const parties = TRANSITION_PARTIES[transitionKey(from, to)];
         expect(parties, `${from}->${to}`).toBeDefined();
         expect(parties.length).toBeGreaterThan(0);
-        if (parties.includes('CUSTOMER_OWNER')) expect(transitionKey(from, to)).toBe('PENDING->CANCELLED');
+        if (parties.includes('CUSTOMER_OWNER')) expect(['PENDING->CANCELLED', 'CONFIRMED->CANCELLED']).toContain(transitionKey(from, to));
       }
     }
   });

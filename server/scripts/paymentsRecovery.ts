@@ -5,11 +5,18 @@
  *   npm run payments:recovery -- abandon --session <paymentSessionId> --operator <name> --reason "<why>"
  *   npm run payments:recovery -- replay  --event <webhookEventRowId>  --operator <name> --reason "<why>"
  *
+ *   npm run payments:recovery -- refund-inspect   --refund <refundId>
+ *   npm run payments:recovery -- refund-reconcile  --refund <refundId> --operator <name> --reason "<why>"   (look the refund up again at the provider; applies only what the provider proves)
+ *   npm run payments:recovery -- refund-review     --refund <refundId> --operator <name> --reason "<why>"   (UNKNOWN -> REVIEW)
+ *   npm run payments:recovery -- refund-abandon    --refund <refundId> --operator <name> --reason "<why>" --confirm-absent-at-provider   (REVIEW -> ABANDONED; refused if the provider holds the refund)
+ *   npm run payments:recovery -- refund-ack-external --refund <refundId> --operator <name> --reason "<why>"
+ *
  * Every action re-verifies provider state where it matters, requires an operator and a reason, and writes an AuditLog row.
  * None of them can mark an order PAID: only trusted CAPTURED provider evidence processed by the settlement service can.
  */
 import { prisma } from '../src/config/database.js';
 import { PaymentManualRecoveryService } from '../src/modules/payment/paymentManualRecovery.service.js';
+import { RefundManualRecoveryService } from '../src/modules/refund/refundManualRecovery.service.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -28,8 +35,18 @@ async function main() {
   } else if (command === 'replay') {
     const result = await PaymentManualRecoveryService.replayEvent(arg('event') ?? '', op);
     console.log(JSON.stringify({ ok: true, command, result }));
+  } else if (command === 'refund-inspect') {
+    console.log(JSON.stringify({ ok: true, command, result: await RefundManualRecoveryService.inspect(arg('refund') ?? '') }));
+  } else if (command === 'refund-reconcile') {
+    console.log(JSON.stringify({ ok: true, command, result: await RefundManualRecoveryService.reconcile(arg('refund') ?? '', op) }));
+  } else if (command === 'refund-review') {
+    console.log(JSON.stringify({ ok: true, command, result: await RefundManualRecoveryService.flagForReview(arg('refund') ?? '', op) }));
+  } else if (command === 'refund-abandon') {
+    console.log(JSON.stringify({ ok: true, command, result: await RefundManualRecoveryService.abandon(arg('refund') ?? '', op, process.argv.includes('--confirm-absent-at-provider')) }));
+  } else if (command === 'refund-ack-external') {
+    console.log(JSON.stringify({ ok: true, command, result: await RefundManualRecoveryService.acknowledgeExternal(arg('refund') ?? '', op) }));
   } else {
-    console.error('Usage: payments:recovery -- <adopt|abandon|replay> ...  (see the header of scripts/paymentsRecovery.ts)');
+    console.error('Usage: payments:recovery -- <adopt|abandon|replay|refund-inspect|refund-reconcile|refund-review|refund-abandon|refund-ack-external> ...  (see the header of scripts/paymentsRecovery.ts)');
     return 1;
   }
   return 0;

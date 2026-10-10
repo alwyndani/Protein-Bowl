@@ -15,7 +15,7 @@ import { parseRazorpayWebhook } from '../modules/payment/razorpayWebhook.js';
 import { getPaymentProvider, setPaymentProviderForTests } from '../modules/payment/providerRegistry.js';
 
 const SRC = join(__dirname, '..');
-const RZP = { PAYMENT_PROVIDER: 'razorpay', RAZORPAY_KEY_ID: 'rzp_test_unit', RAZORPAY_KEY_SECRET: 'unit-key-secret', RAZORPAY_WEBHOOK_SECRET: 'unit-webhook-secret' };
+const RZP = { PAYMENT_PROVIDER: 'razorpay', RAZORPAY_KEY_ID: 'rzp_test_unit', RAZORPAY_KEY_SECRET: 'unit-key-secret', RAZORPAY_WEBHOOK_SECRET: 'unit-webhook-secret', PAYMENT_REFUND_INLINE_SUBMIT: 'true' };
 const parse = (raw: Record<string, string | undefined>, env = 'production') => parsePaymentConfig(raw, env);
 
 // ------------------------------------------------------------------------------------------------ configuration

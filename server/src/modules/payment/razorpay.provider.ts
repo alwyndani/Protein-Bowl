@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { PaymentConfig } from '../../config/paymentConfig.js';
 import {
   CreateProviderOrderInput,
+  CreateProviderRefundInput,
+  ProviderRefund,
   ParsedWebhook,
   PaymentProvider,
   ProviderDefiniteError,
@@ -9,7 +11,7 @@ import {
   ProviderPaymentInfo,
   ProviderUnknownError
 } from './provider.types.js';
-import { normalizeRazorpayPayment, parseRazorpayWebhook } from './razorpayWebhook.js';
+import { normalizeRazorpayPayment, normalizeRazorpayRefund, parseRazorpayWebhook } from './razorpayWebhook.js';
 import { hmacSha256Hex, safeEqualStrings, verifyHmacSignature } from './signatures.js';
 
 /**
@@ -164,6 +166,58 @@ export class RazorpayPaymentProvider implements PaymentProvider {
     const info = normalizeRazorpayPayment(json);
     if (!info) throw new ProviderUnknownError('PROVIDER_BAD_RESPONSE');
     return info;
+  }
+
+  // ------------------------------------------------------------------ refunds (P7C)
+  /**
+   * Full refund: explicit amount in paise, speed 'normal', Refund.id as receipt. NEVER retried here. Only an explicit 4xx answer with a
+   * provider error body is a DEFINITE rejection (the caller still looks the refund up by exact receipt before concluding anything,
+   * because a duplicate-receipt rejection means a refund may already exist). Everything else is an UNKNOWN outcome.
+   */
+  async createRefund(input: CreateProviderRefundInput): Promise<ProviderRefund> {
+    const { status, json } = await this.http('POST', `/payments/${encodeURIComponent(input.providerPaymentId)}/refund`, {
+      amount: input.amountMinor,
+      speed: 'normal',
+      receipt: input.receipt,
+      notes: input.notes
+    });
+    if (status >= 200 && status < 300) {
+      const refund = normalizeRazorpayRefund(json);
+      if (!refund) throw new ProviderUnknownError('PROVIDER_BAD_RESPONSE');
+      return refund;
+    }
+    if (DEFINITE_CREATE_STATUSES.has(status)) {
+      const err = errorBodySchema.safeParse(json);
+      if (err.success) {
+        const code = err.data.error.code?.replace(/[^A-Za-z0-9_]/g, '').slice(0, 60) || 'PROVIDER_REJECTED';
+        const description = (err.data.error as { description?: unknown }).description;
+        const detail = typeof description === 'string' ? description.replace(/[^ -~]/g, '').slice(0, 120) : null;
+        throw new ProviderDefiniteError(code, 'Provider rejected the refund', detail);
+      }
+    }
+    throw new ProviderUnknownError(`PROVIDER_HTTP_${status}`);
+  }
+
+  async fetchRefund(providerRefundId: string): Promise<ProviderRefund | null> {
+    const json = await this.read(`/refunds/${encodeURIComponent(providerRefundId)}`);
+    if (json === null) return null;
+    const refund = normalizeRazorpayRefund(json);
+    if (!refund) throw new ProviderUnknownError('PROVIDER_BAD_RESPONSE');
+    return refund;
+  }
+
+  async listPaymentRefunds(providerPaymentId: string): Promise<ProviderRefund[]> {
+    const json = await this.read(`/payments/${encodeURIComponent(providerPaymentId)}/refunds?count=100`);
+    if (json === null) throw new ProviderUnknownError('PROVIDER_PAYMENT_NOT_FOUND'); // a missing payment is not an empty list
+    const col = collectionSchema.safeParse(json);
+    if (!col.success) throw new ProviderUnknownError('PROVIDER_BAD_RESPONSE');
+    const out: ProviderRefund[] = [];
+    for (const item of col.data.items) {
+      const refund = normalizeRazorpayRefund(item);
+      if (!refund) throw new ProviderUnknownError('PROVIDER_BAD_RESPONSE');
+      out.push(refund);
+    }
+    return out;
   }
 
   // ------------------------------------------------------------------ signatures

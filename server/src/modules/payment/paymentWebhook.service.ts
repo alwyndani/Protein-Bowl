@@ -8,7 +8,8 @@ import { PaymentSettlementService } from './paymentSettlement.service.js';
 import { backoffMs, paymentAlert, safeCode } from './paymentOps.js';
 import { EVENT_STATUS, ProviderPaymentStatus } from './paymentStatus.js';
 import { getPaymentProvider } from './providerRegistry.js';
-import { ParsedWebhook, PaymentProvider, ProviderPaymentInfo, ProviderUnknownError, WebhookKind } from './provider.types.js';
+import { ParsedWebhook, PaymentProvider, ProviderPaymentInfo, ProviderRefund, ProviderUnknownError, WebhookKind } from './provider.types.js';
+import { RefundService } from '../refund/refund.service.js';
 
 /** What is persisted about a delivery: normalized, PII-free. NEVER the raw body or the provider payload. */
 interface NormalizedEvent {
@@ -22,6 +23,8 @@ interface NormalizedEvent {
   method: string | null;
   errorCode: string | null;
   errorReason: string | null;
+  /** refund.* events: normalized refund entity (ids, amount, currency, status, receipt only). */
+  refund?: ProviderRefund | null;
 }
 
 export interface IngestResult {
@@ -46,7 +49,8 @@ function toNormalized(parsed: ParsedWebhook): NormalizedEvent {
     currency: p?.currency ?? null,
     method: p?.method ?? null,
     errorCode: p?.errorCode ?? null,
-    errorReason: p?.errorReason ?? null
+    errorReason: p?.errorReason ?? null,
+    ...(parsed.kind === 'REFUND' ? { refund: parsed.refund ?? null } : {})
   };
 }
 
@@ -154,7 +158,14 @@ export class PaymentWebhookService {
     };
 
     try {
-      if (n.kind === 'REFUND') return await finish('IGNORED', { ignoredReason: 'DEFERRED_P7C' }); // refunds are recovered from the provider in P7C
+      if (n.kind === 'REFUND') {
+        if (!n.refund) return await finish('FAILED', { lastError: 'REFUND_PAYLOAD_UNRECOGNISED' }); // deterministic: a human must look
+        const handled = await RefundService.handleProviderRefund(n.refund, { allowProviderCalls: opts.allowProviderCalls, via: opts.workerId === 'inline' ? 'WEBHOOK' : 'RECONCILIATION' });
+        if (handled.kind === 'RETRY') return await retry(handled.reason);
+        if (handled.kind === 'IGNORE') return await finish('IGNORED', { ignoredReason: handled.reason });
+        if (handled.kind === 'FAIL') return await finish('FAILED', { lastError: handled.reason });
+        return await finish('PROCESSED');
+      }
       if (n.kind !== 'PAYMENT') return await finish('IGNORED', { ignoredReason: 'UNSUPPORTED_EVENT_TYPE' });
 
       let info = infoFromNormalized(n);

@@ -32,6 +32,8 @@ export interface PaymentConfig {
   readonly providerTimeoutMs: number;
   readonly leaseMs: number;
   readonly batchSize: number;
+  /** P7C: attempt provider submission right after a cancellation commits (best effort; the reconciliation worker is what guarantees it). */
+  readonly refundInlineSubmit: boolean;
 }
 
 export class PaymentConfigError extends Error {
@@ -44,6 +46,22 @@ export class PaymentConfigError extends Error {
 type Raw = Record<string, string | undefined>;
 
 const INT_RE = /^\d{1,9}$/;
+
+/**
+ * P7C PAYMENT_REFUND_INLINE_SUBMIT: LATENCY ONLY. true = right after a cancellation commits, also try to submit the refund in the
+ * background; false = leave it to the reconciliation worker. Both paths run the SAME RefundService.submit compare-and-set, so the
+ * setting can never change financial correctness. It must be spelled exactly true|false; in production it must be set explicitly
+ * (no hidden default); development/test default to true.
+ */
+function parseInlineSubmit(raw: Raw, production: boolean): boolean {
+  const v = raw.PAYMENT_REFUND_INLINE_SUBMIT?.trim().toLowerCase();
+  if (v === undefined || v === '') {
+    if (production) throw new PaymentConfigError('PAYMENT_REFUND_INLINE_SUBMIT must be set explicitly in production (true or false)');
+    return true;
+  }
+  if (v !== 'true' && v !== 'false') throw new PaymentConfigError('PAYMENT_REFUND_INLINE_SUBMIT must be exactly true or false');
+  return v === 'true';
+}
 
 function int(raw: Raw, key: string, fallback: number, min: number, max: number): number {
   const v = raw[key];
@@ -111,7 +129,8 @@ export function parsePaymentConfig(raw: Raw, nodeEnv: string): PaymentConfig {
     retry: Object.freeze({ maxAttempts: int(raw, 'PAYMENT_RETRY_MAX_ATTEMPTS', 12, 1, 100), baseMs: baseSeconds * 1000, maxMs: maxSeconds * 1000 }),
     providerTimeoutMs: int(raw, 'PAYMENT_PROVIDER_TIMEOUT_MS', 8000, 500, 60_000),
     leaseMs: int(raw, 'PAYMENT_RECONCILE_LEASE_SECONDS', 120, 5, 3600) * 1000,
-    batchSize: int(raw, 'PAYMENT_RECONCILE_BATCH_SIZE', 25, 1, 200)
+    batchSize: int(raw, 'PAYMENT_RECONCILE_BATCH_SIZE', 25, 1, 200),
+    refundInlineSubmit: parseInlineSubmit(raw, production)
   }) as PaymentConfig;
 }
 

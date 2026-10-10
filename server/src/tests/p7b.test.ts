@@ -845,13 +845,13 @@ describe('P7B — payment sessions, verification, ledger, webhooks, reconciliati
       expect((await prisma.payment.findFirstOrThrow({ where: { orderId: order.id } })).status).toBe('PENDING'); // a failed try does not kill the session
     });
 
-    it('61. unsupported events are IGNORED with a reason; refund events are deferred to P7C (recoverable from the provider), not silently lost', async () => {
+    it('61. unsupported events are IGNORED with a reason; refund events are processed since P7C (an unrecognisable refund payload is FAILED for a human, never silently ignored)', async () => {
       const down = mock.buildWebhook('payment.downtime.started', null, { eventId: `evt_${ts}_61a` });
       await webhook(down.raw, down.headers);
       const refund = mock.buildWebhook('refund.processed', null, { eventId: `evt_${ts}_61b`, extra: { refund: { entity: { id: 'rfnd_1', payment_id: 'pay_x', amount: 100 } } } });
       await webhook(refund.raw, refund.headers);
       expect(await prisma.paymentWebhookEvent.findUniqueOrThrow({ where: { provider_eventId: { provider: 'mock', eventId: `evt_${ts}_61a` } } })).toMatchObject({ status: 'IGNORED', ignoredReason: 'UNSUPPORTED_EVENT_TYPE' });
-      expect(await prisma.paymentWebhookEvent.findUniqueOrThrow({ where: { provider_eventId: { provider: 'mock', eventId: `evt_${ts}_61b` } } })).toMatchObject({ status: 'IGNORED', ignoredReason: 'DEFERRED_P7C' });
+      expect(await prisma.paymentWebhookEvent.findUniqueOrThrow({ where: { provider_eventId: { provider: 'mock', eventId: `evt_${ts}_61b` } } })).toMatchObject({ status: 'FAILED', lastError: 'REFUND_PAYLOAD_UNRECOGNISED' });
     });
 
     it('62. an event that matches no local session is NOT ignored: it stays RETRY_PENDING for the worker', async () => {

@@ -951,7 +951,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
           if (statSync(full).isDirectory()) {
             if (name === 'tests') continue;
             walk(full);
-          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts') && !full.endsWith('paymentSettlement.service.ts')) {
+          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts') && !full.endsWith('paymentSettlement.service.ts') && !full.endsWith('refundSettlement.service.ts')) {
             const text = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
             if (/\.order\.(update|updateMany|upsert)\s*\(/.test(text) || /\border\.(update|updateMany|upsert)\s*\(/.test(text)) offenders.push(full);
           }
@@ -968,6 +968,17 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       const orderWrites = settlement.match(/order\.update(?:Many)?\(\{[\s\S]*?\}\);/g) ?? [];
       expect(orderWrites.length).toBeGreaterThan(0);
       for (const w of orderWrites) expect(w).not.toMatch(/(^|[^A-Za-z])status\s*:/);
+
+      // P7C: the refund settlement service may write ONLY Order.paymentStatus (-> REFUNDED, under the order lock), never Order.status.
+      const refundSettlement = readFileSync(join(root, 'modules', 'refund', 'refundSettlement.service.ts'), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const refundOrderWrites = refundSettlement.match(/order\.update(?:Many)?\(\{[\s\S]*?\}\);/g) ?? [];
+      expect(refundOrderWrites.length).toBeGreaterThan(0);
+      for (const w of refundOrderWrites) {
+        expect(w).not.toMatch(/(^|[^A-Za-z])status\s*:/);
+        expect(w).toMatch(/paymentStatus\s*:\s*'REFUNDED'/);
+      }
     });
   });
 });

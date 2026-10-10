@@ -18,6 +18,15 @@ export async function lockProviderPayment(tx: Tx, provider: string, providerPaym
   await tx.$queryRaw`SELECT "id" FROM "provider_payments" WHERE "provider" = ${provider} AND "providerPaymentId" = ${providerPaymentId} FOR UPDATE`;
 }
 
+export async function lockProviderPaymentById(tx: Tx, ledgerId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "provider_payments" WHERE "id" = ${ledgerId} FOR UPDATE`;
+}
+
+/** Lock order for refunds (P7C): Order -> ProviderPayment -> Refund. */
+export async function lockRefund(tx: Tx, refundId: string): Promise<void> {
+  await tx.$queryRaw`SELECT "id" FROM "refunds" WHERE "id" = ${refundId} FOR UPDATE`;
+}
+
 /** Short, safe error code for persistence/audit: never a provider message, never a stack. */
 export function safeCode(value: unknown, fallback = 'ERROR'): string {
   const code = (value as { code?: unknown } | undefined)?.code;

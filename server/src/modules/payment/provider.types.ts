@@ -24,6 +24,22 @@ export interface ProviderPaymentInfo {
   errorReason: string | null;
 }
 
+/** Provider-side refund status, normalized. Distinct from the Protein Bowl Refund status. */
+export type ProviderRefundStatus = 'PENDING' | 'PROCESSED' | 'FAILED';
+
+/** Normalized provider refund: only fields Protein Bowl may keep. */
+export interface ProviderRefund {
+  providerRefundId: string;
+  providerPaymentId: string;
+  amountMinor: number;
+  currency: string;
+  status: ProviderRefundStatus;
+  /** The receipt Protein Bowl sent (Refund.id). null for refunds created elsewhere (e.g. the provider dashboard). */
+  receipt: string | null;
+  /** How the provider processed it (normal | instant) when stated. */
+  speedProcessed: string | null;
+}
+
 export type WebhookKind = 'PAYMENT' | 'REFUND' | 'OTHER';
 
 /** Normalized, PII-free view of a verified webhook. The raw body is never kept. */
@@ -36,11 +52,13 @@ export interface ParsedWebhook {
   providerOrderId: string | null;
   providerPaymentId: string | null;
   payment: ProviderPaymentInfo | null;
+  /** Normalized refund entity for refund.* events (null when absent / not parseable). */
+  refund?: ProviderRefund | null;
 }
 
 /** The provider definitively rejected the request: nothing was created. */
 export class ProviderDefiniteError extends Error {
-  constructor(public readonly code: string, message = 'Provider rejected the request') {
+  constructor(public readonly code: string, message = 'Provider rejected the request', public readonly detail: string | null = null) {
     super(message);
     this.name = 'ProviderDefiniteError';
   }
@@ -52,6 +70,16 @@ export class ProviderUnknownError extends Error {
     super(message);
     this.name = 'ProviderUnknownError';
   }
+}
+
+export interface CreateProviderRefundInput {
+  /** The exact provider payment id of the captured ProviderPayment. */
+  providerPaymentId: string;
+  amountMinor: number;
+  currency: 'INR';
+  /** Refund.id: the provider receipt. */
+  receipt: string;
+  notes: Record<string, string>;
 }
 
 export interface CreateProviderOrderInput {
@@ -83,6 +111,15 @@ export interface PaymentProvider {
   verifyWebhookSignature(rawBody: Buffer, signature: string | undefined): boolean;
   /** Parse an ALREADY-VERIFIED webhook body. Returns null when it is not valid JSON of the expected shape. */
   parseWebhook(rawBody: Buffer, headers: Record<string, string | string[] | undefined>): ParsedWebhook | null;
+  /**
+   * Create a FULL refund (explicit amount, normal speed). NEVER retried internally: any uncertainty throws ProviderUnknownError;
+   * only an explicit provider rejection throws ProviderDefiniteError.
+   */
+  createRefund(input: CreateProviderRefundInput): Promise<ProviderRefund>;
+  /** null = the provider definitively says the refund does not exist. */
+  fetchRefund(providerRefundId: string): Promise<ProviderRefund | null>;
+  /** All refunds of one payment. An EMPTY list is NOT proof that no refund exists (listing consistency is unverified). */
+  listPaymentRefunds(providerPaymentId: string): Promise<ProviderRefund[]>;
   /** Public (non-secret) data the client needs to open checkout. */
   getPublicCheckoutConfig(): { keyId: string };
 }

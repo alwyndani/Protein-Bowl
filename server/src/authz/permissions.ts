@@ -17,7 +17,9 @@ export type Permission =
   | 'audit:read'
   | 'branch:read'
   | 'branch:write'
-  | 'payments:read';
+  | 'payments:read'
+  | 'refunds:read'
+  | 'refunds:write';
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
@@ -25,9 +27,11 @@ export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permis
     // Platform administration (decision D10: audit history is SUPER_ADMIN-only; MD gets branch READ only)
     'staff:admin', 'audit:read', 'branch:read', 'branch:write',
     // Payments (P7B): READ-ONLY operational visibility; nobody can mark an order paid through the API
-    'payments:read'
+    'payments:read',
+    // Refunds / financial cancellation (P7C): SUPER_ADMIN only for mutation; MD read-only
+    'refunds:read', 'refunds:write'
   ],
-  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read'],
+  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read'],
   [RoleEnum.CHEF]: ['kds:read', 'kds:write'],
   [RoleEnum.PROCUREMENT]: ['procurement:read', 'procurement:write'],
   [RoleEnum.POS]: ['pos:read', 'pos:write'],

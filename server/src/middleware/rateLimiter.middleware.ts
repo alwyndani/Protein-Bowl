@@ -31,6 +31,9 @@ export const stepUpRateLimiter = createRateLimiter('STEPUP', env.RL_STEPUP_MAX, 
 const byUser = (req: Request): string => `u:${req.user?.userId ?? req.ip ?? 'anon'}`;
 export const paymentAttemptRateLimiter = createRateLimiter('PAYMENT_ATTEMPT', env.RL_PAYMENT_ATTEMPT_MAX, env.RL_PAYMENT_ATTEMPT_WINDOW_MS, undefined, byUser);
 export const paymentVerifyRateLimiter = createRateLimiter('PAYMENT_VERIFY', env.RL_PAYMENT_VERIFY_MAX, env.RL_PAYMENT_VERIFY_WINDOW_MS, undefined, byUser);
+/** P7C: cancellation (customer) and financial admin mutations (cancel / refund approval), keyed by the authenticated user. */
+export const cancelRateLimiter = createRateLimiter('CANCEL', env.RL_CANCEL_MAX, env.RL_CANCEL_WINDOW_MS, undefined, byUser);
+export const financialAdminRateLimiter = createRateLimiter('REFUND_ADMIN', env.RL_REFUND_ADMIN_MAX, env.RL_REFUND_ADMIN_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(

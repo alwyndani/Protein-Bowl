@@ -43,3 +43,6 @@ process.env.COMMERCE_COD_ENABLED = 'false';
 
 // Payments (P7B): the tests always run against the in-process MockPaymentProvider with the default (approved) timings.
 process.env.PAYMENT_PROVIDER = 'mock';
+
+// P7C: tests drive refund submission explicitly (the worker/service), never as a background side effect of a cancellation.
+process.env.PAYMENT_REFUND_INLINE_SUBMIT = 'false';

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { ParsedWebhook, ProviderPaymentInfo } from './provider.types.js';
+import type { ParsedWebhook, ProviderPaymentInfo, ProviderRefund, ProviderRefundStatus } from './provider.types.js';
 import type { ProviderPaymentStatus } from './paymentStatus.js';
 
 /**
@@ -51,6 +51,38 @@ export function normalizeRazorpayPayment(entity: unknown): ProviderPaymentInfo |
     method: safeShort(p.method, 32),
     errorCode: safeShort(p.error_code, 100),
     errorReason: safeShort(p.error_description, 200)
+  };
+}
+
+const REFUND_STATUS_MAP: Record<string, ProviderRefundStatus> = { pending: 'PENDING', processed: 'PROCESSED', failed: 'FAILED' };
+
+export const razorpayRefundEntitySchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    payment_id: z.string().min(1).max(64),
+    amount: z.number().int().nonnegative(),
+    currency: z.string().min(3).max(3),
+    status: z.string().min(1).max(32),
+    receipt: z.string().max(100).nullable().optional(),
+    speed_processed: z.string().max(32).nullable().optional()
+  })
+  .passthrough();
+
+/** Normalize a Razorpay refund entity (webhook payload OR API response). null when it is not a recognisable refund. Notes/acquirer data are dropped. */
+export function normalizeRazorpayRefund(entity: unknown): ProviderRefund | null {
+  const parsed = razorpayRefundEntitySchema.safeParse(entity);
+  if (!parsed.success) return null;
+  const r = parsed.data;
+  const status = REFUND_STATUS_MAP[r.status.toLowerCase()];
+  if (!status) return null;
+  return {
+    providerRefundId: r.id,
+    providerPaymentId: r.payment_id,
+    amountMinor: r.amount,
+    currency: r.currency.toUpperCase(),
+    status,
+    receipt: safeShort(r.receipt, 100),
+    speedProcessed: safeShort(r.speed_processed, 32)
   };
 }
 
@@ -106,9 +138,9 @@ export function parseRazorpayWebhook(rawBody: Buffer, headers: Record<string, st
     return { ...base, kind: 'PAYMENT', providerOrderId: orderId, providerPaymentId: payment?.providerPaymentId ?? peekIds(entity).paymentId, payment };
   }
   if (eventType.startsWith('refund.')) {
-    const refund = (payload.refund as { entity?: { payment_id?: unknown } } | undefined)?.entity;
-    const paymentId = typeof refund?.payment_id === 'string' ? refund.payment_id.slice(0, 64) : null;
-    return { ...base, kind: 'REFUND', providerOrderId: null, providerPaymentId: paymentId, payment: null };
+    const refundEntity = (payload.refund as { entity?: { payment_id?: unknown } } | undefined)?.entity;
+    const paymentId = typeof refundEntity?.payment_id === 'string' ? refundEntity.payment_id.slice(0, 64) : null;
+    return { ...base, kind: 'REFUND', providerOrderId: null, providerPaymentId: paymentId, payment: null, refund: normalizeRazorpayRefund(refundEntity) };
   }
   return { ...base, kind: 'OTHER', providerOrderId: null, providerPaymentId: null, payment: null };
 }

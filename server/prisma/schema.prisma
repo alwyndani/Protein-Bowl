@@ -675,6 +675,7 @@ model Order {
   delivery               DeliveryAssignment?
   events                 OrderEvent[]
   providerPayments       ProviderPayment[]
+  refunds                Refund[]
 
   // Idempotency keys are scoped to the customer (NULLs are distinct, so legacy/no-key rows are unaffected)
   @@unique([customerProfileId, idempotencyKey])
@@ -750,6 +751,7 @@ model Payment {
 
   order                Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   providerPayments     ProviderPayment[]
+  refunds              Refund[]
 
   @@unique([provider, providerOrderId])
   @@index([orderId, createdAt])
@@ -780,12 +782,58 @@ model ProviderPayment {
 
   payment              Payment   @relation(fields: [paymentId], references: [id])
   order                Order     @relation(fields: [orderId], references: [id])
+  refunds              Refund[]
 
   @@unique([provider, providerPaymentId])
   @@index([orderId])
   @@index([paymentId])
   @@index([reconciliationStatus])
   @@map("provider_payments")
+}
+
+// P7C: one row per refund of ONE captured ProviderPayment. Refund.id is the provider `receipt`. FULL refunds only (amount is
+// always the complete server-calculated refundable amount). PB status is separate from the provider's own status:
+// REQUESTED | SUBMITTING | PROCESSING | PROCESSED | UNKNOWN | REVIEW | ABANDONED (there is no PB FAILED state).
+// A partial unique index (see the P7C migration SQL; Prisma cannot express it) allows ONE live non-EXTERNAL refund per ProviderPayment.
+model Refund {
+  id                String    @id @default(uuid())
+  orderId           String
+  providerPaymentId String    // FK -> ProviderPayment.id (the exact captured payment being refunded)
+  paymentId         String    // FK -> Payment.id (the session, for traceability)
+  provider          String
+  providerRefundId  String?
+  amount            Decimal   @db.Decimal(10, 2)
+  currency          String
+  trigger           String    // CUSTOMER_CANCELLATION | ADMIN_CANCELLATION | DUPLICATE_CAPTURE | AFTER_CANCELLATION | EXTERNAL
+  reasonCode        String
+  reasonNote        String?
+  requestedByUserId String?
+  requestedByKind   String    // CUSTOMER | ADMIN | SYSTEM
+  status            String    @default("REQUESTED")
+  providerStatus    String?   // normalized provider status: PENDING | PROCESSED | FAILED
+  speedRequested    String?
+  speedProcessed    String?
+  failureCode       String?
+  failureReason     String?
+  reviewFlag        String?
+  attemptCount      Int       @default(0)
+  nextAttemptAt     DateTime?
+  lockedUntil       DateTime?
+  lockedBy          String?
+  submittedAt       DateTime?
+  processedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @default(now()) @updatedAt
+
+  order             Order           @relation(fields: [orderId], references: [id])
+  providerPayment   ProviderPayment @relation(fields: [providerPaymentId], references: [id])
+  payment           Payment         @relation(fields: [paymentId], references: [id])
+
+  @@unique([provider, providerRefundId])
+  @@index([orderId])
+  @@index([providerPaymentId])
+  @@index([status, nextAttemptAt])
+  @@map("refunds")
 }
 
 // P7B: durable webhook record + retry state. Only normalized, PII-free data and the body hash are stored (never the raw body).

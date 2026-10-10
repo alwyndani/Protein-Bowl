@@ -1,4 +1,5 @@
 import type { Order, OrderEvent, OrderItem } from '@prisma/client';
+import type { DerivedOrderState } from '../refund/refundView.service.js';
 
 /**
  * Customer-facing order projection. It is an explicit allow-list: internal fields (idempotency key, request
@@ -51,11 +52,15 @@ export interface CustomerOrderDto {
   items: CustomerOrderItemDto[];
   /** Present on the detail view only. */
   timeline?: CustomerOrderEventDto[];
+  /** P7C (additive): whether the owner may cancel, and the derived refund state. Never provider ids, flags or internal detail. */
+  cancellation?: DerivedOrderState['cancellation'];
+  refund?: DerivedOrderState['refund'];
 }
 
 export function toCustomerOrderDto(
   order: Order & { items: OrderItem[] },
-  events?: Array<Pick<OrderEvent, 'fromStatus' | 'toStatus' | 'createdAt'>>
+  events?: Array<Pick<OrderEvent, 'fromStatus' | 'toStatus' | 'createdAt'>>,
+  derived?: DerivedOrderState
 ): CustomerOrderDto {
   const dto: CustomerOrderDto = {
     id: order.id,
@@ -93,6 +98,10 @@ export function toCustomerOrderDto(
       containerDeposit: i.containerDeposit
     }))
   };
+  if (derived) {
+    dto.cancellation = derived.cancellation;
+    dto.refund = derived.refund;
+  }
   if (events) {
     dto.timeline = events.map((e) => ({ fromStatus: e.fromStatus, toStatus: e.toStatus, at: e.createdAt }));
   }

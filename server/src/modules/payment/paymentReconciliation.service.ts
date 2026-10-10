@@ -9,6 +9,7 @@ import { FLAGGED_RECON, SESSION_STATUS } from './paymentStatus.js';
 import { getPaymentProvider } from './providerRegistry.js';
 import { PaymentProvider, ProviderUnknownError } from './provider.types.js';
 import { PaymentWebhookService } from './paymentWebhook.service.js';
+import { RefundService } from '../refund/refund.service.js';
 
 export interface ReconcileStats {
   workerId: string;
@@ -24,6 +25,11 @@ export interface ReconcileStats {
   sessionsUnknownStillOpen: number;
   providerErrors: number;
   ledgerApplied: number;
+  refundsClaimed: number;
+  refundsSubmitted: number;
+  refundsResolved: number;
+  refundsWaiting: number;
+  refundsInReview: number;
 }
 
 export interface ReviewReport {
@@ -32,6 +38,12 @@ export interface ReviewReport {
   flaggedSessions: number;
   flaggedLedgerRows: number;
   unknownSessions: number;
+  /** P7C: refunds waiting for a human (REVIEW), unresolved UNKNOWN refunds, and refunds made outside Protein Bowl that are flagged. */
+  refundsInReview: number;
+  refundsUnknown: number;
+  externalRefunds: number;
+  /** DUPLICATE / AFTER_CANCELLATION captured payments with no live refund yet (waiting for SUPER_ADMIN approval). Informational. */
+  awaitingRefundApproval: number;
   total: number;
 }
 
@@ -85,6 +97,29 @@ export class PaymentReconciliationService {
   }
 
   // ================================================================================================ one pass
+  /**
+   * Claim due refunds (REQUESTED to submit, SUBMITTING whose lease expired, UNKNOWN to look up, PROCESSING to poll) with
+   * FOR UPDATE SKIP LOCKED + a lease. REVIEW / PROCESSED / ABANDONED are never claimed.
+   */
+  public static async claimRefunds(db: DbClient, workerId: string, limit: number): Promise<string[]> {
+    const leaseMs = getPaymentConfig().leaseMs;
+    const rows = await db.$queryRaw<Array<{ id: string }>>`
+      WITH picked AS (
+        SELECT "id" FROM "refunds"
+        WHERE "status" IN ('REQUESTED', 'SUBMITTING', 'UNKNOWN', 'PROCESSING')
+          AND "nextAttemptAt" IS NOT NULL AND "nextAttemptAt" <= (now() AT TIME ZONE 'UTC')
+          AND ("lockedUntil" IS NULL OR "lockedUntil" < (now() AT TIME ZONE 'UTC'))
+        ORDER BY "nextAttemptAt" ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE "refunds" r
+      SET "lockedUntil" = (now() AT TIME ZONE 'UTC') + (${leaseMs} * interval '1 millisecond'), "lockedBy" = ${workerId}
+      FROM picked WHERE r."id" = picked."id"
+      RETURNING r."id"`;
+    return rows.map((r) => r.id);
+  }
+
   /** Scheduler-ready: one bounded pass. Safe to run concurrently from many instances and to repeat at any time. */
   public static async runOnce(opts: { workerId?: string; limit?: number } = {}): Promise<ReconcileStats> {
     const cfg = getPaymentConfig();
@@ -104,7 +139,12 @@ export class PaymentReconciliationService {
       sessionsExpired: 0,
       sessionsUnknownStillOpen: 0,
       providerErrors: 0,
-      ledgerApplied: 0
+      ledgerApplied: 0,
+      refundsClaimed: 0,
+      refundsSubmitted: 0,
+      refundsResolved: 0,
+      refundsWaiting: 0,
+      refundsInReview: 0
     };
 
     // 1) webhook events (retry-pending, or received but never finished)
@@ -145,6 +185,23 @@ export class PaymentReconciliationService {
         if (res.outcome === 'APPLIED') stats.ledgerApplied++;
       } catch {
         stats.providerErrors++;
+      }
+    }
+
+    // 4) refunds (P7C): submit REQUESTED, resolve UNKNOWN by exact-receipt lookup, poll PROCESSING. Provider HTTP happens outside any DB transaction.
+    const refundIds = await this.claimRefunds(prisma, workerId, limit);
+    stats.refundsClaimed = refundIds.length;
+    for (const id of refundIds) {
+      try {
+        const r = await RefundService.reconcileOne(id, provider, workerId);
+        if (r === 'SUBMITTED') stats.refundsSubmitted++;
+        else if (r === 'RESOLVED') stats.refundsResolved++;
+        else if (r === 'WAITING') stats.refundsWaiting++;
+        else if (r === 'REVIEW') stats.refundsInReview++;
+      } catch (err) {
+        stats.providerErrors++;
+        await prisma.refund.updateMany({ where: { id, lockedBy: workerId }, data: { lockedUntil: null, lockedBy: null, nextAttemptAt: new Date(Date.now() + backoffMs(1)) } }).catch(() => undefined);
+        void err;
       }
     }
     return stats;
@@ -234,14 +291,33 @@ export class PaymentReconciliationService {
 
   // ================================================================================================ reporting
   public static async reviewReport(): Promise<ReviewReport> {
-    const [failedEvents, retryPendingEvents, flaggedSessions, flaggedLedgerRows, unknownSessions] = await Promise.all([
+    // A flagged DUPLICATE / AFTER_CANCELLATION payment stops being "review" once its refund is PROCESSED (the evidence rows are kept).
+    const resolvedByRefund = { refunds: { some: { OR: [{ status: 'PROCESSED' }, { providerStatus: 'PROCESSED' }] } } };
+    const [failedEvents, retryPendingEvents, flaggedSessions, flaggedLedgerRows, unknownSessions, refundsInReview, refundsUnknown, externalRefunds, awaitingRefundApproval] = await Promise.all([
       prisma.paymentWebhookEvent.count({ where: { status: 'FAILED' } }),
       prisma.paymentWebhookEvent.count({ where: { status: 'RETRY_PENDING' } }),
-      prisma.payment.count({ where: { reviewFlag: { not: null } } }),
-      prisma.providerPayment.count({ where: { reconciliationStatus: { in: [...FLAGGED_RECON] } } }),
-      prisma.payment.count({ where: { status: SESSION_STATUS.UNKNOWN } })
+      prisma.payment.count({
+        where: { reviewFlag: { not: null }, NOT: { reviewFlag: { in: ['DUPLICATE_CAPTURE', 'AFTER_CANCELLATION'] }, providerPayments: { some: resolvedByRefund } } }
+      }),
+      prisma.providerPayment.count({ where: { reconciliationStatus: { in: [...FLAGGED_RECON] }, NOT: { reconciliationStatus: { in: ['DUPLICATE', 'AFTER_CANCELLATION'] }, ...resolvedByRefund } } }),
+      prisma.payment.count({ where: { status: SESSION_STATUS.UNKNOWN } }),
+      prisma.refund.count({ where: { status: 'REVIEW' } }),
+      prisma.refund.count({ where: { status: 'UNKNOWN' } }),
+      prisma.refund.count({ where: { trigger: 'EXTERNAL', reviewFlag: 'EXTERNAL_REFUND' } }),
+      prisma.providerPayment.count({ where: { reconciliationStatus: { in: ['DUPLICATE', 'AFTER_CANCELLATION'] }, refunds: { none: { status: { not: 'ABANDONED' } } } } })
     ]);
-    return { failedEvents, retryPendingEvents, flaggedSessions, flaggedLedgerRows, unknownSessions, total: failedEvents + flaggedSessions + flaggedLedgerRows };
+    return {
+      failedEvents,
+      retryPendingEvents,
+      flaggedSessions,
+      flaggedLedgerRows,
+      unknownSessions,
+      refundsInReview,
+      refundsUnknown,
+      externalRefunds,
+      awaitingRefundApproval,
+      total: failedEvents + flaggedSessions + flaggedLedgerRows + refundsInReview + externalRefunds
+    };
   }
 }
 
