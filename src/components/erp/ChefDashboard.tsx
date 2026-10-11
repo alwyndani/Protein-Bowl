@@ -36,6 +36,7 @@ import {
   Building2
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { KitchenQueue } from './kitchen/KitchenQueue';
 
 interface IndividualCustomerOrderItem {
   id: string;
@@ -66,15 +67,20 @@ interface ChefDashboardProps {
   onOpenMenuModal: (recipe: RecipeItem) => void;
   selectedBranchId?: KitchenBranchId;
   onSelectBranch?: (branchId: KitchenBranchId) => void;
+  /** The kitchen queue reports a dead session here (the host shows the sign-in flow). */
+  onSessionExpired?: () => void;
 }
 
 export const ChefDashboard: React.FC<ChefDashboardProps> = ({ 
   orders, 
   onOpenMenuModal,
   selectedBranchId = 'all',
-  onSelectBranch
+  onSelectBranch,
+  onSessionExpired
 }) => {
-  const [activeTab, setActiveTab] = useState<'production' | 'recipes' | 'labels' | 'kerala_mess'>('production');
+  // P8: the production workspace is the real Kitchen Queue (+ Recipes). The remaining tabs run on MOCK data: they exist for development only.
+  const isDev = import.meta.env.DEV;
+  const [activeTab, setActiveTab] = useState<'kitchen' | 'production' | 'recipes' | 'labels' | 'kerala_mess'>('kitchen');
   const [batches, setBatches] = useState<ProductionBatch[]>(INITIAL_PRODUCTION_BATCHES);
   const [messBatches, setMessBatches] = useState<MessKitchenBatchSummary[]>(INITIAL_MESS_KITCHEN_BATCHES);
   const [selectedMessSlotFilter, setSelectedMessSlotFilter] = useState<'all' | 'breakfast' | 'lunch' | 'dinner'>('all');
@@ -614,19 +620,23 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
               <span>Executive Chef & Kitchen Operations ERP</span>
             </div>
             <h1 className="text-2xl sm:text-4xl font-black mt-2">
-              Kitchen Production & Recipe Management
+              {isDev ? 'Kitchen Production & Recipe Management' : 'Kitchen'}
             </h1>
             <p className="text-xs sm:text-sm text-stone-300 mt-1 max-w-2xl leading-relaxed">
-              Full recipe version control with portion sizes, precise ingredient quantities, method notes, and bifurcated customer label generation for 9 AM Breakfast, 1 PM Lunch & 8 PM Dinner dispatches.
+              {isDev
+                ? 'Full recipe version control with portion sizes, precise ingredient quantities, method notes, and bifurcated customer label generation for 9 AM Breakfast, 1 PM Lunch & 8 PM Dinner dispatches.'
+                : 'Work the live kitchen queue for your branch and browse the recipe catalogue.'}
             </p>
           </div>
 
           <div className="flex items-center gap-4 bg-white/10 backdrop-blur-md p-4 rounded-2xl border border-white/20 shrink-0 text-center">
-            <div className="pr-4 border-r border-white/20">
-              <span className="text-[10px] text-orange-200 font-bold uppercase block">Today's Batches</span>
-              <span className="text-3xl font-black text-orange-400">115</span>
-            </div>
-            <div className="pl-2">
+            {isDev && (
+              <div className="pr-4 border-r border-white/20">
+                <span className="text-[10px] text-orange-200 font-bold uppercase block">Demo: Today's Batches</span>
+                <span className="text-3xl font-black text-orange-400">115</span>
+              </div>
+            )}
+            <div className={isDev ? 'pl-2' : ''}>
               <span className="text-[10px] text-amber-200 font-bold uppercase block">Menu Catalog</span>
               <span className="text-2xl font-black text-amber-300">{recipes.length} Dishes</span>
             </div>
@@ -637,16 +647,23 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
       {/* Tabs */}
       <div className="flex gap-2 border-b border-stone-200 pb-2 overflow-x-auto scrollbar-none">
         {[
-          { id: 'production', label: "📋 Daily Production Sheet", icon: FileText },
+          { id: 'kitchen', label: 'Kitchen Queue', icon: ChefHat },
           { id: 'recipes', label: `📖 Recipe Database & Versioning (${recipes.length})`, icon: Utensils },
-          { id: 'kerala_mess', label: "🍛 Kerala Mess & Mass Batches", icon: Flame },
-          { id: 'labels', label: "🏷️ Order Dispatch", icon: Printer },
+          // MOCK data below: visible in development only, clearly labelled, never presented to production CHEF users
+          ...(isDev
+            ? [
+                { id: 'production', label: 'Demo (mock data) · Daily Production Sheet', icon: FileText },
+                { id: 'kerala_mess', label: 'Demo (mock data) · Kerala Mess & Mass Batches', icon: Flame },
+                { id: 'labels', label: 'Demo (mock data) · Order Dispatch', icon: Printer }
+              ]
+            : [])
         ].map((tab) => {
           const active = activeTab === tab.id;
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
+              aria-current={active ? 'page' : undefined}
               className={`px-5 py-3 rounded-2xl text-xs font-black transition-all flex items-center gap-2 whitespace-nowrap ${
                 active
                   ? 'bg-orange-950 text-white shadow-lg'
@@ -659,8 +676,11 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
         })}
       </div>
 
-      {/* TAB 1: Auto-Generated Production Sheet */}
-      {activeTab === 'production' && (
+      {/* P8: the real, backend-derived kitchen queue (production default) */}
+      {activeTab === 'kitchen' && <KitchenQueue onSessionExpired={onSessionExpired} />}
+
+      {/* TAB 1: Auto-Generated Production Sheet (MOCK, development only) */}
+      {isDev && activeTab === 'production' && (
         <div className="space-y-6">
           <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm space-y-4">
             <div className="flex items-center justify-between">
@@ -869,7 +889,7 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
       )}
 
       {/* TAB: Kerala Homestyle Mess & Aggregator Batch Production */}
-      {activeTab === 'kerala_mess' && (
+      {isDev && activeTab === 'kerala_mess' && (
         <div className="space-y-6">
           {/* Top Banner for Kerala Mess KDS */}
           <div className="bg-gradient-to-r from-emerald-950 via-stone-900 to-amber-950 text-white p-6 sm:p-8 rounded-3xl border border-emerald-500/30 shadow-xl space-y-4">
@@ -1077,7 +1097,7 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
       )}
 
       {/* TAB 3: Printable Nutrition & Delivery Labels (Dual Labels per Order) */}
-      {activeTab === 'labels' && (
+      {isDev && activeTab === 'labels' && (
         <div className="space-y-6 bg-white p-6 sm:p-8 rounded-3xl border border-stone-200 shadow-sm">
           
           {/* Header Bar */}

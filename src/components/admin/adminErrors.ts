@@ -47,7 +47,12 @@ const GUARDRAIL_MESSAGES: Record<string, string> = {
   NO_EMPLOYEE_PROFILE: 'This account has no employee profile, so this change is not possible.',
   ACCOUNT_DELETED: 'This account has been deleted.',
   DUPLICATE: 'That value is already in use (email, phone, employee code or branch code).',
-  CONCURRENT_MODIFICATION: 'Another change happened at the same time. Please retry.'
+  CONCURRENT_MODIFICATION: 'Another change happened at the same time. Please retry.',
+  // P8 kitchen routing
+  ORDER_NOT_ROUTABLE: 'This order can no longer be routed (it may have been cancelled or accepted by a kitchen). The list has been refreshed.',
+  KITCHEN_BRANCH_CHANGED: "Someone else changed this order's kitchen in the meantime. The list has been refreshed: review it and try again.",
+  KITCHEN_BRANCH_INVALID: 'That kitchen branch is not available. Choose an active branch.',
+  ORDER_STATE_CONFLICT: 'The order changed at the same time. The list has been refreshed: review it and try again.'
 };
 
 /** "Validation failed: email: Invalid email; roles: Too many" -> { email: ..., roles: ... } */

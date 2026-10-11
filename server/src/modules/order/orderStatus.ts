@@ -22,7 +22,8 @@ export function isOrderStatus(value: unknown): value is OrderStatus {
 /** The ONLY legal moves. Anything not listed here is impossible, whoever asks. */
 export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> = Object.freeze({
   PENDING: ['CONFIRMED', 'CANCELLED'],
-  CONFIRMED: ['ACCEPTED', 'PREPARING', 'CANCELLED'],
+  // P8: ACCEPTED is mandatory (it is also the customer-cancellation cutoff): there is NO CONFIRMED -> PREPARING shortcut.
+  CONFIRMED: ['ACCEPTED', 'CANCELLED'],
   ACCEPTED: ['PREPARING', 'CANCELLED'],
   PREPARING: ['READY', 'CANCELLED'],
   READY: ['DISPATCHED', 'CANCELLED'],
@@ -44,10 +45,10 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'ACCEPTED->CANCELLED': [RoleEnum.SUPER_ADMIN],
   'PREPARING->CANCELLED': [RoleEnum.SUPER_ADMIN],
   'READY->CANCELLED': [RoleEnum.SUPER_ADMIN],
-  'CONFIRMED->ACCEPTED': [RoleEnum.CHEF, RoleEnum.SUPER_ADMIN],
-  'CONFIRMED->PREPARING': [RoleEnum.CHEF, RoleEnum.SUPER_ADMIN],
-  'ACCEPTED->PREPARING': [RoleEnum.CHEF, RoleEnum.SUPER_ADMIN],
-  'PREPARING->READY': [RoleEnum.CHEF, RoleEnum.SUPER_ADMIN],
+  // P8: the three kitchen edges belong to CHEF ONLY (SUPER_ADMIN is read-only for kitchen operations; it routes orders instead).
+  'CONFIRMED->ACCEPTED': [RoleEnum.CHEF],
+  'ACCEPTED->PREPARING': [RoleEnum.CHEF],
+  'PREPARING->READY': [RoleEnum.CHEF],
   'READY->DISPATCHED': [RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN],
   'DISPATCHED->DELIVERED': [RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]
 });

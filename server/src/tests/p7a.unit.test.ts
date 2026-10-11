@@ -325,9 +325,9 @@ describe('P7A order status catalogue', () => {
     }
   });
 
-  it('confirmation is a SYSTEM-only edge, kitchen edges are CHEF/SUPER_ADMIN, delivery edges are DELIVERY/SUPER_ADMIN', () => {
+  it('confirmation is a SYSTEM-only edge, kitchen edges are CHEF-only (P8), delivery edges are DELIVERY/SUPER_ADMIN', () => {
     expect(TRANSITION_PARTIES['PENDING->CONFIRMED']).toEqual(['SYSTEM']);
-    expect(TRANSITION_PARTIES['PREPARING->READY']).toEqual([RoleEnum.CHEF, RoleEnum.SUPER_ADMIN]);
+    expect(TRANSITION_PARTIES['PREPARING->READY']).toEqual([RoleEnum.CHEF]);
     expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
     expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
     // MD is read-only: it appears on no edge

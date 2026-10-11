@@ -180,7 +180,7 @@ Everything except login/products/mess plans/orders/KOT list/pause-meal stubs: re
 | D5 | Accepted payment methods; provider choice. **DECIDED 2026-10-11: ONLINE payment only; COD is NOT supported and must not be introduced in any phase (P8/P9/P10/P11+).** | P7 |
 | D6 | Refund & cancellation rules (who can cancel when, partial refunds) | P7 |
 | D7 | Minimum order value | P5 |
-| D8 | Order→branch routing (nearest hub? customer selects?) and serviceable pincodes | P8, P9 |
+| D8 | Order→branch routing (nearest hub? customer selects?) and serviceable pincodes. **P8 DECIDED 2026-10-11: MANUAL SUPER_ADMIN assignment of `Order.kitchenBranchId` (no geo/postcode/default routing). Serviceable pincodes / zones remain open for P9.** | P8, P9 |
 | D9 | Order confirmation policy (auto-confirm on payment vs staff accept) | P7 |
 | D10 | Kerala Mess: plans, pricing, approval of hostel accounts, pause cut-off, refund per meal, max pauses, daily-order generation time, gate-pass format, billing cadence | P10 |
 | D11 | MESS_CUSTOMER retirement/migration timing | P10 |
@@ -297,7 +297,7 @@ All phases follow the Git workflow in the directive (implement → gates → rep
 - **Decisions:** D5, D6, D9.
 - **Done:** sandbox payment drives order `PAID` only via verified server path; documented live-test checklist.
 
-### Phase 8 — Kitchen, KOT & KDS
+### Phase 8 — Kitchen, KOT & KDS — **✅ VERIFIED (2026-10-11), NOT YET COMMITTED** (manual SUPER_ADMIN kitchen routing, derived Chef queue, CHEF-only kitchen transitions; no KOT rows, no migration; D8 DECIDED: manual routing; see CLAUDE.md 22e / IMPLEMENTATION_STATUS)
 - **Goal:** confirmed orders appear on the right branch's KDS; chefs progress them.
 - **Database:** KOT lines/timestamps if needed; `Order.kitchenBranchId` routing used; `KitchenBatch` linkage.
 - **Backend:** create KOT on order confirmation (transactionally); branch-scoped queue; transition rules (QUEUED→PREPARING→READY→…); sync order status; SSE stream (self-hosted) for KDS; remove customer PII from KOT DTO (name + items only).

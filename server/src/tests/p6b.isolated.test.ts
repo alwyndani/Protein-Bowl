@@ -157,7 +157,7 @@ describe('P6B — bootstrap and last-administrator protection (isolated database
       expect(accept.status).toBe(200);
       const chefLogin = await request(app).post('/api/v1/auth/login').send({ email: 'new.chef@proteinbowl.test', password: 'Brisk#Morning-Kettle-2026' });
       expect(chefLogin.status).toBe(200);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(chefLogin.body.data.accessToken))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(chefLogin.body.data.accessToken))).status).toBe(200);
     });
   });
 

@@ -229,9 +229,11 @@ export class OrderService {
             email: profile.user?.email || null
           };
 
-          // 7. OrderItem snapshot
+          // 7. OrderItem snapshot (P8: the product's recipe is recorded so the kitchen can show its approved preparation data; money is untouched)
+          const recipeIdByProduct = new Map<string, string | null>(cart.items.map((ci) => [ci.productId, ci.product?.recipeId ?? null]));
           const orderItemsData = pricing.lineItems.map((item) => ({
             productId: item.productId,
+            recipeId: recipeIdByProduct.get(item.productId) ?? null,
             variantId: item.variantId || null,
             itemTitle: item.title,
             variantName: item.variantName || null,

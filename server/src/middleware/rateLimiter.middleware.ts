@@ -34,6 +34,9 @@ export const paymentVerifyRateLimiter = createRateLimiter('PAYMENT_VERIFY', env.
 /** P7C: cancellation (customer) and financial admin mutations (cancel / refund approval), keyed by the authenticated user. */
 export const cancelRateLimiter = createRateLimiter('CANCEL', env.RL_CANCEL_MAX, env.RL_CANCEL_WINDOW_MS, undefined, byUser);
 export const financialAdminRateLimiter = createRateLimiter('REFUND_ADMIN', env.RL_REFUND_ADMIN_MAX, env.RL_REFUND_ADMIN_WINDOW_MS, undefined, byUser);
+/** P8 kitchen: chef actions and SUPER_ADMIN kitchen routing, keyed by the authenticated user. */
+export const kitchenActionRateLimiter = createRateLimiter('KITCHEN_ACTION', env.RL_KITCHEN_ACTION_MAX, env.RL_KITCHEN_ACTION_WINDOW_MS, undefined, byUser);
+export const kitchenRoutingRateLimiter = createRateLimiter('KITCHEN_ROUTING', env.RL_KITCHEN_ROUTING_MAX, env.RL_KITCHEN_ROUTING_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(

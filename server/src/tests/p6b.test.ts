@@ -252,7 +252,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect(me.body.data.scope).toEqual({ isGlobal: false, isGlobalRead: false });
       expect(JSON.stringify(me.body)).not.toMatch(SECRET_KEY_PATTERN);
       // and the new account really works against P6A branch scope
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(accessToken))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(accessToken))).status).toBe(200);
     });
 
     it('7. an invitation cannot be reused', async () => {
@@ -531,13 +531,13 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     });
 
     it('18/19. assigning works, is reflected immediately, and duplicates create no extra rows', async () => {
-      expect((await request(app).get(`/api/v1/kds/tickets?branchId=${branchB.id}`).set(bearer(staffToken))).status).toBe(403);
+      expect((await request(app).get(`/api/v1/kds/orders?branchId=${branchB.id}`).set(bearer(staffToken))).status).toBe(403);
 
       const add = await request(app).post(`/api/v1/admin/staff/${staffId}/branches`).set(await as('admin1')).send({ branchId: branchB.id });
       expect(add.status).toBe(200);
       expect(add.body.data.changed).toBe(true);
       expect(add.body.data.branches.map((b: any) => b.id).sort()).toEqual([branchA.id, branchB.id].sort());
-      expect((await request(app).get(`/api/v1/kds/tickets?branchId=${branchB.id}`).set(bearer(staffToken))).status).toBe(200);
+      expect((await request(app).get(`/api/v1/kds/orders?branchId=${branchB.id}`).set(bearer(staffToken))).status).toBe(200);
 
       const dupe = await request(app).post(`/api/v1/admin/staff/${staffId}/branches`).set(await as('admin1')).send({ branchId: branchB.id });
       expect(dupe.status).toBe(200);
@@ -565,14 +565,14 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       const revokeA = await request(app).delete(`/api/v1/admin/staff/${staffId}/branches/${branchA.id}`).set(await as('admin1'));
       expect(revokeA.status).toBe(200);
       expect((await prisma.employeeProfile.findUnique({ where: { userId: staffId } }))!.assignedBranchId).toBe(branchB.id);
-      expect((await request(app).get(`/api/v1/kds/tickets?branchId=${branchA.id}`).set(bearer(staffToken))).status).toBe(403); // same token, immediate
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(staffToken))).status).toBe(200);
+      expect((await request(app).get(`/api/v1/kds/orders?branchId=${branchA.id}`).set(bearer(staffToken))).status).toBe(403); // same token, immediate
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(staffToken))).status).toBe(200);
 
       // revoke the last branch -> primary cleared, access gone
       const revokeB = await request(app).delete(`/api/v1/admin/staff/${staffId}/branches/${branchB.id}`).set(await as('admin1'));
       expect(revokeB.status).toBe(200);
       expect((await prisma.employeeProfile.findUnique({ where: { userId: staffId } }))!.assignedBranchId).toBeNull();
-      const denied = await request(app).get('/api/v1/kds/tickets').set(bearer(staffToken));
+      const denied = await request(app).get('/api/v1/kds/orders').set(bearer(staffToken));
       expect(denied.status).toBe(403);
       expect(denied.body.error).toBe('NO_BRANCH_ASSIGNMENT');
 
@@ -594,10 +594,10 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
         }
       });
       const token = sign(legacy.id, legacy.email, [RoleEnum.CHEF]);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(token))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(token))).status).toBe(200);
       const res = await request(app).delete(`/api/v1/admin/staff/${legacy.id}/branches/${branchA.id}`).set(await as('admin1'));
       expect(res.body.data.changed).toBe(true);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(token))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(token))).status).toBe(403);
     });
   });
 
@@ -606,7 +606,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     it('23/24. deactivation revokes refresh sessions and kills the old access token on the next request', async () => {
       const c = await createStaff({ roles: ['CHEF'], branchIds: [branchA.id] });
       const session = await acceptAndLogin(c.rawToken, c.staff.email);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(session.accessToken))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(session.accessToken))).status).toBe(200);
       expect(await prisma.refreshToken.count({ where: { userId: c.staff.id, revokedAt: null } })).toBeGreaterThan(0);
 
       const res = await request(app).post(`/api/v1/admin/staff/${c.staff.id}/deactivate`).set(await as('admin1')).send({ reason: 'Left the company' });
@@ -614,7 +614,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect(res.body.data.staff.status).toBe('DEACTIVATED');
 
       expect(await prisma.refreshToken.count({ where: { userId: c.staff.id, revokedAt: null } })).toBe(0);
-      const old = await request(app).get('/api/v1/kds/tickets').set(bearer(session.accessToken));
+      const old = await request(app).get('/api/v1/kds/orders').set(bearer(session.accessToken));
       expect(old.status).toBe(401);
       expect(old.body.error).toBe('ACCOUNT_INACTIVE');
       expect((await request(app).post('/api/v1/auth/refresh').set('Cookie', session.cookie)).status).toBe(401);
@@ -989,7 +989,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       const c = await createStaff({ roles: ['NUTRITIONIST'], branchIds: [] });
       const { accessToken } = await acceptAndLogin(c.rawToken, c.staff.email);
       expect((await request(app).get('/api/v1/diets/nutritionist/unassigned-queue').set(bearer(accessToken))).status).toBe(200);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(accessToken))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(accessToken))).status).toBe(403);
       expect((await request(app).get('/api/v1/diets/nutritionist/unassigned-queue').set(bearer(users.admin1.token))).status).toBe(403);
     });
   });

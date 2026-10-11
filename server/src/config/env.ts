@@ -46,6 +46,11 @@ const envSchema = z.object({
   RL_CANCEL_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_REFUND_ADMIN_MAX: positiveInt(20),
   RL_REFUND_ADMIN_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  // P8 kitchen: chef actions and SUPER_ADMIN kitchen routing (per user). Optional; defaults are safe.
+  RL_KITCHEN_ACTION_MAX: positiveInt(120),
+  RL_KITCHEN_ACTION_WINDOW_MS: positiveInt(60 * 1000),
+  RL_KITCHEN_ROUTING_MAX: positiveInt(30),
+  RL_KITCHEN_ROUTING_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_WEBHOOK_MAX: positiveInt(3000),
   RL_WEBHOOK_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.

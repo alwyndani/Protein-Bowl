@@ -7,6 +7,7 @@ import { RoleEnum } from '@prisma/client';
 export type Permission =
   | 'kds:read'
   | 'kds:write'
+  | 'kitchen:assign'
   | 'procurement:read'
   | 'procurement:write'
   | 'pos:read'
@@ -23,7 +24,8 @@ export type Permission =
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
-    'kds:read', 'kds:write', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:write',
+    // P8: SUPER_ADMIN is READ-ONLY for kitchen operations (no 'kds:write' = no Chef actions); it owns kitchen ROUTING ('kitchen:assign').
+    'kds:read', 'kitchen:assign', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:write',
     // Platform administration (decision D10: audit history is SUPER_ADMIN-only; MD gets branch READ only)
     'staff:admin', 'audit:read', 'branch:read', 'branch:write',
     // Payments (P7B): READ-ONLY operational visibility; nobody can mark an order paid through the API

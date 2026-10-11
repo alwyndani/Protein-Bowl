@@ -623,9 +623,10 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
     it('39. the timeline reflects status changes in order, without actor identities or reasons', async () => {
       const order = await paidOrder('PENDING');
       await OrderTransitionService.transition({ orderId: order.id, to: 'CONFIRMED', actor: sys });
+      await OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) });
       await OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: chefActor([branchA.id]), reason: 'started' });
       const detail = await request(app).get(`/api/v1/orders/${order.id}`).set(bearer(users.custA.token));
-      expect(detail.body.data.timeline.map((t: any) => t.toStatus)).toEqual(['CONFIRMED', 'PREPARING']);
+      expect(detail.body.data.timeline.map((t: any) => t.toStatus)).toEqual(['CONFIRMED', 'ACCEPTED', 'PREPARING']);
       expect(JSON.stringify(detail.body.data)).not.toMatch(/started|actorRole|SYSTEM:/);
     });
   });
@@ -671,12 +672,12 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
     });
 
     it('44. payment gating holds for EVERY operational status, whatever the current state or role, for unpaid/failed/refunded payments', async () => {
-      const predecessor: Record<string, OrderStatus> = { CONFIRMED: 'PENDING', ACCEPTED: 'CONFIRMED', PREPARING: 'CONFIRMED', READY: 'PREPARING', DISPATCHED: 'READY', DELIVERED: 'DISPATCHED' };
+      const predecessor: Record<string, OrderStatus> = { CONFIRMED: 'PENDING', ACCEPTED: 'CONFIRMED', PREPARING: 'ACCEPTED', READY: 'PREPARING', DISPATCHED: 'READY', DELIVERED: 'DISPATCHED' };
       const actorFor: Record<string, TransitionActor> = {
         CONFIRMED: sys,
-        ACCEPTED: adminActor(),
-        PREPARING: adminActor(),
-        READY: adminActor(),
+        ACCEPTED: chefActor([branchA.id]),
+        PREPARING: chefActor([branchA.id]),
+        READY: chefActor([branchA.id]),
         DISPATCHED: adminActor(),
         DELIVERED: adminActor()
       };
@@ -746,25 +747,27 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
 
     it('48. a repeated identical transition is an idempotent no-op: no second event, no second audit row', async () => {
       const order = await paidOrder('CONFIRMED');
-      const a = await OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: chefActor([branchA.id]) });
-      const b = await OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: chefActor([branchA.id]) });
+      const a = await OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) });
+      const b = await OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) });
       expect(a.changed).toBe(true);
       expect(b.changed).toBe(false);
       expect(await eventsOf(order.id)).toHaveLength(1);
       expect(await auditOf('ORDER_STATUS_CHANGED', order.id)).toHaveLength(1);
     });
 
-    it('49. the kitchen cannot start an order that has no kitchen branch yet (even SUPER_ADMIN)', async () => {
+    it('49. the kitchen cannot accept an UNROUTED order (no kitchen branch); SUPER_ADMIN may not perform kitchen transitions at all', async () => {
       const order = await paidOrder('CONFIRMED', { kitchenBranchId: null });
-      await expectCode(OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: adminActor() }), 'ORDER_NOT_OPERATIONALLY_ELIGIBLE');
-      await expectCode(OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: adminActor() }), 'ORDER_NOT_OPERATIONALLY_ELIGIBLE');
+      await expectCode(OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) }), 'ORDER_NOT_OPERATIONALLY_ELIGIBLE');
+      await expectCode(OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: adminActor() }), 'ORDER_TRANSITION_FORBIDDEN');
+      await expectCode(OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: chefActor([branchA.id]) }), 'INVALID_ORDER_TRANSITION'); // the CONFIRMED -> PREPARING shortcut is gone
     });
 
-    it('50. branch-scoped staff may only act on their own branch\'s orders (BRANCH_FORBIDDEN); global roles are unrestricted', async () => {
+    it('50. branch-scoped staff may only act on their own branch\'s orders (BRANCH_FORBIDDEN); a global SUPER_ADMIN cannot take kitchen actions', async () => {
       const inB = await paidOrder('CONFIRMED', { kitchenBranchId: branchB.id });
-      await expectCode(OrderTransitionService.transition({ orderId: inB.id, to: 'PREPARING', actor: chefActor([branchA.id]) }), 'BRANCH_FORBIDDEN');
-      await expectCode(OrderTransitionService.transition({ orderId: inB.id, to: 'PREPARING', actor: chefActor([]) }), 'BRANCH_FORBIDDEN');
-      expect((await OrderTransitionService.transition({ orderId: inB.id, to: 'PREPARING', actor: adminActor() })).changed).toBe(true);
+      await expectCode(OrderTransitionService.transition({ orderId: inB.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) }), 'BRANCH_FORBIDDEN');
+      await expectCode(OrderTransitionService.transition({ orderId: inB.id, to: 'ACCEPTED', actor: chefActor([]) }), 'BRANCH_FORBIDDEN');
+      await expectCode(OrderTransitionService.transition({ orderId: inB.id, to: 'ACCEPTED', actor: adminActor() }), 'ORDER_TRANSITION_FORBIDDEN');
+      expect((await OrderTransitionService.transition({ orderId: inB.id, to: 'ACCEPTED', actor: chefActor([branchB.id]) })).changed).toBe(true);
     });
 
     it('51. cancellation: the owner may cancel an UNPAID pending order; other customers cannot (404); terminal states are final', async () => {
@@ -798,7 +801,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
 
     it('54. concurrent identical transitions apply exactly once (row lock + compare-and-set): one event, the rest no-ops', async () => {
       const order = await paidOrder('CONFIRMED');
-      const results = await Promise.all(Array.from({ length: 10 }, () => OrderTransitionService.transition({ orderId: order.id, to: 'PREPARING', actor: chefActor([branchA.id]) })));
+      const results = await Promise.all(Array.from({ length: 10 }, () => OrderTransitionService.transition({ orderId: order.id, to: 'ACCEPTED', actor: chefActor([branchA.id]) })));
       expect(results.filter((r) => r.changed)).toHaveLength(1);
       expect(await eventsOf(order.id)).toHaveLength(1);
       expect(await auditOf('ORDER_STATUS_CHANGED', order.id)).toHaveLength(1);
@@ -807,7 +810,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
     it('55. concurrent competing transitions never corrupt the event chain', async () => {
       const order = await paidOrder('CONFIRMED');
       const attempts = ['ACCEPTED', 'PREPARING', 'ACCEPTED', 'PREPARING'] as const;
-      const results = await Promise.allSettled(attempts.map((to) => OrderTransitionService.transition({ orderId: order.id, to, actor: adminActor() })));
+      const results = await Promise.allSettled(attempts.map((to) => OrderTransitionService.transition({ orderId: order.id, to, actor: chefActor([branchA.id]) })));
       expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
       for (const r of results) if (r.status === 'rejected') expect((r.reason as any).errorCode).toBe('INVALID_ORDER_TRANSITION');
       const events = await eventsOf(order.id);
@@ -831,77 +834,16 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
 
   // =============================================================================================== KDS / delivery regression
   describe('KDS and delivery no longer write order status directly', () => {
-    const mkKot = (orderId: string, status = 'QUEUED') =>
-      prisma.kitchenOrderTicket.create({ data: { orderId, branchId: branchA.id, kotNumber: `KOT-P7A-${ts}-${++orderSeq}`, itemsJson: [], status } });
-    const patchKot = (id: string, status: string, token = users.chefA.token) => request(app).patch(`/api/v1/kds/tickets/${id}/status`).set(bearer(token)).send({ status });
     const mkAssign = (orderId: string, status = 'ASSIGNED') =>
       prisma.deliveryAssignment.create({ data: { orderId, driverId: users.driver1.employeeId!, branchId: branchA.id, status } });
     const patchAssign = (id: string, status: string, token = users.driver1.token) => request(app).patch(`/api/v1/delivery/assignments/${id}/status`).set(bearer(token)).send({ status });
 
-    it('57. a chef starting a ticket of a paid, confirmed, branch-routed order moves the order through the transition service (event + audit)', async () => {
+    it('57. P8: the KOT route is retired - tickets can no longer move an order (the kitchen API drives the transitions; see kitchen.test.ts)', async () => {
       const order = await paidOrder('CONFIRMED');
-      const kot = await mkKot(order.id);
-      const res = await patchKot(kot.id, 'PREPARING');
-      expect(res.status, JSON.stringify(res.body)).toBe(200);
-      expect(res.body.data.order.status).toBe('PREPARING');
-      expect((await eventsOf(order.id)).map((e) => e.toStatus)).toEqual(['PREPARING']);
-      expect((await auditOf('ORDER_STATUS_CHANGED', order.id)).length).toBe(1);
-      const ready = await patchKot(kot.id, 'READY');
-      expect(ready.body.data.order.status).toBe('READY');
-      expect((await patchKot(kot.id, 'SERVED')).status).toBe(200);
-      expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('READY'); // SERVED does not move the order
-    });
-
-    it('58. an UNPAID order can never reach PREPARING through the kitchen: 409 and BOTH the ticket and the order are unchanged', async () => {
-      const order = await mkOrder({ status: 'CONFIRMED', paymentStatus: 'PENDING', kitchenBranchId: branchA.id });
-      const kot = await mkKot(order.id);
-      const res = await patchKot(kot.id, 'PREPARING');
-      expect(res.status).toBe(409);
-      expect(res.body.error).toBe('ORDER_NOT_OPERATIONALLY_ELIGIBLE');
-      expect((await prisma.kitchenOrderTicket.findUnique({ where: { id: kot.id } }))!.status).toBe('QUEUED');
+      const res = await request(app).patch('/api/v1/kds/tickets/anything/status').set(bearer(users.chefA.token)).send({ status: 'PREPARING' });
+      expect(res.status).toBe(404);
       expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('CONFIRMED');
       expect(await eventsOf(order.id)).toHaveLength(0);
-    });
-
-    it('59. an order without a kitchen branch cannot be started by a chef', async () => {
-      const order = await paidOrder('CONFIRMED', { kitchenBranchId: null });
-      const kot = await mkKot(order.id);
-      const res = await patchKot(kot.id, 'PREPARING');
-      expect(res.status).toBe(409);
-      expect((await prisma.kitchenOrderTicket.findUnique({ where: { id: kot.id } }))!.status).toBe('QUEUED');
-    });
-
-    it('60. tickets never regress and SERVED is final; repeating the same status is a no-op', async () => {
-      const order = await paidOrder('CONFIRMED');
-      const kot = await mkKot(order.id);
-      expect((await patchKot(kot.id, 'PREPARING')).status).toBe(200);
-      expect((await patchKot(kot.id, 'PREPARING')).status).toBe(200);
-      expect(await eventsOf(order.id)).toHaveLength(1);
-      expect((await patchKot(kot.id, 'QUEUED')).body.error).toBe('INVALID_KOT_TRANSITION');
-      expect((await patchKot(kot.id, 'READY')).status).toBe(200);
-      expect((await patchKot(kot.id, 'SERVED')).status).toBe(200);
-      for (const back of ['QUEUED', 'PREPARING', 'READY']) expect((await patchKot(kot.id, back)).body.error).toBe('INVALID_KOT_TRANSITION');
-      expect((await prisma.kitchenOrderTicket.findUnique({ where: { id: kot.id } }))!.status).toBe('SERVED');
-    });
-
-    it('61. a KOT cannot skip states (QUEUED -> READY / SERVED) and cannot be started for a CANCELLED order', async () => {
-      const order = await paidOrder('CONFIRMED');
-      const kot = await mkKot(order.id);
-      expect((await patchKot(kot.id, 'READY')).body.error).toBe('INVALID_KOT_TRANSITION');
-      expect((await patchKot(kot.id, 'SERVED')).body.error).toBe('INVALID_KOT_TRANSITION');
-      const cancelled = await mkOrder({ status: 'CANCELLED', paymentStatus: 'PENDING', kitchenBranchId: branchA.id });
-      const kot2 = await mkKot(cancelled.id);
-      const res = await patchKot(kot2.id, 'PREPARING');
-      expect(res.status).toBe(409);
-      expect((await prisma.order.findUnique({ where: { id: cancelled.id } }))!.status).toBe('CANCELLED');
-    });
-
-    it('62. the other branch\'s chef is still denied before any order change happens', async () => {
-      const order = await paidOrder('CONFIRMED');
-      const kot = await mkKot(order.id);
-      const res = await patchKot(kot.id, 'PREPARING', users.chefB.token);
-      expect(res.status).toBe(403);
-      expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('CONFIRMED');
     });
 
     it('63. delivery: IN_TRANSIT dispatches and DELIVERED completes a READY paid order, atomically with the assignment', async () => {
@@ -953,7 +895,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
           if (statSync(full).isDirectory()) {
             if (name === 'tests') continue;
             walk(full);
-          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts') && !full.endsWith('paymentSettlement.service.ts') && !full.endsWith('refundSettlement.service.ts')) {
+          } else if (full.endsWith('.ts') && !full.endsWith('orderTransition.service.ts') && !full.endsWith('paymentSettlement.service.ts') && !full.endsWith('refundSettlement.service.ts') && !full.endsWith('kitchenRouting.service.ts')) {
             const text = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
             if (/\.order\.(update|updateMany|upsert)\s*\(/.test(text) || /\border\.(update|updateMany|upsert)\s*\(/.test(text)) offenders.push(full);
           }
@@ -970,6 +912,13 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       const orderWrites = settlement.match(/order\.update(?:Many)?\(\{[\s\S]*?\}\);/g) ?? [];
       expect(orderWrites.length).toBeGreaterThan(0);
       for (const w of orderWrites) expect(w).not.toMatch(/(^|[^A-Za-z])status\s*:/);
+
+      // P8: the kitchen routing service may write ONLY Order.kitchenBranchId (never status or any payment field).
+      const routing = readFileSync(join(root, 'modules', 'kds', 'kitchenRouting.service.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const routingWrites = routing.match(/order\.update(?:Many)?\(\{[\s\S]*?\}\);/g) ?? [];
+      expect(routingWrites.length).toBe(1);
+      expect(routingWrites[0]).toMatch(/data:\s*\{\s*kitchenBranchId:\s*body\.branchId\s*\}/);
+      expect(routingWrites[0].replace(/where:\s*\{[^}]*\}/, '')).not.toMatch(/(^|[^A-Za-z])(status|paymentStatus|paymentMethod)\s*:/);
 
       // P7C: the refund settlement service may write ONLY Order.paymentStatus (-> REFUNDED, under the order lock), never Order.status.
       const refundSettlement = readFileSync(join(root, 'modules', 'refund', 'refundSettlement.service.ts'), 'utf8')

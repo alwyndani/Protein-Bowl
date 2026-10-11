@@ -692,6 +692,7 @@ export function App() {
             onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)}
             selectedBranchId={currentBranchId}
             onSelectBranch={(b) => setCurrentBranchId(b)}
+            onSessionExpired={handleSessionExpired}
           />
         )}
 

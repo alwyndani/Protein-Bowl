@@ -29,7 +29,7 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   const u: Record<string, { id: string; email: string; token: string; profileId?: string }> = {};
 
   // data
-  let kotA: any, kotB: any;
+  let ordA: any, ordB: any; // P8: kitchen orders (routed, paid, confirmed) of branch A / B
   let itemA: any, itemB: any;
   let assignment1: any, assignment2: any;
   let dietRequestId: string;
@@ -99,12 +99,11 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     // Operational data in both branches
     const mkOrder = (suffix: string, extra: Record<string, unknown> = {}) =>
       prisma.order.create({ data: { orderNumber: `P6A-${suffix}-${ts}`, totalAmount: 100, netAmount: 100, ...extra } });
-    // Since P7A the kitchen can only start an order that is paid, confirmed and routed to a branch (central transition policy),
-    // so the Branch A kitchen order is set up in that eligible state. Branch B's ticket is never started (it is denied earlier).
-    const eligibleForBranchA = { status: 'CONFIRMED', paymentStatus: 'PAID', paymentMethod: 'ONLINE', kitchenBranchId: branchA.id };
-    const [oA, oB, oD1, oD2] = await Promise.all([mkOrder('KA', eligibleForBranchA), mkOrder('KB'), mkOrder('D1'), mkOrder('D2')]);
-    kotA = await prisma.kitchenOrderTicket.create({ data: { orderId: oA.id, branchId: branchA.id, kotNumber: `KOT-A-${ts}`, itemsJson: [] } });
-    kotB = await prisma.kitchenOrderTicket.create({ data: { orderId: oB.id, branchId: branchB.id, kotNumber: `KOT-B-${ts}`, itemsJson: [] } });
+    // P8: the kitchen queue is DERIVED from paid, confirmed, online orders routed to a branch (no KOT rows).
+    const eligible = (kitchenBranchId: string) => ({ status: 'CONFIRMED', paymentStatus: 'PAID', paymentMethod: 'ONLINE', orderType: 'DIRECT', kitchenBranchId });
+    const [oA, oB, oD1, oD2] = await Promise.all([mkOrder('KA', eligible(branchA.id)), mkOrder('KB', eligible(branchB.id)), mkOrder('D1'), mkOrder('D2')]);
+    ordA = oA;
+    ordB = oB;
 
     itemA = await prisma.inventoryItem.create({
       data: { branchId: branchA.id, name: 'P6A Flour A', sku: `P6A-FA-${ts}`, category: 'DRY', unit: 'kg', unitCost: 40, quantityOnHand: 10 }
@@ -135,17 +134,17 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   // ============================================================
   describe('database-authoritative authentication', () => {
     it('1. an ACTIVE user with a valid token can use an allowed endpoint', async () => {
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefA.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.chefA.token));
       expect(res.status).toBe(200);
     });
 
     it('2. a DEACTIVATED user\'s existing access token is rejected on the next request', async () => {
       const user = await makeUser('deact', [RoleEnum.CHEF], { branches: [branchA.id] });
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.deact.token))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.deact.token))).status).toBe(200);
 
       await prisma.user.update({ where: { id: user.id }, data: { status: 'DEACTIVATED' } });
 
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.deact.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.deact.token));
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('ACCOUNT_INACTIVE');
     });
@@ -153,7 +152,7 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     it('3. a SUSPENDED user\'s existing token is rejected', async () => {
       const user = await makeUser('susp', [RoleEnum.CHEF], { branches: [branchA.id] });
       await prisma.user.update({ where: { id: user.id }, data: { status: 'SUSPENDED' } });
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.susp.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.susp.token));
       expect(res.status).toBe(401);
       expect(res.body.error).toBe('ACCOUNT_INACTIVE');
     });
@@ -161,13 +160,13 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     it('4. a soft-deleted user\'s existing token is rejected', async () => {
       const user = await makeUser('softdel', [RoleEnum.CHEF], { branches: [branchA.id] });
       await prisma.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } });
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.softdel.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.softdel.token));
       expect(res.status).toBe(401);
     });
 
     it('4b. a token for a user that does not exist is rejected', async () => {
       const ghost = signToken('00000000-0000-0000-0000-000000000000', 'ghost@test.com', [RoleEnum.SUPER_ADMIN]);
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(ghost));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(ghost));
       expect(res.status).toBe(401);
     });
 
@@ -221,28 +220,28 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   describe('role changes apply on the next request (no waiting for JWT expiry)', () => {
     it('6. removing a role takes effect immediately with the old token', async () => {
       const user = await makeUser('roleRemoved', [RoleEnum.CHEF], { branches: [branchA.id] });
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.roleRemoved.token))).status).toBe(200);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.roleRemoved.token))).status).toBe(200);
 
       await prisma.userRoleAssignment.deleteMany({ where: { userId: user.id, role: RoleEnum.CHEF } });
 
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.roleRemoved.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.roleRemoved.token));
       expect(res.status).toBe(403);
     });
 
     it('7. assigning a role takes effect immediately with the old token', async () => {
       // Staff-capable account that starts with no operational role.
       const user = await makeUser('roleAdded', [RoleEnum.TRAINER], { branches: [branchA.id], primaryBranch: branchA.id });
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.roleAdded.token))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.roleAdded.token))).status).toBe(403);
 
       await prisma.userRoleAssignment.create({ data: { userId: user.id, role: RoleEnum.CHEF } });
 
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.roleAdded.token));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.roleAdded.token));
       expect(res.status).toBe(200);
     });
 
     it('7b. roles claimed inside the JWT are never trusted (forged SUPER_ADMIN claim)', async () => {
       const forged = signToken(u.customer.id, u.customer.email, [RoleEnum.SUPER_ADMIN, RoleEnum.CHEF]);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(forged))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(forged))).status).toBe(403);
       expect((await request(app).get('/api/v1/procurement/items').set(bearer(forged))).status).toBe(403);
     });
   });
@@ -250,55 +249,60 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   // ============================================================
   // KDS branch hardening
   // ============================================================
-  describe('KDS branch scope', () => {
-    it('8/9/10. Branch A chef sees only Branch A tickets; omitted branchId never means all branches', async () => {
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefA.token));
+  describe('KDS branch scope (P8 kitchen queue)', () => {
+    const queueIds = (res: any) => Object.values(res.body.data.sections).flatMap((sec: any) => sec.items.map((o: any) => o.id));
+
+    it('8/9/10. Branch A chef sees only Branch A orders; omitted branchId never means all branches', async () => {
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.chefA.token));
       expect(res.status).toBe(200);
-      const ids = res.body.data.map((t: any) => t.id);
-      expect(ids).toContain(kotA.id);
-      expect(ids).not.toContain(kotB.id);
-      expect(res.body.data.every((t: any) => t.branchId === branchA.id)).toBe(true);
+      const ids = queueIds(res);
+      expect(ids).toContain(ordA.id);
+      expect(ids).not.toContain(ordB.id);
+      expect(Object.values(res.body.data.sections).flatMap((sec: any) => sec.items).every((o: any) => o.branch.id === branchA.id)).toBe(true);
     });
 
     it('8b. Branch A chef cannot request Branch B (403) and the denial is audited', async () => {
-      const res = await request(app).get(`/api/v1/kds/tickets?branchId=${branchB.id}`).set(bearer(u.chefA.token));
+      const res = await request(app).get(`/api/v1/kds/orders?branchId=${branchB.id}`).set(bearer(u.chefA.token));
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('BRANCH_FORBIDDEN');
       const audit = await prisma.auditLog.findFirst({ where: { action: 'BRANCH_ACCESS_DENIED', userId: u.chefA.id } });
       expect(audit).not.toBeNull();
     });
 
-    it('8c. Branch A chef cannot update a Branch B ticket; can update their own branch ticket', async () => {
-      const denied = await request(app).patch(`/api/v1/kds/tickets/${kotB.id}/status`).set(bearer(u.chefA.token)).send({ status: 'PREPARING' });
-      expect(denied.status).toBe(403);
-      expect((await prisma.kitchenOrderTicket.findUnique({ where: { id: kotB.id } }))!.status).toBe('QUEUED');
+    it('8c. Branch A chef cannot act on a Branch B order (indistinguishable 404); can act on their own branch order', async () => {
+      const denied = await request(app).post(`/api/v1/kds/orders/${ordB.id}/accept`).set(bearer(u.chefA.token)).send({});
+      expect(denied.status).toBe(404);
+      expect(denied.body.error).toBe('ORDER_NOT_FOUND');
+      expect((await prisma.order.findUnique({ where: { id: ordB.id } }))!.status).toBe('CONFIRMED');
 
-      const ok = await request(app).patch(`/api/v1/kds/tickets/${kotA.id}/status`).set(bearer(u.chefA.token)).send({ status: 'PREPARING' });
+      const ok = await request(app).post(`/api/v1/kds/orders/${ordA.id}/accept`).set(bearer(u.chefA.token)).send({});
       expect(ok.status).toBe(200);
+      expect(ok.body.data.order.status).toBe('ACCEPTED');
     });
 
-    it('8d. an invalid KOT status is a 400 (not a 500) and an unknown ticket is a 404', async () => {
-      expect((await request(app).patch(`/api/v1/kds/tickets/${kotA.id}/status`).set(bearer(u.chefA.token)).send({ status: 'NOPE' })).status).toBe(400);
-      expect((await request(app).patch('/api/v1/kds/tickets/does-not-exist/status').set(bearer(u.chefA.token)).send({ status: 'READY' })).status).toBe(404);
+    it('8d. a non-empty action body is a 422 and an unknown order is a 404', async () => {
+      expect((await request(app).post(`/api/v1/kds/orders/${ordA.id}/start-preparing`).set(bearer(u.chefA.token)).send({ status: 'READY' })).status).toBe(422);
+      expect((await request(app).post('/api/v1/kds/orders/does-not-exist/mark-ready').set(bearer(u.chefA.token)).send({})).status).toBe(404);
     });
 
     it('8e. a chef assigned to two branches sees both; a chef with no branch assignment gets 403', async () => {
-      const both = await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefAB.token));
-      const ids = both.body.data.map((t: any) => t.id);
-      expect(ids).toEqual(expect.arrayContaining([kotA.id, kotB.id]));
+      const both = await request(app).get('/api/v1/kds/orders').set(bearer(u.chefAB.token));
+      expect(queueIds(both)).toEqual(expect.arrayContaining([ordA.id, ordB.id]));
 
-      const none = await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefNone.token));
+      const none = await request(app).get('/api/v1/kds/orders').set(bearer(u.chefNone.token));
       expect(none.status).toBe(403);
       expect(none.body.error).toBe('NO_BRANCH_ASSIGNMENT');
     });
 
-    it('8f. KDS tickets do not expose the full customer profile', async () => {
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefA.token));
-      const ticket = res.body.data.find((t: any) => t.id === kotA.id);
-      expect(Object.keys(ticket.order)).not.toContain('customerProfileId');
-      if (ticket.order.customerProfile) {
-        expect(Object.keys(ticket.order.customerProfile)).toEqual(['fullName']);
-      }
+    it('8f. the kitchen DTO exposes no customer, payment or address data', async () => {
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(u.chefAB.token));
+      const text = JSON.stringify(res.body.data);
+      expect(text).not.toMatch(/customerProfile|fullName|phone|email|deliveryAddress|paymentStatus|paymentMethod|netAmount|totalAmount/);
+    });
+
+    it('the old /kds/tickets endpoints are retired', async () => {
+      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.chefA.token))).status).toBe(404);
+      expect((await request(app).patch('/api/v1/kds/tickets/x/status').set(bearer(u.chefA.token)).send({ status: 'READY' })).status).toBe(404);
     });
   });
 
@@ -306,13 +310,15 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   // MD read-only / global scopes
   // ============================================================
   describe('MD is global READ-ONLY; SUPER_ADMIN is global; facility roles are not global', () => {
-    it('6b. MD can read tickets across branches but cannot mutate operations', async () => {
-      const read = await request(app).get('/api/v1/kds/tickets').set(bearer(u.md.token));
-      expect(read.status).toBe(200);
-      const ids = read.body.data.map((t: any) => t.id);
-      expect(ids).toEqual(expect.arrayContaining([kotA.id, kotB.id]));
+    it('6b. MD can read the kitchen queue (explicit branch) but cannot mutate operations', async () => {
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.md.token))).status).toBe(400); // an explicit branch is required: no unbounded cross-branch read
+      for (const [branch, ord] of [[branchA, ordA], [branchB, ordB]] as const) {
+        const read = await request(app).get(`/api/v1/kds/orders?branchId=${branch.id}`).set(bearer(u.md.token));
+        expect(read.status).toBe(200);
+        expect(Object.values(read.body.data.sections).flatMap((sec: any) => sec.items.map((o: any) => o.id))).toContain(ord.id);
+      }
 
-      expect((await request(app).patch(`/api/v1/kds/tickets/${kotA.id}/status`).set(bearer(u.md.token)).send({ status: 'READY' })).status).toBe(403);
+      expect((await request(app).post(`/api/v1/kds/orders/${ordA.id}/mark-ready`).set(bearer(u.md.token)).send({})).status).toBe(403);
       expect((await request(app).post('/api/v1/procurement/stock-movement').set(bearer(u.md.token)).send({ inventoryItemId: itemA.id, type: 'PURCHASE_RECEIPT', quantity: 1, unitCost: 1 })).status).toBe(403);
       expect((await request(app).post('/api/v1/pos/transaction').set(bearer(u.md.token)).send({ branchId: branchA.id, totalAmount: 5 })).status).toBe(403);
       expect((await request(app).patch(`/api/v1/delivery/assignments/${assignment1.id}/status`).set(bearer(u.md.token)).send({ status: 'IN_TRANSIT' })).status).toBe(403);
@@ -326,16 +332,18 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
       expect(del.body.data.map((a: any) => a.id)).toEqual(expect.arrayContaining([assignment1.id, assignment2.id]));
     });
 
-    it('SUPER_ADMIN reads across branches', async () => {
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(u.admin.token));
+    it('SUPER_ADMIN reads a branch queue (explicit branch) but has no kitchen write capability', async () => {
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.admin.token))).status).toBe(400);
+      const res = await request(app).get(`/api/v1/kds/orders?branchId=${branchB.id}`).set(bearer(u.admin.token));
       expect(res.status).toBe(200);
-      expect(res.body.data.map((t: any) => t.id)).toEqual(expect.arrayContaining([kotA.id, kotB.id]));
+      expect(Object.values(res.body.data.sections).flatMap((sec: any) => sec.items.map((o: any) => o.id))).toContain(ordB.id);
+      expect((await request(app).post(`/api/v1/kds/orders/${ordB.id}/accept`).set(bearer(u.admin.token)).send({})).status).toBe(403);
     });
 
     it('BAKERY_FMCG (facility-scoped) gets no operational global access', async () => {
       expect(ROLE_SCOPE.BAKERY_FMCG).toBe('BRANCH');
       expect(ROLE_SCOPE.TEPACHE_ERP).toBe('BRANCH');
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.fmcgA.token))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.fmcgA.token))).status).toBe(403);
     });
   });
 
@@ -591,9 +599,9 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
           employeeProfile: { create: { employeeCode: `P6A-LEG2-${ts}`, fullName: 'Legacy2', designation: 'Chef', assignedBranchId: branchA.id } }
         }
       });
-      const res = await request(app).get('/api/v1/kds/tickets').set(bearer(signToken(legacy.id, legacy.email, [RoleEnum.CHEF])));
+      const res = await request(app).get('/api/v1/kds/orders').set(bearer(signToken(legacy.id, legacy.email, [RoleEnum.CHEF])));
       expect(res.status).toBe(200);
-      expect(res.body.data.map((t: any) => t.id)).toContain(kotA.id);
+      expect(Object.values(res.body.data.sections).flatMap((sec: any) => sec.items.map((o: any) => o.id))).toContain(ordA.id);
     });
 
     it('22. a duplicate (employee, branch) assignment is prevented', async () => {
@@ -753,7 +761,7 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
 
     it('customers keep their customer endpoints and are denied operational ones', async () => {
       expect((await request(app).get('/api/v1/cart').set(bearer(u.customer.token))).status).toBe(200);
-      expect((await request(app).get('/api/v1/kds/tickets').set(bearer(u.customer.token))).status).toBe(403);
+      expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.customer.token))).status).toBe(403);
       expect((await request(app).get('/api/v1/delivery/assignments').set(bearer(u.customer.token))).status).toBe(403);
     });
   });
