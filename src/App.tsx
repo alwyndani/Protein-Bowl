@@ -53,6 +53,7 @@ import { CustomerDashboard } from './components/customer/CustomerDashboard';
 import { CheckoutModal } from './components/customer/CheckoutModal';
 import { AuthModal } from './components/customer/AuthModal';
 import { DirectCartCheckoutModal } from './components/customer/DirectCartCheckoutModal';
+import { useOrderDeepLink } from './hooks/useOrderDeepLink';
 import { DirectOrderTrackingModal } from './components/customer/DirectOrderTrackingModal';
 
 // Kerala Mess & Swiggy/Zomato Aggregator Portals
@@ -355,9 +356,31 @@ export function App() {
     openCheckout: () => setIsCartCheckoutOpen(true)
   });
 
+  // Order deep link (/orders/<orderNumber>): waits for the session restoration, requires a customer sign-in, then loads from the backend.
+  const orderLink = useOrderDeepLink({
+    authLoading: auth.isLoading,
+    open: (orderNumber) => {
+      setTrackingLookupOrderNumber(orderNumber);
+      setIsTrackingModalOpen(true);
+    },
+    close: () => {
+      setIsTrackingModalOpen(false);
+      setTrackingLookupOrderNumber('');
+    },
+    requireAuth: requireCustomerAuth,
+    isAuthenticated: auth.isAuthenticated
+  });
+
+  // A financial request reported that the session is gone: show the sign-in flow (the customer lands back where they were).
+  const handleSessionExpired = () => {
+    setAuthModalInitialMode('signin');
+    setAuthModalOpen(true);
+  };
+
   const handleOpenTrackingForOrder = (orderNumber?: string) => {
     if (orderNumber) {
       setTrackingLookupOrderNumber(orderNumber);
+      orderLink.pushOrder(orderNumber);
     }
     setIsTrackingModalOpen(true);
   };
@@ -792,6 +815,7 @@ export function App() {
       <DirectCartCheckoutModal
         isOpen={isCartCheckoutOpen}
         onClose={() => setIsCartCheckoutOpen(false)}
+        onSessionExpired={handleSessionExpired}
         onOpenTracking={(orderNum) => {
           setIsCartCheckoutOpen(false);
           handleOpenTrackingForOrder(orderNum);
@@ -804,7 +828,9 @@ export function App() {
         onClose={() => {
           setIsTrackingModalOpen(false);
           setTrackingLookupOrderNumber('');
+          orderLink.clearOrder();
         }}
+        onSessionExpired={handleSessionExpired}
         initialOrderNumber={trackingLookupOrderNumber}
       />
 

@@ -162,6 +162,9 @@ export function order(overrides: Partial<ApiOrder> = {}): ApiOrder {
       recipientName: 'Test Customer'
     },
     createdAt: '2026-10-08T10:00:00.000Z',
+    cancellation: { state: 'CANCELLATION_AVAILABLE', allowed: true },
+    refund: { state: 'NO_REFUND' },
+    payment: { state: 'NOT_STARTED', canStartPayment: true },
     items: [
       {
         id: 'oi-1',

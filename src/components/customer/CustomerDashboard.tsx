@@ -75,7 +75,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const [deliveryDistanceKm, setDeliveryDistanceKm] = useState<number>(18);
   const [agreedToTerms, setAgreedToTerms] = useState<boolean>(false);
   const [showPaymentGatewayModal, setShowPaymentGatewayModal] = useState<boolean>(false);
-  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking' | 'cod'>('upi');
+  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking'>('upi');
 
   // --- TAB 5: MY ACTIVE SUBSCRIPTION & PAUSE PLAN STATE ---
   const [activeSubscriptions, setActiveSubscriptions] = useState<Array<{
@@ -954,8 +954,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                   {[
                     { id: 'upi', label: 'UPI / Google Pay / PhonePe' },
                     { id: 'card', label: 'Credit / Debit Card' },
-                    { id: 'netbanking', label: 'Netbanking' },
-                    { id: 'cod', label: 'Cash on Delivery (COD)' }
+                    { id: 'netbanking', label: 'Netbanking' }
                   ].map((m) => (
                     <button
                       key={m.id}

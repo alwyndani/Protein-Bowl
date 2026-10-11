@@ -1,5 +1,5 @@
 import { ApiClient } from './apiClient';
-import type { ApiOrder, CheckoutPreview } from './commerceTypes';
+import type { ApiOrder, CancelOrderResult, CheckoutPreview, CustomerCancelReasonCode, OrderRefundsView } from './commerceTypes';
 
 export interface CheckoutPreviewPayload {
   addressId?: string;
@@ -40,5 +40,22 @@ export class OrderService {
   /** Accepts either the order id or the human-readable order number. */
   public static async getOrder(orderIdOrNumber: string): Promise<ApiOrder> {
     return await ApiClient.requestData<ApiOrder>(`/orders/${encodeURIComponent(orderIdOrNumber)}`);
+  }
+
+  /**
+   * Cancel the caller's own order (P7C). The body is ONLY the typed reason code and an optional note: never an amount, currency,
+   * payment id or customer id. Not retried automatically; the server is idempotent (a repeat returns the same state).
+   */
+  public static async cancelOrder(orderId: string, reasonCode: CustomerCancelReasonCode, note?: string): Promise<CancelOrderResult> {
+    const trimmed = note?.trim();
+    return await ApiClient.requestData<CancelOrderResult>('/orders/' + encodeURIComponent(orderId) + '/cancel', {
+      method: 'POST',
+      body: JSON.stringify(trimmed ? { reasonCode, note: trimmed } : { reasonCode })
+    });
+  }
+
+  /** Safe refund states for the caller's own order (needs the order id, not the order number). */
+  public static async getOrderRefunds(orderId: string): Promise<OrderRefundsView> {
+    return await ApiClient.requestData<OrderRefundsView>('/orders/' + encodeURIComponent(orderId) + '/refunds');
   }
 }

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { Order, DietPlanRequest, CustomerProfile } from '../../types';
 import { LogoMark } from '../common/LogoMark';
-import { X, MapPin, Clock, CreditCard, ShieldCheck, CheckCircle2, Sparkles, Building, Lock } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import { X, MapPin, Clock, Info } from 'lucide-react';
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -29,9 +28,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
   const [deliverySlot, setDeliverySlot] = useState<string>('Afternoon (Lunch)');
 
   const [startDate, setStartDate] = useState('2026-07-26');
-  const [paymentMethod, setPaymentMethod] = useState<'upi' | 'card' | 'netbanking'>('upi');
-  const [upiId, setUpiId] = useState('anjali@okaxis');
-  const [isProcessing, setIsProcessing] = useState(false);
 
   if (!isOpen) return null;
 
@@ -45,36 +41,10 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
 
   const totalPrice = pricing.totalPayable;
 
-  const handlePayAndConfirm = (e: React.FormEvent) => {
+  // P7D: this diet-plan checkout used to FABRICATE a paid order locally (fake gateway, fake VPA). Diet-plan payments are not
+  // supported yet, so there is deliberately no payment action here: nothing can be marked paid from this screen.
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsProcessing(true);
-
-    setTimeout(() => {
-      setIsProcessing(false);
-      confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 } });
-
-      const createdOrder: Order = {
-        id: `PB-ORD-${Math.floor(1000 + Math.random() * 9000)}`,
-        customerId: profile.id,
-        customerName: profile.name,
-        planId: request.id,
-        planTitle: `${request.durationDays}-Day Custom ${request.goal.replace('_', ' ')} Plan`,
-        planType: request.planType,
-        durationDays: request.durationDays,
-        startDate,
-        deliveryAddress: address,
-        deliverySlot,
-        paymentStatus: 'paid',
-        orderStatus: 'confirmed',
-        totalAmount: totalPrice,
-        fssaiLicense: 'KITCHEN LIC NO. 11322007000341',
-        batchNumber: `PB-BATCH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-01`,
-        createdAt: new Date().toISOString().split('T')[0]
-      };
-
-      onOrderSuccess(createdOrder);
-      onClose();
-    }, 1500);
   };
 
   return (
@@ -85,6 +55,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         <div className="p-6 bg-emerald-950 text-white relative">
           <button
             onClick={onClose}
+            aria-label="Close"
             className="absolute top-4 right-4 p-2 text-stone-400 hover:text-white hover:bg-emerald-900 rounded-full transition-colors"
           >
             <X className="w-5 h-5" />
@@ -107,7 +78,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handlePayAndConfirm} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
           
           {/* Section 1: Delivery Address */}
           <div className="space-y-3">
@@ -182,47 +153,12 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
-          {/* Section 3: Payment Method */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-extrabold uppercase tracking-wider text-stone-600 flex items-center gap-1.5">
-              <CreditCard className="w-4 h-4 text-emerald-600" />
-              <span>3. Secure Payment Gateway</span>
-            </h4>
-
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: 'upi', label: 'UPI / Google Pay / PhonePe' },
-                { id: 'card', label: 'Credit / Debit Card' },
-                { id: 'netbanking', label: 'NetBanking' },
-              ].map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => setPaymentMethod(m.id as any)}
-                  className={`p-2.5 rounded-xl text-xs font-bold border transition-all ${
-                    paymentMethod === m.id
-                      ? 'bg-emerald-800 text-white border-emerald-800 shadow-xs'
-                      : 'bg-stone-50 text-stone-700 border-stone-300 hover:bg-stone-100'
-                  }`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            {paymentMethod === 'upi' && (
-              <div>
-                <label className="block text-[11px] font-bold text-stone-600 mb-1">Virtual Payment Address (VPA)</label>
-                <input
-                  type="text"
-                  required
-                  value={upiId}
-                  onChange={(e) => setUpiId(e.target.value)}
-                  placeholder="e.g. username@upi"
-                  className="w-full text-xs font-bold bg-stone-50 border border-stone-300 p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500"
-                />
-              </div>
-            )}
+          {/* Section 3: Payment - not available for diet plans yet */}
+          <div role="status" data-testid="diet-plan-payment-unavailable" className="flex items-start gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-xs">
+            <Info className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              <strong>Online payment for diet plans is not available yet.</strong> Nothing has been charged and no order has been created. Please check back soon.
+            </span>
           </div>
 
           {/* Order Bill Summary driven by MD Cost Engine */}
@@ -258,26 +194,15 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
             </div>
           </div>
 
-          {/* Action Button */}
+          {/* Action: intentionally disabled */}
           <button
             type="submit"
-            disabled={isProcessing}
-            className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:bg-emerald-400 text-white font-extrabold py-3.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 text-sm"
+            disabled
+            aria-disabled="true"
+            className="w-full bg-stone-300 text-stone-600 font-extrabold py-3.5 rounded-xl flex items-center justify-center gap-2 text-sm cursor-not-allowed"
           >
-            {isProcessing ? (
-              <span>Processing Payment Gateway...</span>
-            ) : (
-              <>
-                <Lock className="w-4 h-4" />
-                <span>Pay ₹{totalPrice.toLocaleString()} & Confirm Order</span>
-              </>
-            )}
+            <span>Payment not available yet</span>
           </button>
-
-          <p className="text-[10px] text-stone-400 text-center flex items-center justify-center gap-1">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-            <span>256-bit SSL Encrypted • Certified Kitchen License #11322007000341</span>
-          </p>
 
         </form>
       </div>

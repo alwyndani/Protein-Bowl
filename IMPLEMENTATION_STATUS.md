@@ -261,7 +261,7 @@ Backend **399/399** (263 earlier + 59 `p7a.unit` + 66 `p7a` + 10 `p7a.tax` + 1 `
 | Immutable `Order.pricingSnapshot` (policy, tax mode, fee rules, limits, SHA-256 policy hash) | **VERIFIED** |
 | Minimum order (preview reports enabled/required/met/shortfall; creation enforces `MINIMUM_ORDER_NOT_MET`) | **VERIFIED** (value = PRODUCT DECISION) |
 | Quantity validation (no coercion), per-line and per-cart caps, money-overflow guard | **VERIFIED** |
-| `paymentMethod` allow-list (ONLINE/COD), `COD_NOT_ALLOWED` by policy | **VERIFIED** |
+| `paymentMethod` allow-list (ONLINE only), `COD_NOT_ALLOWED` always (COD permanently unsupported) | **VERIFIED** |
 | Idempotency: key required, bounded format, customer-scoped unique, request fingerprint, `IDEMPOTENCY_KEY_REUSED`, no cross-customer leak | **VERIFIED** |
 | Concurrency: per-customer row lock; same-key, different-key and cart-edit races tested on the real DB; order-number collision retry | **VERIFIED** |
 | `OrderTransitionService` + typed status catalogue; payment gate; role/branch/ownership rules; `OrderEvent`; `ORDER_CREATED` / `ORDER_STATUS_CHANGED` audit (transactional) | **VERIFIED** |
@@ -269,8 +269,8 @@ Backend **399/399** (263 earlier + 59 `p7a.unit` + 66 `p7a` + 10 `p7a.tax` + 1 `
 | Customer order DTO (no idempotency key/fingerprint/snapshot/ids), customer-safe timeline | **VERIFIED** |
 | Audit redaction extended (signature, cvv, cvc, vpa, card) | **VERIFIED** |
 | No silent tax default: `Product.taxRate` / `OrderItem.taxRate` have no schema/database default (NOT NULL kept, stored values preserved); creation without an explicit rate fails; seeds/fixtures explicit | **VERIFIED** |
-| Real fee/threshold/packaging/min-order/quantity caps/tax rates/COD/cancellation window | **PRODUCT DECISION REQUIRED** (placeholders are development-only) |
-| Payment provider, verification, webhook | **P7B — VERIFIED (2026-10-10), NOT YET COMMITTED** · COD confirmation: DEFERRED (COD disabled) |
+| Real fee/threshold/packaging/min-order/quantity caps/tax rates/cancellation window | **PRODUCT DECISION REQUIRED** (placeholders are development-only) |
+| Payment provider, verification, webhook | **P7B — VERIFIED (2026-10-10), NOT YET COMMITTED** · COD: NOT SUPPORTED (permanent policy, no confirmation path) |
 | Cancellation workflow, refunds | **P7C — NOT IMPLEMENTED** |
 | Web payment/retry/cancel/refund UI | **P7D — NOT IMPLEMENTED** |
 | KOT creation, branch routing (`kitchenBranchId` never set), delivery assignment creation, stock checks | **P8 / P9 / P12 — NOT IMPLEMENTED** |
@@ -310,3 +310,21 @@ Baseline 8c80862 (P7A + P7B committed). Backend only. P7D (UI), P8 (kitchen), P9
 - **Boundary documented:** the old SUPER_ADMIN lifecycle edges PREPARING->CANCELLED / READY->CANCELLED remain in the transition table for compatibility but cannot be used for a paid order (the gate requires CONFIRMED/ACCEPTED + a registered refund intent); P7C silently expands nothing.
 - **NEEDS_EXTERNAL_VERIFICATION (live Razorpay):** duplicate-receipt response semantics, dedicated refund idempotency mechanism, failed-refund recreation semantics, receipt max length, webhook ordering/retry, refund-listing consistency.
 - **Deployment prerequisites (all outstanding):** subscribe the webhook to refund.* events; merchant balance for refunds; schedule `payments:reconcile`; staff/alert the review queue (refunds in REVIEW/UNKNOWN, EXTERNAL refunds, duplicates/late payments awaiting approval); live credentials (as P7B).
+
+---
+
+## 🛒 P7D — Customer checkout, payment, cancellation & refund web UX: VERIFIED (2026-10-11) — NOT YET COMMITTED
+
+Baseline b14ab3b. Scope: web customer UI plus ONE additive backend field. No migration (13 migrations unchanged). P8 (kitchen), P9 (delivery) and mobile payment UI are **NOT IMPLEMENTED** and were not touched.
+
+**Backend (P7D-G1):** customer order DTO gained additive `payment: { state: NOT_STARTED | AWAITING_PAYMENT | CONFIRMING | PAID, canStartPayment }`, derived on read by `modules/payment/paymentSummary.service.ts` (conservative: unresolved provider evidence => CONFIRMING / canStartPayment=false; no provider ids, review flags, leases, attempt counts or failure details exposed). 24 tests in `p7d.test.ts`.
+
+**Web:** Razorpay Checkout via a typed single-flight loader; client UX state machine (UX only; server `canStartPayment` is authoritative; handler success is never truth, evidence goes only to the verify endpoint); bounded GET-only polling (pauses when hidden, 3 min cap, manual Refresh Status); customer cancellation dialog (only when server says CANCELLATION_AVAILABLE); separate Order/Payment/Refund badges; refund notices; `/orders/<orderNumber>` deep link without a router; code-to-copy error mapping (no raw server/provider text); reusable `AccessibleDialog`; legacy diet-plan fake payment disabled (`CheckoutModal`). No secrets, no Razorpay key in web, no prefill, no retries of financial POSTs beyond the existing single 401 token refresh.
+
+**Evidence:** backend 693/693 (25 files; `tsc` clean), web 262/262 (21 files; `tsc` clean; production build OK), mobile `tsc` clean, `prisma validate` OK, `migrate status` up to date (13), bundle scanned for key/secret patterns (none).
+
+**Not verified / remaining:** no live Razorpay run (credentials BLOCKED_BY_EXTERNAL_SERVICE); the browser E2E (2026-10-11) drove the REAL web app against the REAL backend with the MOCK provider, but the Razorpay checkout WIDGET was a stand-in (window.Razorpay stub) and document visibility was simulated (the pane tab is hidden) - see the E2E note below; CSP origins for checkout.js undocumented by Razorpay (use Report-Only if a CSP is added); mobile payment UI, unpaid-order expiry, multi-tab sync, payment-state G2 (stored state) all NOT implemented.
+
+**P7D browser E2E (2026-10-11, mock provider only):** real Chromium-class browser pane + real Vite web app + real API/DB; throwaway harness outside the repo exposed the in-process mock provider; a `window.Razorpay` stub stood in for the hosted checkout widget (it cannot load for mock ids). Passed: happy path, pending/AUTHORIZED, UNKNOWN session (+ reload recovery), dismissal (server-allowed retry AND money-in-flight => confirming), payment.failed, Pay triple/real double-click (1 session, 1 widget), cancel triple-submit (1 POST), `/orders/<n>` direct load, back/forward, signed-out deep link, unpaid + paid cancellation, all 5 refund states, ownership vs missing order identical "Order not found.", mapped errors (409/422/429/503/500/network, cancel too), no leaked provider fields in 21 order responses, empty storage, no signature in console. Defects found and FIXED with regression tests: (1) `usePaymentFlow` never reset `mounted` under React StrictMode, so every state update was dropped (jsdom cannot see it); (2) a refunded order's badge read "Paid"; (3) a signed-out deep link was lost when the customer dismissed the post-login health step. Observed, NOT P7D, not fixed: in dev, StrictMode fires two concurrent `/auth/refresh` calls and the P6A reuse-denial can revoke the session (intermittent sign-out on reload); customer sign-in is two-step (health capture) and only runs pending actions after step 2.
+
+**PERMANENT PAYMENT POLICY (decided 2026-10-11): Protein Bowl supports ONLINE payment only. Cash on Delivery (COD) is not supported and must not be introduced in web, mobile, customer ordering, delivery or future commerce phases.** Pre-commit COD audit result: customer COD options existed in `CustomerDashboard` (gateway modal, mock) and `MessCustomerPortal` ("Cash / UPI at Hostel Gate Drop") and were REMOVED; the backend accepted `COD` when `COMMERCE_COD_ENABLED=true` and now ALWAYS rejects it (422 `COD_NOT_ALLOWED`), and the flag fails startup. Legacy: `Order.paymentMethod` is a free String (no enum, no migration; 13 migrations unchanged); historical `COD` rows remain readable and non-payable. Dormant, not customer-facing: mock ERP B2B payment terms ("Immediate COD", "Cash on Delivery" selects in Bakery/Tepache/Omnichannel dashboards) and the unreferenced `DirectGuestOrderModal`. Tests: `server/src/tests/codUnsupported.test.ts` (7), adapted p7a tests 10/17 + unit, `src/test/noCod.test.ts` (4).

@@ -1,12 +1,15 @@
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { RECON } from '../payment/paymentStatus.js';
+import { PaymentSummary, PaymentSummaryService } from '../payment/paymentSummary.service.js';
 import { CUSTOMER_CANCELLABLE_STATES } from './cancellationPolicy.js';
 import { LIVE_REFUND_STATUSES, PublicCancellationState, PublicRefundState, publicRefundState } from './refundStatus.js';
 
 export interface DerivedOrderState {
   cancellation: { state: PublicCancellationState; allowed: boolean };
   refund: { state: PublicRefundState };
+  /** P7D-G1: server-derived payment summary (authoritative for the web UI). */
+  payment: PaymentSummary;
 }
 
 /** Worst/most-actionable first: what the customer should look at. */
@@ -15,9 +18,10 @@ const RANK: Record<PublicRefundState, number> = { NO_REFUND: 0, REFUNDED: 1, REF
 /** Customer-safe projections. Never exposes provider ids, leases, attempt counters, internal flags or provider failure detail. */
 export class RefundViewService {
   /** Derive the additive customer-order fields for many orders with TWO queries. */
-  public static async deriveForOrders(orders: Array<{ id: string; status: string; orderType: string; paymentStatus: string }>): Promise<Map<string, DerivedOrderState>> {
+  public static async deriveForOrders(orders: Array<{ id: string; status: string; orderType: string; paymentStatus: string; paymentMethod: string | null; netAmount: unknown }>): Promise<Map<string, DerivedOrderState>> {
     const ids = orders.map((o) => o.id);
     const out = new Map<string, DerivedOrderState>();
+    const payments = await PaymentSummaryService.deriveForOrders(orders);
     const refunds = ids.length ? await prisma.refund.findMany({ where: { orderId: { in: ids } }, select: { orderId: true, status: true, providerPaymentId: true } }) : [];
     const flagged = ids.length
       ? await prisma.providerPayment.findMany({ where: { orderId: { in: ids }, reconciliationStatus: { in: [RECON.DUPLICATE, RECON.AFTER_CANCELLATION] } }, select: { id: true, orderId: true } })
@@ -37,14 +41,15 @@ export class RefundViewService {
       const allowed = !cancelled && o.orderType === 'DIRECT' && (CUSTOMER_CANCELLABLE_STATES as readonly string[]).includes(o.status) && (o.paymentStatus === 'PENDING' || o.paymentStatus === 'PAID');
       out.set(o.id, {
         cancellation: { state: cancelled ? 'CANCELLED' : allowed ? 'CANCELLATION_AVAILABLE' : 'CANCELLATION_NOT_ALLOWED', allowed },
-        refund: { state: best }
+        refund: { state: best },
+        payment: payments.get(o.id)!
       });
     }
     return out;
   }
 
   public static async cancelResponse(result: { changed: boolean; orderId: string; orderNumber: string }) {
-    const order = await prisma.order.findUniqueOrThrow({ where: { id: result.orderId }, select: { id: true, status: true, orderType: true, paymentStatus: true, cancelledAt: true } });
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: result.orderId }, select: { id: true, status: true, orderType: true, paymentStatus: true, paymentMethod: true, netAmount: true, cancelledAt: true } });
     const derived = (await this.deriveForOrders([order])).get(order.id)!;
     return {
       orderId: order.id,
@@ -54,14 +59,15 @@ export class RefundViewService {
       cancelledAt: order.cancelledAt,
       alreadyCancelled: !result.changed,
       cancellation: derived.cancellation,
-      refund: derived.refund
+      refund: derived.refund,
+      payment: derived.payment
     };
   }
 
   /** GET /orders/:orderId/refunds (owner only; another customer's order is a safe 404). */
   public static async listForCustomerOrder(userId: string, orderId: string) {
     const profile = await prisma.customerProfile.findUnique({ where: { userId }, select: { id: true } });
-    const order = profile ? await prisma.order.findFirst({ where: { id: orderId, customerProfileId: profile.id }, select: { id: true, status: true, orderType: true, paymentStatus: true } }) : null;
+    const order = profile ? await prisma.order.findFirst({ where: { id: orderId, customerProfileId: profile.id }, select: { id: true, status: true, orderType: true, paymentStatus: true, paymentMethod: true, netAmount: true } }) : null;
     if (!order) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
 
     const refunds = await prisma.refund.findMany({ where: { orderId: order.id }, orderBy: { createdAt: 'asc' }, select: { id: true, amount: true, currency: true, status: true, createdAt: true, processedAt: true } });

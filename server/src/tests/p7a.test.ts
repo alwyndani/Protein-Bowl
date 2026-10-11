@@ -260,11 +260,11 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       expect(await prisma.order.count({ where: { customerProfileId: users.custA.profileId, idempotencyKey: k1 } })).toBe(1);
     });
 
-    it('10. same key + different payment method -> 409 IDEMPOTENCY_KEY_REUSED', async () => {
-      injectPolicy({ COMMERCE_COD_ENABLED: 'true' });
+    it('10. same key + a COD payment method is refused outright (COD is unsupported), and the original order is untouched', async () => {
       const res = await place(users.custA.token, k1, { addressId: addr.custA, paymentMethod: 'COD' });
-      expect(res.status).toBe(409);
-      expect(res.body.error).toBe('IDEMPOTENCY_KEY_REUSED');
+      expect(res.status).toBe(422);
+      expect(res.body.error).toBe('COD_NOT_ALLOWED');
+      expect(await prisma.order.count({ where: { customerProfileId: users.custA.profileId, idempotencyKey: k1 } })).toBe(1);
     });
 
     it('11. same key + different delivery instructions -> 409 IDEMPOTENCY_KEY_REUSED', async () => {
@@ -308,21 +308,23 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       }
     });
 
-    it('16. COD is rejected with COD_NOT_ALLOWED while policy disables it, and the cart is untouched', async () => {
+    it('16. COD is rejected with COD_NOT_ALLOWED, and the cart is untouched', async () => {
       const res = await place(users.custA.token, key('cod'), { addressId: addr.custA, paymentMethod: 'COD' });
       expect(res.status).toBe(422);
       expect(res.body.error).toBe('COD_NOT_ALLOWED');
       expect((await request(app).get('/api/v1/cart').set(bearer(users.custA.token))).body.data.items).toHaveLength(1);
     });
 
-    it('17. when policy enables COD the order is stored as COD but is NOT confirmed or paid', async () => {
-      injectPolicy({ COMMERCE_COD_ENABLED: 'true' });
+    it('17. COD can never be enabled: the policy refuses it, and a COD request creates nothing even then (legacy COD rows do not enable it)', async () => {
+      expect(() => injectPolicy({ COMMERCE_COD_ENABLED: 'true' })).toThrow(/online payment only/);
+      const before = await prisma.order.count({ where: { customerProfileId: users.custA.profileId } });
       const res = await place(users.custA.token, key('cod-on'), { addressId: addr.custA, paymentMethod: 'COD' });
-      expect(res.status, JSON.stringify(res.body)).toBe(201);
-      expect(res.body.data).toMatchObject({ paymentMethod: 'COD', status: 'PENDING', paymentStatus: 'PENDING', confirmedAt: null });
-      const snap: any = (await prisma.order.findUnique({ where: { id: res.body.data.id } }))!.pricingSnapshot;
-      expect(snap.paymentMethods).toEqual({ online: true, cod: true });
-      expect(snap.policySource).toBe('INJECTED');
+      expect(res.status).toBe(422);
+      expect(res.body.error).toBe('COD_NOT_ALLOWED');
+      expect(await prisma.order.count({ where: { customerProfileId: users.custA.profileId } })).toBe(before);
+      const lower = await place(users.custA.token, key('cod-lower'), { addressId: addr.custA, paymentMethod: 'cod' });
+      expect(lower.status).toBe(422);
+      expect(lower.body.error).toBe('INVALID_PAYMENT_METHOD');
     });
 
     it('18. an omitted payment method defaults to ONLINE', async () => {

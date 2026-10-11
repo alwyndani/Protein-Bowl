@@ -48,7 +48,9 @@ describe('order history and tracking (persisted orders only)', () => {
 
     getMyOrders.mockRejectedValueOnce(new Error('Orders unavailable'));
     render(<DirectOrderTrackingModal isOpen onClose={vi.fn()} />);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Orders unavailable');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/could not load your orders/i);
+    expect(alert).not.toHaveTextContent('Orders unavailable'); // raw error text is never rendered
     expect(screen.queryByTestId('order-detail')).not.toBeInTheDocument();
 
     getMyOrders.mockResolvedValueOnce([order()]);
@@ -56,12 +58,12 @@ describe('order history and tracking (persisted orders only)', () => {
     expect(await screen.findByTestId('history-order-PB-123456-789')).toBeInTheDocument();
   });
 
-  it('displays the persisted status and payment status exactly as stored (PENDING / PENDING)', async () => {
+  it('displays the persisted order and payment state as separate, customer-friendly badges (PENDING / PENDING)', async () => {
     getMyOrders.mockResolvedValueOnce([order({ status: 'PENDING', paymentStatus: 'PENDING' })]);
     render(<DirectOrderTrackingModal isOpen onClose={vi.fn()} />);
 
-    expect(await screen.findByTestId('detail-status')).toHaveTextContent('PENDING');
-    expect(screen.getByTestId('detail-payment-status')).toHaveTextContent('PENDING');
+    expect(await screen.findByTestId('badge-order')).toHaveTextContent('Order placed');
+    expect(screen.getByTestId('badge-payment')).toHaveTextContent('Payment pending');
     expect(screen.getByTestId('detail-order-number')).toHaveTextContent('PB-123456-789');
   });
 
@@ -69,13 +71,13 @@ describe('order history and tracking (persisted orders only)', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     getMyOrders.mockResolvedValueOnce([order({ status: 'PENDING' })]);
     render(<DirectOrderTrackingModal isOpen onClose={vi.fn()} />);
-    await screen.findByTestId('detail-status');
+    await screen.findByTestId('badge-order');
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     });
 
-    expect(screen.getByTestId('detail-status')).toHaveTextContent('PENDING');
+    expect(screen.getByTestId('badge-order')).toHaveTextContent('Order placed');
     const dialog = screen.getByRole('dialog');
     for (const word of SIMULATED_PROGRESS_WORDS) {
       expect(dialog).not.toHaveTextContent(word);
@@ -86,7 +88,7 @@ describe('order history and tracking (persisted orders only)', () => {
   it('only shows later statuses when the server actually reports them', async () => {
     getMyOrders.mockResolvedValueOnce([order({ status: 'PREPARING' })]);
     render(<DirectOrderTrackingModal isOpen onClose={vi.fn()} />);
-    expect(await screen.findByTestId('detail-status')).toHaveTextContent('PREPARING');
+    expect(await screen.findByTestId('badge-order')).toHaveTextContent('Being prepared');
   });
 
   it('opens the order referenced by the order number after checkout (fetching it if the list lacks it)', async () => {
@@ -98,11 +100,12 @@ describe('order history and tracking (persisted orders only)', () => {
     expect(getOrder).toHaveBeenCalledWith('PB-999999-999');
   });
 
-  it('selects a listed order by number without an extra lookup', async () => {
+  it('selects a listed order by number and reads its detail (timeline, derived states) from the server', async () => {
     getMyOrders.mockResolvedValueOnce([order(), order({ id: 'order-uuid-2', orderNumber: 'PB-222222-222' })]);
+    getOrder.mockResolvedValueOnce(order({ id: 'order-uuid-2', orderNumber: 'PB-222222-222' }));
     render(<DirectOrderTrackingModal isOpen onClose={vi.fn()} initialOrderNumber="PB-222222-222" />);
 
     await waitFor(() => expect(screen.getByTestId('detail-order-number')).toHaveTextContent('PB-222222-222'));
-    expect(getOrder).not.toHaveBeenCalled();
+    expect(getOrder).toHaveBeenCalledWith('order-uuid-2');
   });
 });

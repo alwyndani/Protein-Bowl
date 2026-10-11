@@ -179,6 +179,7 @@ export function parseCommercePolicy(raw: RawCommerceEnv, nodeEnv: string): Comme
   }
 
   const codEnabled = parseBool('COMMERCE_COD_ENABLED', read('COMMERCE_COD_ENABLED'));
+  if (codEnabled) throw new CommercePolicyConfigError('COMMERCE_COD_ENABLED=true is not allowed: Protein Bowl supports online payment only (COD is permanently unsupported)');
 
   return Object.freeze({
     source: usedDevelopmentDefault ? 'DEVELOPMENT_DEFAULTS' : 'ENVIRONMENT',

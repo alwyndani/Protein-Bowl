@@ -16,15 +16,21 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
+import { AccessibleDialog } from '../common/AccessibleDialog';
+import { OrderStatusBadges } from './OrderStatusBadges';
+import { PaymentPanel } from './PaymentPanel';
 import { AddressService, CustomerAddressItem } from '../../services/addressService';
 import { OrderService } from '../../services/orderService';
 import type { ApiOrder, CheckoutPreview } from '../../services/commerceTypes';
 import { formatInr, moneyToNumber } from '../../utils/money';
+import { describeError } from '../../utils/paymentErrors';
 
 interface DirectCartCheckoutModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenTracking?: (orderNumber: string) => void;
+  /** The server reported that the session is gone: the host shows the sign-in flow. */
+  onSessionExpired?: () => void;
 }
 
 type Step = 'cart' | 'address' | 'review' | 'success';
@@ -70,7 +76,7 @@ const SummaryRow: React.FC<{ label: string; value: number; strong?: boolean; hid
   );
 };
 
-export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = ({ isOpen, onClose, onOpenTracking }) => {
+export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = ({ isOpen, onClose, onOpenTracking, onSessionExpired }) => {
   const cart = useCart();
   const [step, setStep] = useState<Step>('cart');
 
@@ -204,7 +210,9 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
       void cart.refresh(); // the server consumed the cart in the order transaction
     } catch (err) {
       // Keep the same idempotency key so a retry can never create a duplicate order.
-      setSubmitError(errMessage(err, 'We could not place your order. Please try again.'));
+      const info = describeError(err);
+      if (info.action === 'SIGN_IN') onSessionExpired?.();
+      setSubmitError(info.message);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -225,8 +233,13 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
   ];
 
   return (
-    <div role="dialog" aria-label="Cart and checkout" className="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-stone-900 border border-stone-800 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl relative overflow-hidden text-white">
+    <AccessibleDialog
+      label="Cart and checkout"
+      onClose={onClose}
+      overlayClassName="fixed inset-0 z-50 bg-stone-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
+      panelClassName="bg-stone-900 border border-stone-800 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col shadow-2xl relative overflow-hidden text-white focus:outline-none"
+    >
+      <div className="contents">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-800 bg-stone-950/90 shrink-0 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -234,7 +247,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
               <ShoppingBag className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base sm:text-lg font-black text-white">{step === 'success' ? 'Order placed' : 'Your cart & checkout'}</h3>
+              <h3 className="text-base sm:text-lg font-black text-white">{step === 'success' ? (placedOrder?.payment?.state === 'PAID' ? 'Order confirmed' : 'Order placed') : 'Your cart & checkout'}</h3>
               {step !== 'success' && (
                 <div className="flex items-center gap-2 text-[11px] mt-0.5">
                   {stepLabels.map((s, i) => (
@@ -246,7 +259,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
               )}
             </div>
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-stone-400 hover:text-white bg-stone-800 p-2 rounded-full border border-stone-700 hover:bg-stone-700 transition-colors">
+          <button onClick={onClose} aria-label="Close" className="min-h-11 min-w-11 inline-flex items-center justify-center text-stone-400 hover:text-white bg-stone-800 p-2 rounded-full border border-stone-700 hover:bg-stone-700 transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -564,7 +577,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                   <div className="flex items-start gap-2 text-[11px] text-stone-400 bg-stone-950/60 border border-stone-800 rounded-xl px-3 py-2">
                     <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                     <span>
-                      Totals are calculated by our server. Online payment is not available yet: your order will be placed with payment status <strong>PENDING</strong> and you will not be charged now.
+                      Totals are calculated by our server. You will not be charged until you place the order and complete the secure online payment on the next screen.
                     </span>
                   </div>
 
@@ -598,19 +611,17 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
             <div className="space-y-4" data-testid="order-confirmation">
               <div className="flex flex-col items-center text-center gap-2 py-2">
                 <CheckCircle2 className="w-10 h-10 text-emerald-400" />
-                <h4 className="text-lg font-black">Thank you — your order has been received</h4>
+                <h4 className="text-lg font-black">{placedOrder.payment?.state === 'PAID' ? 'Thank you — your payment is confirmed' : 'Your order has been placed'}</h4>
                 <p className="text-xs text-stone-400">
                   Order number <strong className="text-white" data-testid="order-number">{placedOrder.orderNumber}</strong>
                 </p>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-200">
-                    Status: <strong data-testid="order-status">{placedOrder.status}</strong>
-                  </span>
-                  <span className="px-2 py-0.5 rounded-full bg-stone-800 border border-stone-700 text-stone-200">
-                    Payment: <strong data-testid="order-payment-status">{placedOrder.paymentStatus}</strong>
-                  </span>
-                </div>
+                <OrderStatusBadges order={placedOrder} />
               </div>
+
+              {/* payment: the panel follows the SERVER's payment summary; nothing here decides that an order is paid */}
+              {placedOrder.paymentMethod === 'ONLINE' && placedOrder.status !== 'CANCELLED' && placedOrder.payment && placedOrder.payment.state !== 'PAID' && (
+                <PaymentPanel key={placedOrder.id} order={placedOrder} fetchOrder={() => OrderService.getOrder(placedOrder.id)} onOrder={setPlacedOrder} onSessionExpired={onSessionExpired} />
+              )}
 
               <ul className="space-y-2">
                 {placedOrder.items.map((it) => (
@@ -659,6 +670,6 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
           )}
         </div>
       </div>
-    </div>
+    </AccessibleDialog>
   );
 };

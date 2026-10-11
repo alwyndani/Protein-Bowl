@@ -188,4 +188,73 @@ export interface ApiOrder {
   items: ApiOrderItem[];
   /** Customer-safe status history (detail view only). */
   timeline?: Array<{ fromStatus: string | null; toStatus: string; at: string }>;
+  /** P7C (server-derived): whether the owner may cancel. The UI follows this, it never re-implements the policy. */
+  cancellation?: { state: CancellationState; allowed: boolean };
+  /** P7C (server-derived): refund state, separate from the order and payment states. */
+  refund?: { state: RefundState };
+  /** P7D-G1 (server-derived): payment summary. canStartPayment is AUTHORITATIVE: the UI may disable more, never enable. */
+  payment?: PaymentSummary;
+}
+
+export type CancellationState = 'CANCELLATION_AVAILABLE' | 'CANCELLATION_NOT_ALLOWED' | 'CANCELLED';
+export type RefundState = 'NO_REFUND' | 'REFUND_PENDING' | 'REFUND_PROCESSING' | 'REFUNDED' | 'REFUND_REVIEW_REQUIRED';
+export type PaymentSummaryState = 'NOT_STARTED' | 'AWAITING_PAYMENT' | 'CONFIRMING' | 'PAID';
+
+export interface PaymentSummary {
+  state: PaymentSummaryState;
+  canStartPayment: boolean;
+}
+
+/** POST /orders/:orderId/payment-attempts: only what is needed to open the provider checkout (no secrets). */
+export interface CheckoutSession {
+  attemptId: string;
+  provider: string;
+  /** Public provider key id (safe for the browser). */
+  keyId: string;
+  providerOrderId: string;
+  /** Display only: the amount was fixed by the server when the provider order was created. */
+  amountMinor: number;
+  currency: string;
+  orderNumber: string;
+  expiresAt: string;
+  status: string;
+}
+
+/** POST /orders/:orderId/payment-attempts/:attemptId/verify (200 = PAID, 202 = PENDING). */
+export interface VerifyPaymentResult {
+  result: 'PAID' | 'PENDING';
+  orderStatus: string;
+  orderPaymentStatus: string;
+}
+
+/** The evidence returned by the provider checkout handler; sent to the server verification endpoint and nowhere else. */
+export interface CheckoutEvidence {
+  providerOrderId: string;
+  providerPaymentId: string;
+  signature: string;
+}
+
+export const CUSTOMER_CANCEL_REASON_CODES = ['CHANGED_MIND', 'ORDERED_BY_MISTAKE', 'WRONG_ORDER', 'DELIVERY_TOO_LATE', 'OTHER'] as const;
+export type CustomerCancelReasonCode = (typeof CUSTOMER_CANCEL_REASON_CODES)[number];
+
+/** POST /orders/:orderId/cancel */
+export interface CancelOrderResult {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  cancelledAt: string | null;
+  alreadyCancelled: boolean;
+  cancellation: { state: CancellationState; allowed: boolean };
+  refund: { state: RefundState };
+  payment?: PaymentSummary;
+}
+
+/** GET /orders/:orderId/refunds (safe fields only). */
+export interface OrderRefundsView {
+  orderId: string;
+  cancellation: { state: CancellationState; allowed: boolean };
+  refund: { state: RefundState };
+  payment?: PaymentSummary;
+  refunds: Array<{ id: string; state: RefundState; amount: Money; currency: string; requestedAt: string; processedAt: string | null }>;
 }

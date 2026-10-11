@@ -146,8 +146,9 @@ describe('P7A CommercePolicy — configuration validation', () => {
     expect(() => parse({ ...FULL, COMMERCE_MAX_LINE_QUANTITY: '10', COMMERCE_MAX_CART_UNITS: '5' })).toThrow(/must not be smaller/);
   });
 
-  it('COD flag must be a strict boolean', () => {
-    expect(parse({ ...FULL, COMMERCE_COD_ENABLED: 'true' }).codEnabled).toBe(true);
+  it('COD is permanently unsupported: the flag must be a strict boolean and true is refused at startup', () => {
+    expect(parse({ ...FULL, COMMERCE_COD_ENABLED: 'false' }).codEnabled).toBe(false);
+    expect(() => parse({ ...FULL, COMMERCE_COD_ENABLED: 'true' })).toThrow(/online payment only/);
     expect(() => parse({ ...FULL, COMMERCE_COD_ENABLED: 'yes' })).toThrow(CommercePolicyConfigError);
   });
 
@@ -190,7 +191,6 @@ describe('P7A pricing snapshot', () => {
     expect(buildPricingSnapshot(policy()).policyHash).toBe(base);
     expect(buildPricingSnapshot(policy({ COMMERCE_DELIVERY_FEE: '26.00' })).policyHash).not.toBe(base);
     expect(buildPricingSnapshot(policy({ COMMERCE_MIN_ORDER_VALUE: '100' })).policyHash).not.toBe(base);
-    expect(buildPricingSnapshot(policy({ COMMERCE_COD_ENABLED: 'true' })).policyHash).not.toBe(base);
   });
 });
 

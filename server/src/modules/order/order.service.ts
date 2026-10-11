@@ -11,16 +11,18 @@ import { nextOrderNumber } from './orderNumber.js';
 import { toCustomerOrderDto, CustomerOrderDto } from './order.dto.js';
 import { RefundViewService } from '../refund/refundView.service.js';
 
-export const PAYMENT_METHODS = ['ONLINE', 'COD'] as const;
+/** Protein Bowl is ONLINE-payment-only: Cash on Delivery (COD) is permanently unsupported. 'COD' may exist on legacy rows only. */
+export const PAYMENT_METHODS = ['ONLINE'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 const MAX_ORDER_NUMBER_ATTEMPTS = 5;
 
 type OrderWithItems = Prisma.OrderGetPayload<{ include: { items: true } }>;
 
-/** Direct-order payment method: an explicit allow-list (omitted = ONLINE). COD is additionally subject to policy. */
+/** Direct-order payment method: an explicit allow-list (omitted = ONLINE). COD is always refused (no policy or env can enable it). */
 export function normalizePaymentMethod(raw: unknown): PaymentMethod {
   if (raw === undefined || raw === null || raw === '') return 'ONLINE';
+  if (raw === 'COD') throw new AppError('Cash on delivery is not available', 422, 'COD_NOT_ALLOWED');
   if (typeof raw !== 'string' || !(PAYMENT_METHODS as readonly string[]).includes(raw)) {
     throw new AppError('Unsupported payment method', 422, 'INVALID_PAYMENT_METHOD');
   }
@@ -171,9 +173,6 @@ export class OrderService {
           }
 
           const policy = getCommercePolicy();
-          if (paymentMethod === 'COD' && !policy.codEnabled) {
-            throw new AppError('Cash on delivery is not available', 422, 'COD_NOT_ALLOWED');
-          }
 
           // 1. Fetch active cart (under the checkout lock)
           const cart = await tx.cart.findFirst({
@@ -245,7 +244,7 @@ export class OrderService {
             containerDeposit: item.containerDeposit
           }));
 
-          // 8. Create Order (ONLINE and COD both start PENDING / PENDING: nothing in P7A can confirm or pay an order)
+          // 8. Create Order (ONLINE only; starts PENDING / PENDING: only a verified payment can confirm it)
           const order = await tx.order.create({
             data: {
               orderNumber: nextOrderNumber(),

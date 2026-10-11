@@ -55,6 +55,8 @@ export interface CustomerOrderDto {
   /** P7C (additive): whether the owner may cancel, and the derived refund state. Never provider ids, flags or internal detail. */
   cancellation?: DerivedOrderState['cancellation'];
   refund?: DerivedOrderState['refund'];
+  /** P7D-G1: derived payment summary; canStartPayment is authoritative for the web UI. */
+  payment?: DerivedOrderState['payment'];
 }
 
 export function toCustomerOrderDto(
@@ -101,6 +103,7 @@ export function toCustomerOrderDto(
   if (derived) {
     dto.cancellation = derived.cancellation;
     dto.refund = derived.refund;
+    dto.payment = derived.payment;
   }
   if (events) {
     dto.timeline = events.map((e) => ({ fromStatus: e.fromStatus, toStatus: e.toStatus, at: e.createdAt }));

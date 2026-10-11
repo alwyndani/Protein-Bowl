@@ -80,7 +80,7 @@ export const MessCustomerPortal: React.FC<MessCustomerPortalProps> = ({
   const [selectedPlanToSubscribe, setSelectedPlanToSubscribe] = useState<MessSubscriptionPlan | null>(null);
   const [selectedSingleItemToOrder, setSelectedSingleItemToOrder] = useState<MessMenuItem | null>(null);
   const [checkoutStep, setCheckoutStep] = useState<'details' | 'payment' | 'success'>('details');
-  const [paymentMode, setPaymentMode] = useState<'upi_instant' | 'student_wallet' | 'monthly_subscription_pass' | 'cash_at_gate'>('upi_instant');
+  const [paymentMode, setPaymentMode] = useState<'upi_instant' | 'student_wallet' | 'monthly_subscription_pass'>('upi_instant');
   const [placedOrderRef, setPlacedOrderRef] = useState<MessDailyOrder | null>(null);
 
   // Form details for checkout
@@ -1240,26 +1240,6 @@ export const MessCustomerPortal: React.FC<MessCustomerPortalProps> = ({
                     </div>
                   </label>
 
-                  {/* Cash on delivery */}
-                  <label 
-                    onClick={() => setPaymentMode('cash_at_gate')}
-                    className={`flex items-center justify-between p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                      paymentMode === 'cash_at_gate' ? 'bg-emerald-950/40 border-emerald-500' : 'bg-stone-950 border-stone-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold">
-                        <CreditCard className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="font-bold text-white">Cash / UPI at Hostel Gate Drop</div>
-                        <div className="text-[11px] text-stone-400">Pay directly upon meal arrival</div>
-                      </div>
-                    </div>
-                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${paymentMode === 'cash_at_gate' ? 'border-emerald-400 bg-emerald-400' : 'border-stone-600'}`}>
-                      {paymentMode === 'cash_at_gate' && <div className="w-1.5 h-1.5 bg-stone-950 rounded-full" />}
-                    </div>
-                  </label>
                 </div>
 
                 <div className="flex items-center gap-3 pt-2">

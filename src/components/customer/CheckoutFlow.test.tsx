@@ -214,8 +214,8 @@ describe('order creation', () => {
 
     const confirmation = await screen.findByTestId('order-confirmation');
     expect(within(confirmation).getByTestId('order-number')).toHaveTextContent('PB-777777-123');
-    expect(within(confirmation).getByTestId('order-status')).toHaveTextContent('PENDING');
-    expect(within(confirmation).getByTestId('order-payment-status')).toHaveTextContent('PENDING');
+    expect(within(confirmation).getByTestId('badge-order')).toHaveTextContent('Order placed');
+    expect(within(confirmation).getByTestId('badge-payment')).toHaveTextContent('Payment pending');
     expect(within(confirmation).getByTestId('summary-total')).toHaveTextContent('₹251.21');
     expect(within(confirmation).getByText(/12 Marine Drive/)).toBeInTheDocument();
     expect(within(confirmation).queryByText(/paid/i)).not.toBeInTheDocument();
@@ -260,7 +260,9 @@ describe('order creation', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /place order/i }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Network down');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/something went wrong/i);
+    expect(alert).not.toHaveTextContent('Network down'); // raw error text is never rendered
     expect(screen.queryByTestId('order-confirmation')).not.toBeInTheDocument();
     expect(screen.queryByText(/your order has been received/i)).not.toBeInTheDocument();
 

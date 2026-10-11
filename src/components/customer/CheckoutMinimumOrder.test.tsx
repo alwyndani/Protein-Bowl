@@ -129,10 +129,10 @@ describe('P7A checkout — server minimum order and policy errors', () => {
     createOrder.mockResolvedValueOnce(order({ status: 'PENDING', paymentStatus: 'PENDING', timeline: [{ fromStatus: null, toStatus: 'PENDING', at: '2026-10-10T10:00:00.000Z' }] }));
     renderModal();
     await goToReview();
-    expect(screen.getByText(/Online payment is not available yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/You will not be charged until you place the order/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /place order/i }));
-    expect(await screen.findByTestId('order-status')).toHaveTextContent('PENDING');
-    expect(screen.getByTestId('order-payment-status')).toHaveTextContent('PENDING');
+    expect(await screen.findByTestId('badge-order')).toHaveTextContent('Order placed');
+    expect(screen.getByTestId('badge-payment')).toHaveTextContent('Payment pending');
   });
 
   it('a server quantity-limit rejection is shown and the cart keeps its previous server state', async () => {
