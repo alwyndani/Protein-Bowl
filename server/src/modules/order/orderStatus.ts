@@ -49,8 +49,10 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'CONFIRMED->ACCEPTED': [RoleEnum.CHEF],
   'ACCEPTED->PREPARING': [RoleEnum.CHEF],
   'PREPARING->READY': [RoleEnum.CHEF],
-  'READY->DISPATCHED': [RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN],
-  'DISPATCHED->DELIVERED': [RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]
+  // P9A: dispatch (= the assigned driver collected the order and started delivery) is DELIVERY ONLY.
+  'READY->DISPATCHED': [RoleEnum.DELIVERY],
+  // P9A: the DISPATCHED -> DELIVERED edge stays in ORDER_TRANSITIONS for P9B (proof of delivery) but NO party may perform it yet.
+  'DISPATCHED->DELIVERED': []
 });
 
 export function transitionKey(from: OrderStatus, to: OrderStatus): string {

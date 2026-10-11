@@ -319,17 +319,18 @@ describe('P7A order status catalogue', () => {
       for (const to of ORDER_TRANSITIONS[from]) {
         const parties = TRANSITION_PARTIES[transitionKey(from, to)];
         expect(parties, `${from}->${to}`).toBeDefined();
-        expect(parties.length).toBeGreaterThan(0);
+        if (transitionKey(from, to) === 'DISPATCHED->DELIVERED') expect(parties).toEqual([]); // P9A: no reachable party until P9B
+        else expect(parties.length).toBeGreaterThan(0);
         if (parties.includes('CUSTOMER_OWNER')) expect(['PENDING->CANCELLED', 'CONFIRMED->CANCELLED']).toContain(transitionKey(from, to));
       }
     }
   });
 
-  it('confirmation is a SYSTEM-only edge, kitchen edges are CHEF-only (P8), delivery edges are DELIVERY/SUPER_ADMIN', () => {
+  it('confirmation is a SYSTEM-only edge, kitchen edges are CHEF-only (P8), dispatch is DELIVERY-only and DELIVERED has no party yet (P9A)', () => {
     expect(TRANSITION_PARTIES['PENDING->CONFIRMED']).toEqual(['SYSTEM']);
     expect(TRANSITION_PARTIES['PREPARING->READY']).toEqual([RoleEnum.CHEF]);
-    expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
-    expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
+    expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
+    expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([]);
     // MD is read-only: it appears on no edge
     expect(Object.values(TRANSITION_PARTIES).flat()).not.toContain(RoleEnum.MD);
   });

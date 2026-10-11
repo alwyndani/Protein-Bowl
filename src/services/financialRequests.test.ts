@@ -96,6 +96,13 @@ describe('request bodies carry no financial authority', () => {
     expect((calls[0].init.headers as Record<string, string>)['x-idempotency-key']).toBe('IK-test-key-1234');
   });
 
+  it('P9A: delivery instructions travel in the body only when provided', async () => {
+    mockFetch(() => json(200, { success: true, data: {} }));
+    await OrderService.createOrder({ addressId: 'a1', idempotencyKey: 'IK-test-key-1234', deliveryInstructions: 'Gate code 4321' });
+    expect(body(0)).toEqual({ addressId: 'a1', deliveryInstructions: 'Gate code 4321' });
+    expect((calls[0].init.headers as Record<string, string>)['x-idempotency-key']).toBe('IK-test-key-1234');
+  });
+
   it('ids are URL-encoded into the path (no path injection through an order id)', async () => {
     mockFetch(() => json(200, { success: true, data: {} }));
     await PaymentService.createSession('a/../b?x=1');

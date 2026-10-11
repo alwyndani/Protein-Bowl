@@ -52,7 +52,11 @@ const GUARDRAIL_MESSAGES: Record<string, string> = {
   ORDER_NOT_ROUTABLE: 'This order can no longer be routed (it may have been cancelled or accepted by a kitchen). The list has been refreshed.',
   KITCHEN_BRANCH_CHANGED: "Someone else changed this order's kitchen in the meantime. The list has been refreshed: review it and try again.",
   KITCHEN_BRANCH_INVALID: 'That kitchen branch is not available. Choose an active branch.',
-  ORDER_STATE_CONFLICT: 'The order changed at the same time. The list has been refreshed: review it and try again.'
+  ORDER_STATE_CONFLICT: 'The order changed at the same time. The list has been refreshed: review it and try again.',
+  // P9A delivery assignment
+  DELIVERY_ASSIGNMENT_CHANGED: "Someone else changed this order's delivery assignment in the meantime. The list has been refreshed: review it and try again.",
+  ORDER_NOT_ASSIGNABLE: 'Delivery can only be assigned while the order is ready and not yet out for delivery. The list has been refreshed.',
+  DRIVER_INVALID: 'That driver cannot be assigned to this order. Choose an active driver of this branch.'
 };
 
 /** "Validation failed: email: Invalid email; roles: Too many" -> { email: ..., roles: ... } */

@@ -14,6 +14,7 @@ export type Permission =
   | 'pos:write'
   | 'delivery:read'
   | 'delivery:write'
+  | 'delivery:assign'
   | 'staff:admin'
   | 'audit:read'
   | 'branch:read'
@@ -25,7 +26,8 @@ export type Permission =
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
     // P8: SUPER_ADMIN is READ-ONLY for kitchen operations (no 'kds:write' = no Chef actions); it owns kitchen ROUTING ('kitchen:assign').
-    'kds:read', 'kitchen:assign', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:write',
+    'kds:read', 'kitchen:assign', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:assign',
+    // P9A: SUPER_ADMIN reads and ASSIGNS delivery work but never claims, dispatches or reports as a driver ('delivery:write' is DELIVERY only).
     // Platform administration (decision D10: audit history is SUPER_ADMIN-only; MD gets branch READ only)
     'staff:admin', 'audit:read', 'branch:read', 'branch:write',
     // Payments (P7B): READ-ONLY operational visibility; nobody can mark an order paid through the API

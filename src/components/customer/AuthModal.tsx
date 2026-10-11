@@ -687,93 +687,95 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               )}
 
-              {/* Department Tabs for Employee Login */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-black uppercase text-stone-700 tracking-wider">
-                    1. Quick Select Staff Account (1-Click Authentication)
-                  </label>
-                  <span className="text-[11px] font-bold text-amber-700">Kerala Mess & Kitchen Ready</span>
-                </div>
+              {/* Quick-select staff shortcuts are a development aid only: nothing (not even the heading) renders in production. */}
+              {IS_DEV && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-black uppercase text-stone-700 tracking-wider">
+                      1. Quick Select Staff Account (1-Click Authentication)
+                    </label>
+                    <span className="text-[11px] font-bold text-amber-700">Kerala Mess & Kitchen Ready</span>
+                  </div>
 
-                <div className="flex flex-wrap gap-1.5 pb-2">
-                  {[
-                    { id: 'all', label: 'All Departments' },
-                    { id: 'kerala_mess', label: '🍛 Kerala Mess & Hostels' },
-                    { id: 'kitchen', label: '👨‍🍳 Central Kitchen' },
-                    { id: 'aggregators', label: '⚡ Aggregators' },
-                    { id: 'management', label: '🏢 Management & POS' },
-                  ].map(tab => (
-                    <button
-                      key={tab.id}
-                      onClick={() => setEmployeeDeptFilter(tab.id as any)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-                        employeeDeptFilter === tab.id
-                          ? 'bg-amber-900 text-white border-amber-900 shadow-xs'
-                          : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Preset Staff Cards Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-                  {EMPLOYEE_PRESETS
-                    .filter(p => employeeDeptFilter === 'all' || p.department === employeeDeptFilter)
-                    .map((preset) => (
-                      <div
-                        key={preset.id}
-                        onClick={() => handleQuickEmployeeLogin(preset)}
-                        className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-left hover:shadow-md relative overflow-hidden group ${
-                          preset.department === 'kerala_mess'
-                            ? 'bg-amber-50/50 border-amber-200 hover:border-amber-400 hover:bg-amber-50'
-                            : 'bg-white border-stone-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+                  <div className="flex flex-wrap gap-1.5 pb-2">
+                    {[
+                      { id: 'all', label: 'All Departments' },
+                      { id: 'kerala_mess', label: '🍛 Kerala Mess & Hostels' },
+                      { id: 'kitchen', label: '👨‍🍳 Central Kitchen' },
+                      { id: 'aggregators', label: '⚡ Aggregators' },
+                      { id: 'management', label: '🏢 Management & POS' },
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setEmployeeDeptFilter(tab.id as any)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
+                          employeeDeptFilter === tab.id
+                            ? 'bg-amber-900 text-white border-amber-900 shadow-xs'
+                            : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-2 mb-1.5">
-                          <div className="flex items-center gap-2.5">
-                            <div className={`w-9 h-9 rounded-xl ${preset.avatarBg || 'bg-stone-800'} text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs`}>
-                              {preset.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-extrabold text-stone-900 text-xs">{preset.name}</span>
-                                {preset.badge && (
-                                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
-                                    {preset.badge}
-                                  </span>
-                                )}
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Preset Staff Cards Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+                    {EMPLOYEE_PRESETS
+                      .filter(p => employeeDeptFilter === 'all' || p.department === employeeDeptFilter)
+                      .map((preset) => (
+                        <div
+                          key={preset.id}
+                          onClick={() => handleQuickEmployeeLogin(preset)}
+                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-left hover:shadow-md relative overflow-hidden group ${
+                            preset.department === 'kerala_mess'
+                              ? 'bg-amber-50/50 border-amber-200 hover:border-amber-400 hover:bg-amber-50'
+                              : 'bg-white border-stone-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-9 h-9 rounded-xl ${preset.avatarBg || 'bg-stone-800'} text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs`}>
+                                {preset.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                               </div>
-                              <p className="text-[11px] font-bold text-stone-600">{preset.designation}</p>
+                              <div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-extrabold text-stone-900 text-xs">{preset.name}</span>
+                                  {preset.badge && (
+                                    <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
+                                      {preset.badge}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] font-bold text-stone-600">{preset.designation}</p>
+                              </div>
                             </div>
+
+                            <span className="text-[10px] font-black text-amber-700 group-hover:text-amber-900 flex items-center gap-0.5 shrink-0 bg-white px-2 py-0.5 rounded-lg border border-stone-200 shadow-2xs">
+                              Login <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
+                            </span>
                           </div>
 
-                          <span className="text-[10px] font-black text-amber-700 group-hover:text-amber-900 flex items-center gap-0.5 shrink-0 bg-white px-2 py-0.5 rounded-lg border border-stone-200 shadow-2xs">
-                            Login <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                          </span>
-                        </div>
+                          <p className="text-[11px] text-stone-500 line-clamp-2 leading-relaxed mt-1">
+                            {preset.desc}
+                          </p>
 
-                        <p className="text-[11px] text-stone-500 line-clamp-2 leading-relaxed mt-1">
-                          {preset.desc}
-                        </p>
-
-                        <div className="mt-2 pt-2 border-t border-stone-200/60 flex items-center justify-between text-[10px] text-stone-400 font-mono">
-                          <span>{preset.email}</span>
-                          <span className="font-bold text-stone-600">{preset.id}</span>
+                          <div className="mt-2 pt-2 border-t border-stone-200/60 flex items-center justify-between text-[10px] text-stone-400 font-mono">
+                            <span>{preset.email}</span>
+                            <span className="font-bold text-stone-600">{preset.id}</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Manual Staff Credentials Login Form */}
               <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200">
                 <div className="flex items-center gap-2 mb-3">
                   <Key className="w-4 h-4 text-amber-600" />
                   <h4 className="font-extrabold text-stone-900 text-xs uppercase tracking-wider">
-                    2. Or Sign In With Employee ID & Security PIN
+                    {IS_DEV ? '2. Or Sign In With Employee ID & Security PIN' : 'Sign in with Employee ID & Security PIN'}
                   </h4>
                 </div>
 
@@ -784,7 +786,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <input
                         type="text"
                         required
-                        placeholder="e.g. murugan.mess@proteinbowl.in"
+                        placeholder={IS_DEV ? 'e.g. murugan.mess@proteinbowl.in' : 'Employee ID or work email'}
                         value={employeeFormData.empIdOrEmail}
                         onChange={(e) => setEmployeeFormData({ ...employeeFormData, empIdOrEmail: e.target.value })}
                         className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:ring-2 focus:ring-amber-500"

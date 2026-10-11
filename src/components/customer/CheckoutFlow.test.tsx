@@ -206,6 +206,48 @@ describe('order creation', () => {
     expect(addItem).not.toHaveBeenCalled();
   });
 
+  it('P9A: the optional delivery-instructions field is labelled, bounded to 500 characters and sent TRIMMED only when it has content', async () => {
+    createOrder.mockResolvedValueOnce(order());
+    renderModal();
+    await goToReview();
+
+    const field = screen.getByLabelText(/delivery instructions/i);
+    expect(field).toHaveAttribute('maxlength', '500');
+    await userEvent.type(field, '  Gate code 4321, ring twice  ');
+    await userEvent.click(screen.getByRole('button', { name: /place order/i }));
+
+    await waitFor(() => expect(createOrder).toHaveBeenCalledTimes(1));
+    const payload = createOrder.mock.calls[0][0];
+    expect(Object.keys(payload).sort()).toEqual(['addressId', 'deliveryInstructions', 'idempotencyKey']);
+    expect(payload.deliveryInstructions).toBe('Gate code 4321, ring twice');
+  });
+
+  it('P9A: blank instructions are never sent (the key is absent, not an empty string)', async () => {
+    createOrder.mockResolvedValueOnce(order());
+    renderModal();
+    await goToReview();
+    await userEvent.type(screen.getByLabelText(/delivery instructions/i), '    ');
+    await userEvent.click(screen.getByRole('button', { name: /place order/i }));
+    await waitFor(() => expect(createOrder).toHaveBeenCalledTimes(1));
+    expect(Object.keys(createOrder.mock.calls[0][0]).sort()).toEqual(['addressId', 'idempotencyKey']);
+  });
+
+  it('P9A: after a failed attempt the instructions are locked so a retry (same idempotency key) can never differ from the first request', async () => {
+    createOrder.mockRejectedValueOnce(new Error('Network down'));
+    renderModal();
+    await goToReview();
+    await userEvent.type(screen.getByLabelText(/delivery instructions/i), 'Leave at the gate');
+    await userEvent.click(screen.getByRole('button', { name: /place order/i }));
+    await screen.findByRole('alert');
+    expect(screen.getByLabelText(/delivery instructions/i)).toBeDisabled();
+
+    createOrder.mockResolvedValueOnce(order());
+    await userEvent.click(screen.getByRole('button', { name: /place order/i }));
+    await screen.findByTestId('order-confirmation');
+    expect(createOrder.mock.calls[1][0]).toEqual(createOrder.mock.calls[0][0]);
+    expect(createOrder.mock.calls[1][0].deliveryInstructions).toBe('Leave at the gate');
+  });
+
   it('displays the persisted order returned by the server (number, status, payment status, totals, address)', async () => {
     createOrder.mockResolvedValueOnce(order({ orderNumber: 'PB-777777-123', status: 'PENDING', paymentStatus: 'PENDING', netAmount: '251.21' }));
     renderModal();

@@ -101,6 +101,8 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
   // Synchronous double-submit guard + the idempotency key reused for retries of the SAME submission.
   const submittingRef = useRef(false);
   const idempotencyKeyRef = useRef<string | null>(null);
+  // P9A: optional note for the delivery partner (sent only when non-empty; the server sanitizes and stores it in the order's address snapshot)
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
 
   const resetFlow = useCallback(() => {
     setStep('cart');
@@ -111,6 +113,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
     setPlacedOrder(null);
     setShowNewAddress(false);
     setAddressForm(EMPTY_ADDRESS_FORM);
+    setDeliveryInstructions('');
     idempotencyKeyRef.current = null;
   }, []);
 
@@ -200,9 +203,11 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
     setSubmitError(null);
     if (!idempotencyKeyRef.current) idempotencyKeyRef.current = newIdempotencyKey();
     try {
+      const note = deliveryInstructions.trim();
       const order = await OrderService.createOrder({
         addressId: selectedAddressId,
-        idempotencyKey: idempotencyKeyRef.current
+        idempotencyKey: idempotencyKeyRef.current,
+        ...(note ? { deliveryInstructions: note } : {})
       });
       setPlacedOrder(order);
       setStep('success');
@@ -551,6 +556,27 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                       </span>
                     </div>
                   )}
+
+                  <div className="space-y-1" data-testid="delivery-instructions-field">
+                    <label htmlFor="checkout-delivery-instructions" className="block text-[11px] font-bold uppercase tracking-wider text-stone-400">
+                      Delivery instructions (optional)
+                    </label>
+                    <textarea
+                      id="checkout-delivery-instructions"
+                      value={deliveryInstructions}
+                      onChange={(e) => setDeliveryInstructions(e.target.value)}
+                      maxLength={500}
+                      rows={2}
+                      disabled={submitting || !!submitError}
+                      aria-describedby="checkout-delivery-instructions-hint"
+                      placeholder="e.g. Gate code, landmark, call on arrival"
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-600 focus:outline-none focus:ring-2 focus:ring-amber-500/60 disabled:opacity-50"
+                    />
+                    <p id="checkout-delivery-instructions-hint" className="text-[11px] text-stone-500">
+                      {submitError ? 'Locked after a failed attempt so a retry cannot create a duplicate order. ' : ''}
+                      Shown to the delivery partner after they accept your order. Do not include payment details. {deliveryInstructions.length}/500
+                    </p>
+                  </div>
 
                   <div className="bg-stone-950/70 border border-stone-800 rounded-2xl p-4 space-y-1.5" data-testid="checkout-summary">
                     <SummaryRow label="Items subtotal" value={preview.summary.itemsSubtotal} />

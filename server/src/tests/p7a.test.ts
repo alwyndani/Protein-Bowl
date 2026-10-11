@@ -672,14 +672,13 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
     });
 
     it('44. payment gating holds for EVERY operational status, whatever the current state or role, for unpaid/failed/refunded payments', async () => {
-      const predecessor: Record<string, OrderStatus> = { CONFIRMED: 'PENDING', ACCEPTED: 'CONFIRMED', PREPARING: 'ACCEPTED', READY: 'PREPARING', DISPATCHED: 'READY', DELIVERED: 'DISPATCHED' };
+      const predecessor: Record<string, OrderStatus> = { CONFIRMED: 'PENDING', ACCEPTED: 'CONFIRMED', PREPARING: 'ACCEPTED', READY: 'PREPARING', DISPATCHED: 'READY' }; // DELIVERED has no permitted party in P9A (see test 63), so it cannot reach the payment gate
       const actorFor: Record<string, TransitionActor> = {
         CONFIRMED: sys,
         ACCEPTED: chefActor([branchA.id]),
         PREPARING: chefActor([branchA.id]),
         READY: chefActor([branchA.id]),
-        DISPATCHED: adminActor(),
-        DELIVERED: adminActor()
+        DISPATCHED: driverActor([branchA.id])
       };
       for (const to of Object.keys(predecessor)) {
         for (const paymentStatus of ['PENDING', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED']) {
@@ -709,6 +708,10 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       for (const from of ORDER_STATUSES) {
         for (const to of ORDER_TRANSITIONS[from]) {
           const parties = TRANSITION_PARTIES[transitionKey(from, to)];
+          if (parties.length === 0) {
+            expect(transitionKey(from, to)).toBe('DISPATCHED->DELIVERED'); // P9A: the only edge with no reachable party (P9B proof of delivery)
+            continue;
+          }
           const isCancel = to === 'CANCELLED';
           const order = isCancel ? await mkOrder({ status: from, paymentStatus: 'PENDING', kitchenBranchId: branchA.id }) : await paidOrder(from);
           const actor: TransitionActor = parties.includes('SYSTEM') ? sys : isCancel ? adminActor() : parties.includes(RoleEnum.CHEF) ? chefActor([branchA.id]) : driverActor([branchA.id]);
@@ -836,7 +839,6 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
   describe('KDS and delivery no longer write order status directly', () => {
     const mkAssign = (orderId: string, status = 'ASSIGNED') =>
       prisma.deliveryAssignment.create({ data: { orderId, driverId: users.driver1.employeeId!, branchId: branchA.id, status } });
-    const patchAssign = (id: string, status: string, token = users.driver1.token) => request(app).patch(`/api/v1/delivery/assignments/${id}/status`).set(bearer(token)).send({ status });
 
     it('57. P8: the KOT route is retired - tickets can no longer move an order (the kitchen API drives the transitions; see kitchen.test.ts)', async () => {
       const order = await paidOrder('CONFIRMED');
@@ -846,44 +848,43 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       expect(await eventsOf(order.id)).toHaveLength(0);
     });
 
-    it('63. delivery: IN_TRANSIT dispatches and DELIVERED completes a READY paid order, atomically with the assignment', async () => {
+    const dispatchApi = (orderId: string, token = users.driver1.token) => request(app).post(`/api/v1/delivery/orders/${orderId}/dispatch`).set(bearer(token)).send({});
+
+    it('63. delivery (P9A): dispatch moves a READY paid order to DISPATCHED atomically with the assignment (IN_TRANSIT + pickupTime), and nothing can reach DELIVERED', async () => {
       const order = await paidOrder('READY');
       const a = await mkAssign(order.id);
-      const transit = await patchAssign(a.id, 'IN_TRANSIT');
+      const transit = await dispatchApi(order.id);
       expect(transit.status, JSON.stringify(transit.body)).toBe(200);
       expect(transit.body.data.order.status).toBe('DISPATCHED');
-      const done = await patchAssign(a.id, 'DELIVERED');
-      expect(done.status).toBe(200);
-      expect(done.body.data.order.status).toBe('DELIVERED');
-      expect(done.body.data.deliveryTime).not.toBeNull();
-      expect((await eventsOf(order.id)).map((e) => e.toStatus)).toEqual(['DISPATCHED', 'DELIVERED']);
+      const row = await prisma.deliveryAssignment.findUnique({ where: { id: a.id } });
+      expect(row!.status).toBe('IN_TRANSIT');
+      expect(row!.pickupTime).not.toBeNull();
+      expect((await eventsOf(order.id)).map((e) => e.toStatus)).toEqual(['DISPATCHED']);
+      // the transition service itself refuses DELIVERED for every human actor: P9B owns proof of delivery
+      for (const actor of [driverActor([branchA.id]), userActor('admin', [RoleEnum.SUPER_ADMIN], { isGlobal: true })]) {
+        await expect(OrderTransitionService.transition({ orderId: order.id, to: 'DELIVERED', actor })).rejects.toMatchObject({ errorCode: 'ORDER_TRANSITION_FORBIDDEN' });
+      }
+      expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('DISPATCHED');
     });
 
-    it('64. delivery of an unpaid order is rejected and the assignment is left untouched', async () => {
+    it('64. dispatch of an unpaid order is rejected and the assignment is left untouched', async () => {
       const order = await mkOrder({ status: 'READY', paymentStatus: 'PENDING', kitchenBranchId: branchA.id });
       const a = await mkAssign(order.id);
-      const res = await patchAssign(a.id, 'IN_TRANSIT');
+      const res = await dispatchApi(order.id);
       expect(res.status).toBe(409);
       expect(res.body.error).toBe('ORDER_NOT_OPERATIONALLY_ELIGIBLE');
       expect((await prisma.deliveryAssignment.findUnique({ where: { id: a.id } }))!.status).toBe('ASSIGNED');
       expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('READY');
     });
 
-    it('65. an order cannot be DELIVERED without being dispatched first, and a delivered assignment is final', async () => {
+    it('65. an order cannot skip to DELIVERED and the retired legacy status route cannot move anything', async () => {
       const order = await paidOrder('READY');
       const a = await mkAssign(order.id);
-      const skip = await patchAssign(a.id, 'DELIVERED');
-      expect(skip.status).toBe(409);
-      expect(skip.body.error).toBe('INVALID_ORDER_TRANSITION');
+      await expect(OrderTransitionService.transition({ orderId: order.id, to: 'DELIVERED', actor: driverActor([branchA.id]) })).rejects.toMatchObject({ errorCode: 'INVALID_ORDER_TRANSITION' });
+      const legacy = await request(app).patch(`/api/v1/delivery/assignments/${a.id}/status`).set(bearer(users.driver1.token)).send({ status: 'DELIVERED' });
+      expect(legacy.status).toBe(404);
       expect((await prisma.deliveryAssignment.findUnique({ where: { id: a.id } }))!.status).toBe('ASSIGNED');
-
-      const dispatched = await paidOrder('DISPATCHED');
-      const done = await mkAssign(dispatched.id, 'IN_TRANSIT');
-      expect((await patchAssign(done.id, 'DELIVERED')).status).toBe(200);
-      const back = await patchAssign(done.id, 'IN_TRANSIT');
-      expect(back.status).toBe(409);
-      expect(back.body.error).toBe('INVALID_DELIVERY_TRANSITION');
-      expect((await prisma.order.findUnique({ where: { id: dispatched.id } }))!.status).toBe('DELIVERED');
+      expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('READY');
     });
 
     it('66. no source file outside the transition service writes Order.status (static guard against regressions)', () => {

@@ -13,6 +13,7 @@ import messRoutes from './modules/mess/mess.routes.js';
 import dietRoutes from './modules/diet/diet.routes.js';
 import kdsRoutes from './modules/kds/kds.routes.js';
 import kitchenAdminRoutes from './modules/kds/kitchenAdmin.routes.js';
+import deliveryAdminRoutes from './modules/delivery/deliveryAdmin.routes.js';
 import procurementRoutes from './modules/procurement/procurement.routes.js';
 import deliveryRoutes from './modules/delivery/delivery.routes.js';
 import posRoutes from './modules/pos/pos.routes.js';
@@ -93,6 +94,7 @@ app.use('/api/v1/cms', cmsRoutes);
 app.use('/api/v1/admin', paymentAdminRoutes);
 app.use('/api/v1/admin', refundAdminRoutes);
 app.use('/api/v1/admin', kitchenAdminRoutes);
+app.use('/api/v1/admin', deliveryAdminRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/staff', staffRoutes);
 

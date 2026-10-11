@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AppError } from '../../middleware/error.middleware.js';
 import { canonicalJson } from '../../config/commercePolicy.js';
+import { sanitizeDeliveryInstructions } from './deliveryInstructions.js';
 
 /** 8-128 characters; letters, digits and . _ : - (must start alphanumeric). Bounded so a key can never be abused as a payload. */
 export const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
@@ -61,7 +62,8 @@ export function computeRequestFingerprint(input: FingerprintInput): string {
     customerProfileId: input.customerProfileId,
     addressId: input.addressId,
     paymentMethod: input.paymentMethod,
-    deliveryInstructions: (input.deliveryInstructions ?? '').trim(),
+    // The SAME sanitized value that is persisted in the address snapshot (P9A); null/empty hashes as '' exactly like before.
+    deliveryInstructions: sanitizeDeliveryInstructions(input.deliveryInstructions) ?? '',
     items,
     policyHash: input.policyHash
   };

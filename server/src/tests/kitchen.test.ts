@@ -221,8 +221,9 @@ describe('P8 - kitchen routing, Chef queue and Chef transitions', () => {
       for (const edge of ['CONFIRMED->ACCEPTED', 'ACCEPTED->PREPARING', 'PREPARING->READY']) expect(TRANSITION_PARTIES[edge], edge).toEqual([RoleEnum.CHEF]);
       expect(TRANSITION_PARTIES['ACCEPTED->CANCELLED']).toEqual([RoleEnum.SUPER_ADMIN]);
       expect(TRANSITION_PARTIES['CONFIRMED->CANCELLED']).toEqual(['CUSTOMER_OWNER', RoleEnum.SUPER_ADMIN]);
-      expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
-      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([RoleEnum.DELIVERY, RoleEnum.SUPER_ADMIN]);
+      // P9A: dispatch is DELIVERY-only; the DELIVERED edge exists in the graph but no party may perform it yet
+      expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
+      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([]);
     });
 
     it('7. the kitchen module never writes Order.status itself and the retired KOT routes are gone', () => {

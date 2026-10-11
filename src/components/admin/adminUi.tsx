@@ -108,7 +108,7 @@ export const Modal: React.FC<{ title: string; onClose: () => void; children: Rea
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    const first = ref.current?.querySelector<HTMLElement>('input, select, textarea, button:not([data-modal-close])');
+    const first = ref.current?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([data-modal-close]):not([disabled])');
     (first ?? ref.current)?.focus();
     return () => previouslyFocused?.focus?.();
   }, []);

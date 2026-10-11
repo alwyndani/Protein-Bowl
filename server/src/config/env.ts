@@ -51,6 +51,13 @@ const envSchema = z.object({
   RL_KITCHEN_ACTION_WINDOW_MS: positiveInt(60 * 1000),
   RL_KITCHEN_ROUTING_MAX: positiveInt(30),
   RL_KITCHEN_ROUTING_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  // P9A delivery: driver reads (polling), driver actions (claim / dispatch / report-failure) and SUPER_ADMIN assignment (per user). Optional; defaults are safe.
+  RL_DELIVERY_READ_MAX: positiveInt(240),
+  RL_DELIVERY_READ_WINDOW_MS: positiveInt(60 * 1000),
+  RL_DELIVERY_ACTION_MAX: positiveInt(60),
+  RL_DELIVERY_ACTION_WINDOW_MS: positiveInt(60 * 1000),
+  RL_DELIVERY_ASSIGN_MAX: positiveInt(30),
+  RL_DELIVERY_ASSIGN_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_WEBHOOK_MAX: positiveInt(3000),
   RL_WEBHOOK_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.

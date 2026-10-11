@@ -1,10 +1,41 @@
 import { Router } from 'express';
+import { RoleEnum } from '@prisma/client';
+import { z } from 'zod';
 import { DeliveryController } from './delivery.controller.js';
-import { authenticateToken, requirePermission } from '../../middleware/auth.middleware.js';
+import { emptyBodySchema, monitorQuerySchema, reportFailureBodySchema } from './delivery.service.js';
+import { authenticateToken, requireExactRoles, requirePermission } from '../../middleware/auth.middleware.js';
+import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
+import { deliveryActionRateLimiter, deliveryReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 
+/**
+ * P9A delivery API (mounted at /api/v1/delivery).
+ *   driver reads:   exact DELIVERY role + delivery:read   -> queue (area-only until claimed) and the caller's OWN order detail
+ *   driver actions: exact DELIVERY role + delivery:write   -> claim, dispatch (READY -> DISPATCHED), report-failure. Strict bodies.
+ *   monitor:        SUPER_ADMIN / MD (read-only) with an EXPLICIT branchId
+ * There is deliberately NO deliver / mark-delivered / status route (P9B owns proof of delivery) and the legacy
+ * GET /assignments and PATCH /assignments/:id/status routes are retired (404).
+ */
 const router = Router();
+const idParams = z.object({ id: z.string().min(1).max(64) });
+const queueQuery = z.object({ branchId: z.string().min(1).max(64).optional() }).strict();
 
-router.get('/assignments', authenticateToken, requirePermission('delivery:read'), DeliveryController.getAssignments);
-router.patch('/assignments/:assignmentId/status', authenticateToken, requirePermission('delivery:write'), DeliveryController.updateStatus);
+const driverRead = [authenticateToken, requireExactRoles([RoleEnum.DELIVERY]), requirePermission('delivery:read'), deliveryReadRateLimiter] as const;
+const driverAction = [authenticateToken, requireExactRoles([RoleEnum.DELIVERY]), requirePermission('delivery:write'), deliveryActionRateLimiter] as const;
+
+router.get('/orders', ...driverRead, validateQuery(queueQuery), DeliveryController.getQueue);
+router.get('/orders/:id', ...driverRead, validateParams(idParams), DeliveryController.getOrder);
+router.post('/orders/:id/claim', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.claim);
+router.post('/orders/:id/dispatch', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.dispatch);
+router.post('/orders/:id/report-failure', ...driverAction, validateParams(idParams), validateBody(reportFailureBodySchema), DeliveryController.reportFailure);
+
+router.get(
+  '/monitor',
+  authenticateToken,
+  requireExactRoles([RoleEnum.SUPER_ADMIN, RoleEnum.MD]),
+  requirePermission('delivery:read'),
+  deliveryReadRateLimiter,
+  validateQuery(monitorQuerySchema),
+  DeliveryController.getMonitor
+);
 
 export default router;

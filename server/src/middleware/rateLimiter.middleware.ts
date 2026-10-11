@@ -37,6 +37,10 @@ export const financialAdminRateLimiter = createRateLimiter('REFUND_ADMIN', env.R
 /** P8 kitchen: chef actions and SUPER_ADMIN kitchen routing, keyed by the authenticated user. */
 export const kitchenActionRateLimiter = createRateLimiter('KITCHEN_ACTION', env.RL_KITCHEN_ACTION_MAX, env.RL_KITCHEN_ACTION_WINDOW_MS, undefined, byUser);
 export const kitchenRoutingRateLimiter = createRateLimiter('KITCHEN_ROUTING', env.RL_KITCHEN_ROUTING_MAX, env.RL_KITCHEN_ROUTING_WINDOW_MS, undefined, byUser);
+/** P9A delivery: reads (polling), driver actions and SUPER_ADMIN assignment, keyed by the authenticated user. */
+export const deliveryReadRateLimiter = createRateLimiter('DELIVERY_READ', env.RL_DELIVERY_READ_MAX, env.RL_DELIVERY_READ_WINDOW_MS, undefined, byUser);
+export const deliveryActionRateLimiter = createRateLimiter('DELIVERY_ACTION', env.RL_DELIVERY_ACTION_MAX, env.RL_DELIVERY_ACTION_WINDOW_MS, undefined, byUser);
+export const deliveryAssignRateLimiter = createRateLimiter('DELIVERY_ASSIGN', env.RL_DELIVERY_ASSIGN_MAX, env.RL_DELIVERY_ASSIGN_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(

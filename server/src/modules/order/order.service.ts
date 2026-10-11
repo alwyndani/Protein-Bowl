@@ -7,6 +7,7 @@ import { buildPricingSnapshot, getCommercePolicy, type PricingSnapshot } from '.
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { CreateOrderDto } from './order.validator.js';
 import { computeRequestFingerprint } from './idempotency.js';
+import { sanitizeDeliveryInstructions } from './deliveryInstructions.js';
 import { nextOrderNumber } from './orderNumber.js';
 import { toCustomerOrderDto, CustomerOrderDto } from './order.dto.js';
 import { RefundViewService } from '../refund/refundView.service.js';
@@ -216,6 +217,7 @@ export class OrderService {
           });
 
           // 6. Address snapshot
+          const deliveryInstructions = sanitizeDeliveryInstructions(data.deliveryInstructions);
           const deliveryAddressSnapshot = {
             addressId: address.id,
             title: address.title,
@@ -226,7 +228,9 @@ export class OrderService {
             postalCode: address.postalCode,
             recipientName: profile.fullName,
             phone: profile.user?.phone || null,
-            email: profile.user?.email || null
+            email: profile.user?.email || null,
+            // P9A: optional customer instructions for the driver (sanitized; the key exists ONLY when present; never sent to the kitchen).
+            ...(deliveryInstructions ? { deliveryInstructions } : {})
           };
 
           // 7. OrderItem snapshot (P8: the product's recipe is recorded so the kitchen can show its approved preparation data; money is untouched)

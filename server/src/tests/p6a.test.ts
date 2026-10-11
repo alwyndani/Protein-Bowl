@@ -101,7 +101,13 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
       prisma.order.create({ data: { orderNumber: `P6A-${suffix}-${ts}`, totalAmount: 100, netAmount: 100, ...extra } });
     // P8: the kitchen queue is DERIVED from paid, confirmed, online orders routed to a branch (no KOT rows).
     const eligible = (kitchenBranchId: string) => ({ status: 'CONFIRMED', paymentStatus: 'PAID', paymentMethod: 'ONLINE', orderType: 'DIRECT', kitchenBranchId });
-    const [oA, oB, oD1, oD2] = await Promise.all([mkOrder('KA', eligible(branchA.id)), mkOrder('KB', eligible(branchB.id)), mkOrder('D1'), mkOrder('D2')]);
+    const [oA, oB, oD1, oD2] = await Promise.all([
+      mkOrder('KA', eligible(branchA.id)),
+      mkOrder('KB', eligible(branchB.id)),
+      // P9A: delivery work is DERIVED from paid, READY, online orders routed to a branch (the assignment is the driver's claim)
+      mkOrder('D1', { ...eligible(branchA.id), status: 'READY' }),
+      mkOrder('D2', { ...eligible(branchA.id), status: 'READY' })
+    ]);
     ordA = oA;
     ordB = oB;
 
@@ -321,15 +327,18 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
       expect((await request(app).post(`/api/v1/kds/orders/${ordA.id}/mark-ready`).set(bearer(u.md.token)).send({})).status).toBe(403);
       expect((await request(app).post('/api/v1/procurement/stock-movement').set(bearer(u.md.token)).send({ inventoryItemId: itemA.id, type: 'PURCHASE_RECEIPT', quantity: 1, unitCost: 1 })).status).toBe(403);
       expect((await request(app).post('/api/v1/pos/transaction').set(bearer(u.md.token)).send({ branchId: branchA.id, totalAmount: 5 })).status).toBe(403);
-      expect((await request(app).patch(`/api/v1/delivery/assignments/${assignment1.id}/status`).set(bearer(u.md.token)).send({ status: 'IN_TRANSIT' })).status).toBe(403);
+      expect((await request(app).post(`/api/v1/delivery/orders/${assignment1.orderId}/dispatch`).set(bearer(u.md.token)).send({})).status).toBe(403);
+      expect((await request(app).post(`/api/v1/delivery/orders/${assignment1.orderId}/claim`).set(bearer(u.md.token)).send({})).status).toBe(403);
     });
 
     it('MD can read procurement / POS / delivery across branches', async () => {
       expect((await request(app).get('/api/v1/procurement/items').set(bearer(u.md.token))).status).toBe(200);
       expect((await request(app).get('/api/v1/pos/transactions').set(bearer(u.md.token))).status).toBe(200);
-      const del = await request(app).get('/api/v1/delivery/assignments').set(bearer(u.md.token));
+      const del = await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(u.md.token));
       expect(del.status).toBe(200);
-      expect(del.body.data.map((a: any) => a.id)).toEqual(expect.arrayContaining([assignment1.id, assignment2.id]));
+      expect(del.body.data.sections.assigned.items.map((o: any) => o.id)).toEqual(expect.arrayContaining([assignment1.orderId, assignment2.orderId]));
+      // an explicit branch is mandatory (no unbounded cross-branch read)
+      expect((await request(app).get('/api/v1/delivery/monitor').set(bearer(u.md.token))).status).toBe(400);
     });
 
     it('SUPER_ADMIN reads a branch queue (explicit branch) but has no kitchen write capability', async () => {
@@ -422,42 +431,40 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
   // Delivery
   // ============================================================
   describe('delivery self-scope', () => {
-    it('lists only the driver\'s own assignments', async () => {
-      const res = await request(app).get('/api/v1/delivery/assignments').set(bearer(u.driver1.token));
+    it('P9A: the driver queue lists only the driver\'s own claims (another driver\'s claim is not listed at all)', async () => {
+      const res = await request(app).get('/api/v1/delivery/orders').set(bearer(u.driver1.token));
       expect(res.status).toBe(200);
-      const ids = res.body.data.map((a: any) => a.id);
-      expect(ids).toContain(assignment1.id);
-      expect(ids).not.toContain(assignment2.id);
+      const ids = res.body.data.sections.mine.items.map((o: any) => o.id);
+      expect(ids).toContain(assignment1.orderId);
+      expect(ids).not.toContain(assignment2.orderId);
+      const everywhere = Object.values(res.body.data.sections).flatMap((s: any) => s.items.map((o: any) => o.id));
+      expect(everywhere).not.toContain(assignment2.orderId);
     });
 
-    it('15. a driver cannot spoof driverId (or an unassigned branch) to see other work', async () => {
-      const spoof = await request(app).get(`/api/v1/delivery/assignments?driverId=${u.driver2.profileId}`).set(bearer(u.driver1.token));
-      expect(spoof.status).toBe(403);
-      expect(spoof.body.error).toBe('DRIVER_FORBIDDEN');
+    it('15. a driver cannot spoof a driver or an unassigned branch to see other work', async () => {
+      // the driver is always the authenticated employee: a driverId query is not even accepted (strict query)
+      const spoof = await request(app).get(`/api/v1/delivery/orders?driverId=${u.driver2.profileId}`).set(bearer(u.driver1.token));
+      expect(spoof.status).toBeGreaterThanOrEqual(400);
+      expect(spoof.status).toBeLessThan(500);
 
-      const ownId = await request(app).get(`/api/v1/delivery/assignments?driverId=${u.driver1.profileId}`).set(bearer(u.driver1.token));
-      expect(ownId.status).toBe(200);
-
-      const foreignBranch = await request(app).get(`/api/v1/delivery/assignments?branchId=${branchB.id}`).set(bearer(u.driver1.token));
+      const foreignBranch = await request(app).get(`/api/v1/delivery/orders?branchId=${branchB.id}`).set(bearer(u.driver1.token));
       expect(foreignBranch.status).toBe(403);
+      expect(foreignBranch.body.error).toBe('BRANCH_FORBIDDEN');
     });
 
-    it('14. a driver cannot update another driver\'s assignment; can update their own', async () => {
-      const denied = await request(app).patch(`/api/v1/delivery/assignments/${assignment2.id}/status`).set(bearer(u.driver1.token)).send({ status: 'DELIVERED' });
-      expect(denied.status).toBe(403);
+    it('14. a driver cannot act on another driver\'s claim (the same 404 as a missing order); the legacy status route is gone', async () => {
+      const denied = await request(app).post(`/api/v1/delivery/orders/${assignment2.orderId}/dispatch`).set(bearer(u.driver1.token)).send({});
+      expect(denied.status).toBe(404);
       expect((await prisma.deliveryAssignment.findUnique({ where: { id: assignment2.id } }))!.status).toBe('ASSIGNED');
-
-      const ok = await request(app).patch(`/api/v1/delivery/assignments/${assignment1.id}/status`).set(bearer(u.driver1.token)).send({ status: 'PICKED_UP' });
-      expect(ok.status).toBe(200);
-
-      expect((await request(app).patch(`/api/v1/delivery/assignments/${assignment1.id}/status`).set(bearer(u.driver1.token)).send({ status: 'TELEPORTED' })).status).toBe(400);
+      expect((await request(app).patch(`/api/v1/delivery/assignments/${assignment1.id}/status`).set(bearer(u.driver1.token)).send({ status: 'PICKED_UP' })).status).toBe(404);
     });
 
-    it('SUPER_ADMIN may filter and update any delivery', async () => {
-      const filtered = await request(app).get(`/api/v1/delivery/assignments?driverId=${u.driver2.profileId}`).set(bearer(u.admin.token));
-      expect(filtered.status).toBe(200);
-      expect(filtered.body.data.map((a: any) => a.id)).toEqual([assignment2.id]);
-      expect((await request(app).patch(`/api/v1/delivery/assignments/${assignment2.id}/status`).set(bearer(u.admin.token)).send({ status: 'PICKED_UP' })).status).toBe(200);
+    it('SUPER_ADMIN reads the delivery monitor of an explicit branch but cannot perform driver actions', async () => {
+      const mon = await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(u.admin.token));
+      expect(mon.status).toBe(200);
+      expect(mon.body.data.sections.assigned.items.map((o: any) => o.id)).toEqual(expect.arrayContaining([assignment1.orderId, assignment2.orderId]));
+      expect((await request(app).post(`/api/v1/delivery/orders/${assignment2.orderId}/dispatch`).set(bearer(u.admin.token)).send({})).status).toBe(403);
+      expect((await request(app).post(`/api/v1/delivery/orders/${assignment2.orderId}/claim`).set(bearer(u.admin.token)).send({})).status).toBe(403);
     });
   });
 
@@ -762,7 +769,7 @@ describe('P6A — staff identity, authorization, branch scope & audit foundation
     it('customers keep their customer endpoints and are denied operational ones', async () => {
       expect((await request(app).get('/api/v1/cart').set(bearer(u.customer.token))).status).toBe(200);
       expect((await request(app).get('/api/v1/kds/orders').set(bearer(u.customer.token))).status).toBe(403);
-      expect((await request(app).get('/api/v1/delivery/assignments').set(bearer(u.customer.token))).status).toBe(403);
+      expect((await request(app).get('/api/v1/delivery/orders').set(bearer(u.customer.token))).status).toBe(403);
     });
   });
 });

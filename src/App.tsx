@@ -68,6 +68,7 @@ import { TrainerDashboard } from './components/erp/TrainerDashboard';
 import { ChefDashboard } from './components/erp/ChefDashboard';
 import { ProcurementDashboard } from './components/erp/ProcurementDashboard';
 import { DeliveryDashboard } from './components/erp/DeliveryDashboard';
+import { DeliveryWorkspace } from './components/erp/delivery/DeliveryWorkspace';
 import { POSDashboard } from './components/erp/POSDashboard';
 import { BakeryFMCGDashboard } from './components/erp/BakeryFMCGDashboard';
 import { TepacheBreweryDashboard } from './components/erp/TepacheBreweryDashboard';
@@ -704,13 +705,22 @@ export function App() {
           />
         )}
 
+        {/* P9A: production = the real, backend-derived delivery workspace. The mock dashboard is kept for development only. */}
         {currentRole === 'delivery' && (
-          <DeliveryDashboard
-            orders={orders}
-            onUpdateOrderStatus={handleUpdateOrderStatus}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-          />
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+            <DeliveryWorkspace onSessionExpired={handleSessionExpired} />
+            {import.meta.env.DEV && (
+              <section aria-label="Demo (mock data)" data-testid="delivery-demo">
+                <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-amber-700">Demo (mock data), development only</p>
+                <DeliveryDashboard
+                  orders={orders}
+                  onUpdateOrderStatus={handleUpdateOrderStatus}
+                  selectedBranchId={currentBranchId}
+                  onSelectBranch={(b) => setCurrentBranchId(b)}
+                />
+              </section>
+            )}
+          </div>
         )}
 
         {/* KERALA MESS HOSTEL & STUDENT CUSTOMER PORTAL */}

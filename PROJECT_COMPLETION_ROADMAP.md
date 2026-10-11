@@ -147,7 +147,7 @@ Everything except login/products/mess plans/orders/KOT list/pause-meal stubs: re
 
 | # | Gap | Where | Fix phase |
 |---|---|---|---|
-| S1 | DELIVERY role can list/update **any** delivery; `driverId` is a client query param | `delivery.*` | P9 |
+| S1 | DELIVERY role can list/update **any** delivery; `driverId` is a client query param | `delivery.*` | P9 — **FIXED in P9A (2026-10-11, uncommitted): driver identity comes from the DB-authoritative employee profile, branch scope from `EmployeeBranchAssignment`, private data only for the owner** |
 | S2 | KDS has no branch scoping; any CHEF/MD sees all tickets; full `customerProfile` (name, dob, gender, address, wallet) is included | `kds.service.ts` | P8 |
 | S3 | POS trusts client `totalAmount`/`cashReceived`; fake `receiptUrl` | `pos.*` | P15 |
 | S4 | Mess: `registerAccount` self-approves (`isApproved: true`); unvalidated bodies; hard-coded ₹85; duplicate/late pause not blocked; wallet balance updated read-modify-write (race) | `mess.*` | P10 |
@@ -307,13 +307,15 @@ All phases follow the Git workflow in the directive (implement → gates → rep
 - **Mocks removed:** mock KDS/batches in `ChefDashboard`. **Decisions:** D8. **External:** none.
 - **Done:** order confirm → KOT → READY updates order, all authorization-tested.
 
-### Phase 9 — Delivery
-- **Goal:** fulfilment-ready orders are assigned to and completed by the right driver.
-- **Backend:** create/assign `DeliveryAssignment` (dispatcher = SUPER_ADMIN/MD or branch role), self-scoped driver queue, pickup/in-transit/delivered/failed transitions, history; DTO limited to address + phone + order summary; POD as URL/reference (uploads in P14). **No fake GPS.**
-- **Web:** `DeliveryDashboard` real; customer tracking shows real status timeline.
-- **Security:** fix S1 (driver identity from JWT → EmployeeProfile; no client `driverId`). **Tests:** cross-driver denial, state machine, order status sync.
-- **Mocks removed:** delivery mocks. **Decisions:** D8 (zones/fleet). **External:** Maps only if live tracking approved.
-- **Done:** order DELIVERED by assigned driver only; customer sees real timeline.
+### Phase 9 — Delivery  — **P9A ✅ VERIFIED in the working tree (2026-10-11, NOT YET COMMITTED)** · **P9B (proof of delivery / DELIVERED) ⏳ NOT STARTED**
+- **P9A delivered (claim / assignment / dispatch; no migration):** server-derived READY queue (DIRECT + ONLINE + PAID, branch-scoped), DELIVERY self-claim, SUPER_ADMIN assign / reassign / unassign (READY only, `delivery:assign`, step-up, `expectedDriverId`), `READY -> DISPATCHED` via `OrderTransitionService` (DELIVERY only), structured failure reporting into `deliveryNotes` (`PBFAIL1:` format; order stays DISPATCHED; no resolve action = intentionally incomplete exception policy), SUPER_ADMIN/MD read-only monitor, optional customer delivery instructions in the immutable address snapshot, PII boundary (area before claim; first name + phone + full address + instructions only for the assigned driver), the legacy `/delivery/assignments` API retired, `DISPATCHED -> DELIVERED` kept as a graph edge with NO reachable party, 10 s GET polling, production DELIVERY workspace + SUPER_ADMIN Delivery section (mock dashboard dev-only). S1 (any driver sees/updates all deliveries) is FIXED. ONLINE-only: no COD, cash, pay-at-door or settlement.
+- **P9B scope (not started, needs approval):** proof of delivery (a real PIN/OTP or equivalent design decision; no derived/fake PIN), a party for `DISPATCHED -> DELIVERED`, customer-visible delivered state, and the failed-delivery resolution policy (refund / re-dispatch / return to kitchen). Maps / live GPS only if separately approved.
+- **Original goal (kept for P9B):** fulfilment-ready orders are assigned to and completed by the right driver.
+- **Backend (P9B remainder):** POD as URL/reference (uploads in P14), delivered transition, history. **No fake GPS.**
+- **Web (P9B remainder):** customer tracking shows a real delivered state.
+- **Tests (P9B):** cross-driver denial, DELIVERED state machine, order status sync.
+- **Decisions:** D8 (zones/fleet). **External:** Maps only if live tracking approved.
+- **Done (P9B):** order DELIVERED by the assigned driver only after proof; customer sees the real result.
 
 ### Phase 10 — Kerala Mess & Subscriptions (incl. identity reconciliation)
 - **Goal:** one CUSTOMER account with Mess entitlement via `MessAccount`; paid enrollment, daily meals, pauses, gate pass.

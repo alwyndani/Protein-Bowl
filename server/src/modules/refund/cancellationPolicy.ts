@@ -35,13 +35,18 @@ const isStripped = (code: number): boolean => STRIPPED_RANGES.some(([lo, hi]) =>
 
 /** trim + strip control characters (incl. newlines/tabs and zero-width/format characters) + collapse spaces + bound the length. null when empty. */
 export function sanitizeNote(value: string | undefined | null): string | null {
+  return sanitizeBoundedText(value, NOTE_MAX_LENGTH);
+}
+
+/** The shared sanitizer behind notes and delivery instructions: same character stripping, caller-chosen maximum length. */
+export function sanitizeBoundedText(value: string | undefined | null, maxLength: number): string | null {
   if (typeof value !== 'string') return null;
   const cleaned = Array.from(value)
     .map((ch) => (isStripped(ch.codePointAt(0) ?? 0) ? ' ' : ch))
     .join('')
     .replace(/ {2,}/g, ' ')
     .trim();
-  return cleaned.length === 0 ? null : cleaned.slice(0, NOTE_MAX_LENGTH);
+  return cleaned.length === 0 ? null : cleaned.slice(0, maxLength);
 }
 
 const noteSchema = z
