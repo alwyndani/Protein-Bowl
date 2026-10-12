@@ -58,6 +58,17 @@ const envSchema = z.object({
   RL_DELIVERY_ACTION_WINDOW_MS: positiveInt(60 * 1000),
   RL_DELIVERY_ASSIGN_MAX: positiveInt(30),
   RL_DELIVERY_ASSIGN_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  // P9B Delivery Code: customer state reads, customer issue/regenerate (per user AND order, secondary to the persisted limits), driver verify, SUPER_ADMIN override. Optional; defaults are safe.
+  RL_DELIVERY_CODE_READ_MAX: positiveInt(60),
+  RL_DELIVERY_CODE_READ_WINDOW_MS: positiveInt(60 * 1000),
+  RL_DELIVERY_CODE_ISSUE_MAX: positiveInt(5),
+  RL_DELIVERY_CODE_ISSUE_WINDOW_MS: positiveInt(60 * 60 * 1000),
+  RL_DELIVERY_CODE_REGEN_MAX: positiveInt(3),
+  RL_DELIVERY_CODE_REGEN_WINDOW_MS: positiveInt(60 * 60 * 1000),
+  RL_DELIVERY_VERIFY_MAX: positiveInt(20),
+  RL_DELIVERY_VERIFY_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_DELIVERY_OVERRIDE_MAX: positiveInt(5),
+  RL_DELIVERY_OVERRIDE_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_WEBHOOK_MAX: positiveInt(3000),
   RL_WEBHOOK_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.

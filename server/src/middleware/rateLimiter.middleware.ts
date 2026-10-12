@@ -41,6 +41,13 @@ export const kitchenRoutingRateLimiter = createRateLimiter('KITCHEN_ROUTING', en
 export const deliveryReadRateLimiter = createRateLimiter('DELIVERY_READ', env.RL_DELIVERY_READ_MAX, env.RL_DELIVERY_READ_WINDOW_MS, undefined, byUser);
 export const deliveryActionRateLimiter = createRateLimiter('DELIVERY_ACTION', env.RL_DELIVERY_ACTION_MAX, env.RL_DELIVERY_ACTION_WINDOW_MS, undefined, byUser);
 export const deliveryAssignRateLimiter = createRateLimiter('DELIVERY_ASSIGN', env.RL_DELIVERY_ASSIGN_MAX, env.RL_DELIVERY_ASSIGN_WINDOW_MS, undefined, byUser);
+/** P9B Delivery Code. Secondary to the PERSISTED per-proof attempt state (DeliveryProof), which is what actually bounds guessing. */
+const byUserAndOrder = (req: Request): string => `u:${req.user?.userId ?? req.ip ?? 'anon'}:o:${String(req.params.orderId ?? req.params.id ?? '')}`;
+export const deliveryCodeReadRateLimiter = createRateLimiter('DELIVERY_CODE_READ', env.RL_DELIVERY_CODE_READ_MAX, env.RL_DELIVERY_CODE_READ_WINDOW_MS, undefined, byUser);
+export const deliveryCodeIssueRateLimiter = createRateLimiter('DELIVERY_CODE_ISSUE', env.RL_DELIVERY_CODE_ISSUE_MAX, env.RL_DELIVERY_CODE_ISSUE_WINDOW_MS, undefined, byUserAndOrder);
+export const deliveryCodeRegenerateRateLimiter = createRateLimiter('DELIVERY_CODE_REGEN', env.RL_DELIVERY_CODE_REGEN_MAX, env.RL_DELIVERY_CODE_REGEN_WINDOW_MS, undefined, byUserAndOrder);
+export const deliveryVerifyRateLimiter = createRateLimiter('DELIVERY_VERIFY', env.RL_DELIVERY_VERIFY_MAX, env.RL_DELIVERY_VERIFY_WINDOW_MS, undefined, byUser);
+export const deliveryOverrideRateLimiter = createRateLimiter('DELIVERY_OVERRIDE', env.RL_DELIVERY_OVERRIDE_MAX, env.RL_DELIVERY_OVERRIDE_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(

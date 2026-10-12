@@ -129,7 +129,7 @@ describe('SUPER_ADMIN kitchen routing UI', () => {
     expect(await screen.findByTestId('routing-notice')).toHaveTextContent('PB-UNROUTED-1 was routed');
     expect(screen.queryByRole('dialog', { name: /Route PB-UNROUTED-1/ })).not.toBeInTheDocument();
     await waitFor(() => expect(kitchen.listRouting.mock.calls.length).toBeGreaterThan(1)); // list reloaded
-  });
+  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
 
   it('changing a routed order sends the CURRENT branch as expectedBranchId', async () => {
     const user = userEvent.setup();

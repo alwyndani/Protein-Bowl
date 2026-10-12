@@ -287,7 +287,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       const c = await claim(who.d1.token, o.id);
       expect(c.status, text(c)).toBe(200);
       const dto = c.body.data.order;
-      expect(Object.keys(dto).sort()).toEqual(['area', 'assignment', 'delivery', 'id', 'items', 'kitchenBranch', 'orderNumber', 'readyAt', 'status'].sort());
+      expect(Object.keys(dto).sort()).toEqual(['area', 'assignment', 'delivery', 'id', 'items', 'kitchenBranch', 'orderNumber', 'proof', 'readyAt', 'status'].sort());
       expect(Object.keys(dto.delivery).sort()).toEqual(['address', 'firstName', 'instructions', 'phone']);
       expect(dto.delivery).toMatchObject({ firstName: SECRET.first, phone: SECRET.phone, instructions: SECRET.instructions });
       expect(dto.delivery.address).toEqual({ line1: SECRET.street, line2: SECRET.line2, city: 'Kochi', state: 'Kerala', postalCode: '682001' });
@@ -914,7 +914,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       expect(m.status).toBe(200);
       piiAbsent(m);
       const item = m.body.data.sections.assigned.items.find((x: { id: string }) => x.id === o.id);
-      expect(Object.keys(item).sort()).toEqual(['area', 'assignment', 'exception', 'id', 'items', 'kitchenBranch', 'orderNumber', 'readyAt', 'status']);
+      expect(Object.keys(item).sort()).toEqual(['area', 'assignment', 'exception', 'id', 'items', 'kitchenBranch', 'orderNumber', 'proofState', 'readyAt', 'status']);
       expect((await claim(who.md.token, o.id)).status).toBe(403);
       expect((await dispatch(who.md.token, o.id)).status).toBe(403);
       expect((await fail(who.md.token, o.id)).status).toBe(403);
@@ -955,7 +955,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       expect((await assignmentOf(o.id))!.status).toBe('IN_TRANSIT');
     });
 
-    it('50. the transition service refuses DELIVERED for DELIVERY, SUPER_ADMIN, MD, CHEF, the customer and SYSTEM (the edge exists for P9B but has no party)', async () => {
+    it('50. the transition service refuses DELIVERED for DELIVERY, SUPER_ADMIN, MD, CHEF, the customer, SYSTEM and a PROOF actor without verified evidence (only the proof-backed party exists)', async () => {
       const o = await mkOrder({ status: 'DISPATCHED' });
       const actors = [
         { kind: 'USER' as const, userId: who.d1.id, roles: [RoleEnum.DELIVERY], branchIds: [branchA.id] },
@@ -965,16 +965,18 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
         { kind: 'USER' as const, userId: who.custA.id, roles: [RoleEnum.CUSTOMER], customerProfileId: who.custA.profileId },
         { kind: 'SYSTEM' as const, source: 'PAYMENT_VERIFICATION' as const }
       ];
+      // a PROOF actor is only a claim: without a verified DeliveryProof row of THIS order the transition refuses
+      await expect(OrderTransitionService.transition({ orderId: o.id, to: 'DELIVERED', actor: { kind: 'PROOF', method: 'PIN', proofId: 'nope', userId: who.d1.id, roles: [RoleEnum.DELIVERY] } })).rejects.toMatchObject({ errorCode: 'INVALID_ORDER_TRANSITION' });
       for (const actor of actors) {
         await expect(OrderTransitionService.transition({ orderId: o.id, to: 'DELIVERED', actor })).rejects.toMatchObject({ errorCode: 'ORDER_TRANSITION_FORBIDDEN' });
       }
       expect((await order(o.id)).status).toBe('DISPATCHED');
       expect(ORDER_TRANSITIONS.DISPATCHED).toEqual(['DELIVERED']); // the edge itself stays for P9B
-      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([]);
+      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']);
       expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
     });
 
-    it('51. static guard: no production source writes or names DELIVERED outside the status catalogue; the delivery module has no deliver route, no PICKED_UP and no payment-collection code', () => {
+    it('51. static guard: no production source names DELIVERED outside the status catalogue, the transition service and the delivery PROOF service; the delivery module has no deliver route, no PICKED_UP and no payment-collection code', () => {
       const root = join(__dirname, '..');
       const offenders: string[] = [];
       const walk = (dir: string) => {
@@ -983,7 +985,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
           if (statSync(full).isDirectory()) {
             if (name === 'tests') continue;
             walk(full);
-          } else if (full.endsWith('.ts') && !full.endsWith(join('order', 'orderStatus.ts'))) {
+          } else if (full.endsWith('.ts') && ![join('order', 'orderStatus.ts'), join('order', 'orderTransition.service.ts'), join('delivery', 'deliveryProof.service.ts')].some((allowed) => full.endsWith(allowed))) {
             const code = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
             if (/['"`]DELIVERED['"`]/.test(code)) offenders.push(full);
           }

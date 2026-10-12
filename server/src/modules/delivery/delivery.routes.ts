@@ -5,14 +5,16 @@ import { DeliveryController } from './delivery.controller.js';
 import { emptyBodySchema, monitorQuerySchema, reportFailureBodySchema } from './delivery.service.js';
 import { authenticateToken, requireExactRoles, requirePermission } from '../../middleware/auth.middleware.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
-import { deliveryActionRateLimiter, deliveryReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { deliveryActionRateLimiter, deliveryReadRateLimiter, deliveryVerifyRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { verifyBodySchema } from './deliveryProof.service.js';
 
 /**
  * P9A delivery API (mounted at /api/v1/delivery).
  *   driver reads:   exact DELIVERY role + delivery:read   -> queue (area-only until claimed) and the caller's OWN order detail
  *   driver actions: exact DELIVERY role + delivery:write   -> claim, dispatch (READY -> DISPATCHED), report-failure. Strict bodies.
  *   monitor:        SUPER_ADMIN / MD (read-only) with an EXPLICIT branchId
- * There is deliberately NO deliver / mark-delivered / status route (P9B owns proof of delivery) and the legacy
+ * P9B adds POST /orders/:id/verify-delivery (the Delivery Code): the ONLY driver path to DELIVERED. There is deliberately no deliver /
+ * mark-delivered / status route, and the legacy
  * GET /assignments and PATCH /assignments/:id/status routes are retired (404).
  */
 const router = Router();
@@ -27,6 +29,7 @@ router.get('/orders/:id', ...driverRead, validateParams(idParams), DeliveryContr
 router.post('/orders/:id/claim', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.claim);
 router.post('/orders/:id/dispatch', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.dispatch);
 router.post('/orders/:id/report-failure', ...driverAction, validateParams(idParams), validateBody(reportFailureBodySchema), DeliveryController.reportFailure);
+router.post('/orders/:id/verify-delivery', authenticateToken, requireExactRoles([RoleEnum.DELIVERY]), requirePermission('delivery:write'), deliveryVerifyRateLimiter, validateParams(idParams), validateBody(verifyBodySchema), DeliveryController.verifyDelivery);
 
 router.get(
   '/monitor',

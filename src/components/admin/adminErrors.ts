@@ -56,7 +56,12 @@ const GUARDRAIL_MESSAGES: Record<string, string> = {
   // P9A delivery assignment
   DELIVERY_ASSIGNMENT_CHANGED: "Someone else changed this order's delivery assignment in the meantime. The list has been refreshed: review it and try again.",
   ORDER_NOT_ASSIGNABLE: 'Delivery can only be assigned while the order is ready and not yet out for delivery. The list has been refreshed.',
-  DRIVER_INVALID: 'That driver cannot be assigned to this order. Choose an active driver of this branch.'
+  DRIVER_INVALID: 'That driver cannot be assigned to this order. Choose an active driver of this branch.',
+  // P9B exceptional handover confirmation
+  ORDER_NOT_DISPATCHED: 'Only an order that is out for delivery can be confirmed. The list has been refreshed.',
+  ALREADY_DELIVERED: 'This delivery has already been completed. The list has been refreshed.',
+  INVALID_DELIVERY_STATE: 'This delivery is not in a state that can be confirmed. The list has been refreshed.',
+  ORDER_NOT_OPERATIONALLY_ELIGIBLE: 'This order is not eligible for completion right now. The list has been refreshed.'
 };
 
 /** "Validation failed: email: Invalid email; roles: Too many" -> { email: ..., roles: ... } */

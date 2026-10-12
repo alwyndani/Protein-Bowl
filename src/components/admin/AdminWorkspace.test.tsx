@@ -286,7 +286,7 @@ describe('Invite staff', () => {
     expect(await screen.findByTestId('no-email-banner')).toHaveTextContent('NO EMAIL WAS SENT');
     expect(screen.getByLabelText('One-time invitation link')).toHaveValue(handoff().setupLink);
     expect(screen.getByRole('button', { name: /copy invitation link/i })).toBeInTheDocument();
-  });
+  }, 15000); // step-up dialog flow: ~2.6 s alone, can exceed the 5 s default under full-suite parallel load (pre-existing P6C test)
 
   it('the invitation link is shown once: after dismissal it is gone from the page and from browser storage', async () => {
     const user = userEvent.setup();

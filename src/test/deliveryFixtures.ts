@@ -38,12 +38,13 @@ export function ownedOrder(over: Partial<DeliveryOwnedOrder> = {}): DeliveryOwne
       instructions: 'Leave with the security guard'
     },
     assignment: { state: 'ASSIGNED', pickupTime: null, issueReported: false },
+    proof: null,
     ...over
   };
 }
 
 export function outOrder(over: Partial<DeliveryOwnedOrder> = {}): DeliveryOwnedOrder {
-  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: false }, ...over });
+  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: false }, proof: { state: 'READY_FOR_VERIFICATION', lockedUntil: null }, ...over });
 }
 
 export function driverQueue(sections: { available?: DeliveryAreaOrder[]; mine?: DeliveryOwnedOrder[]; out?: DeliveryOwnedOrder[] } = {}, over: Partial<DriverQueue> = {}): DriverQueue {
@@ -60,7 +61,7 @@ export function driverQueue(sections: { available?: DeliveryAreaOrder[]; mine?: 
 
 export function monitorOrder(over: Partial<DeliveryMonitorOrder> = {}): DeliveryMonitorOrder {
   const base = areaOrder();
-  return { ...base, assignment: { state: null, driver: null, pickupTime: null }, exception: null, ...over };
+  return { ...base, assignment: { state: null, driver: null, pickupTime: null }, exception: null, proofState: null, ...over };
 }
 
 export function deliveryMonitor(

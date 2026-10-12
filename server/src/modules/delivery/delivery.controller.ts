@@ -6,6 +6,7 @@ import { AppError } from '../../middleware/error.middleware.js';
 import { BranchScope, getRequestScope } from '../../authz/branchScope.js';
 import { AuditService } from '../audit/audit.service.js';
 import { DeliveryService, DriverCaller, ReportFailureBody } from './delivery.service.js';
+import { DeliveryProofService, VerifyBody } from './deliveryProof.service.js';
 
 /**
  * The DELIVERY employee's identity and authorized branches, from DATABASE truth (getRequestScope). A client never supplies a driver or branch
@@ -91,6 +92,19 @@ export class DeliveryController {
       const { caller } = await resolveDriver(req);
       const result = await DeliveryService.reportFailure(req.params.id, req.body as ReportFailureBody, caller, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, result, result.changed ? 'Issue reported' : 'No change: an issue was already reported');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /** Delivery Code verification (P9B). receivedAt is taken before anything can wait on a lock (see DeliveryProofService.verifyDelivery). */
+  public static async verifyDelivery(req: Request, res: Response, next: NextFunction) {
+    try {
+      const receivedAt = new Date();
+      const { caller } = await resolveDriver(req);
+      const result = await DeliveryProofService.verifyDelivery(req.params.id, (req.body as VerifyBody).code, caller, receivedAt, AuditService.contextFromRequest(req));
+      res.set('Cache-Control', 'no-store');
+      return ApiResponse.success(res, result, result.changed ? 'Delivery completed' : 'No change: the delivery was already completed');
     } catch (err) {
       next(err);
     }

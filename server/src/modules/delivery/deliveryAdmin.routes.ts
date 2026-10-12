@@ -1,13 +1,14 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
 import { authenticateToken, requirePermission } from '../../middleware/auth.middleware.js';
-import { deliveryAssignRateLimiter, deliveryReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { deliveryAssignRateLimiter, deliveryOverrideRateLimiter, deliveryReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditService } from '../audit/audit.service.js';
 import { requireStepUp } from '../admin/stepUp.service.js';
 import { DeliveryService, assignmentBodySchema } from './delivery.service.js';
+import { DeliveryProofService, overrideBodySchema } from './deliveryProof.service.js';
 
 /**
  * SUPER_ADMIN delivery assignment (mounted at /api/v1/admin). Needs 'delivery:assign' (SUPER_ADMIN only) AND a fresh password step-up proof.
@@ -39,6 +40,26 @@ router.put(
       if (!req.user) throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
       const data = await DeliveryService.assign(req.params.orderId, req.body, { userId: req.user.userId, roles: req.user.roles }, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, data, data.changed ? 'Delivery assignment updated' : 'No change: the delivery assignment is already as requested', 200);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// P9B exceptional handover confirmation: NOT routine delivery completion. delivery:override is SUPER_ADMIN only; step-up, reason, note and confirm are mandatory.
+router.post(
+  '/orders/:orderId/delivery-override',
+  authenticateToken,
+  requirePermission('delivery:override'),
+  deliveryOverrideRateLimiter,
+  requireStepUp('delivery.override'),
+  validateParams(orderParams),
+  validateBody(overrideBodySchema),
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      if (!req.user) throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      const data = await DeliveryProofService.overrideDelivery(req.params.orderId, req.body, { userId: req.user.userId, roles: req.user.roles }, AuditService.contextFromRequest(req));
+      return ApiResponse.success(res, data, data.changed ? 'Delivery completed by override' : 'No change: the delivery was already completed by override', 200);
     } catch (err) {
       next(err);
     }

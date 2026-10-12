@@ -33,7 +33,7 @@ export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
 });
 
 /** Who may perform an edge. 'SYSTEM' = trusted server flows (payment verification/expiry); 'CUSTOMER_OWNER' = the order's own customer. */
-export type TransitionParty = RoleEnum | 'SYSTEM' | 'CUSTOMER_OWNER';
+export type TransitionParty = RoleEnum | 'SYSTEM' | 'CUSTOMER_OWNER' | 'DELIVERY_PROOF';
 
 export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionParty[]>> = Object.freeze({
   // Confirmation is never a human/customer action: only the trusted payment path (P7B) may confirm an ONLINE order.
@@ -51,8 +51,9 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'PREPARING->READY': [RoleEnum.CHEF],
   // P9A: dispatch (= the assigned driver collected the order and started delivery) is DELIVERY ONLY.
   'READY->DISPATCHED': [RoleEnum.DELIVERY],
-  // P9A: the DISPATCHED -> DELIVERED edge stays in ORDER_TRANSITIONS for P9B (proof of delivery) but NO party may perform it yet.
-  'DISPATCHED->DELIVERED': []
+  // P9B: DELIVERED is reachable ONLY through a verified DeliveryProof (the internal 'DELIVERY_PROOF' party, never a human role): the delivery
+  // service completes it after a valid Delivery Code, or after the exceptional SUPER_ADMIN override. No human role is listed here on purpose.
+  'DISPATCHED->DELIVERED': ['DELIVERY_PROOF']
 });
 
 export function transitionKey(from: OrderStatus, to: OrderStatus): string {

@@ -7,7 +7,10 @@ import type {
   DriverAction,
   DriverActionResult,
   DriverQueue,
-  FailureReportInput
+  FailureReportInput,
+  OverrideInput,
+  OverrideResult,
+  VerifyDeliveryResult
 } from './deliveryTypes';
 
 /** Header carrying the password step-up proof (only the assignment mutation sends it). */
@@ -36,6 +39,14 @@ export class DeliveryService {
     });
   }
 
+  /**
+   * Completes a delivery with the customer's Delivery Code. The body is ONLY the code (never a status, payment or driver field). It is
+   * never retried automatically and never logged or stored here.
+   */
+  public static async verifyDelivery(orderId: string, code: string): Promise<VerifyDeliveryResult> {
+    return await ApiClient.requestData<VerifyDeliveryResult>(`/delivery/orders/${encodeURIComponent(orderId)}/verify-delivery`, { method: 'POST', body: JSON.stringify({ code }) });
+  }
+
   // ------------------------------------------------------------ SUPER_ADMIN / MD
   public static async getMonitor(branchId: string): Promise<DeliveryMonitor> {
     return await ApiClient.requestData<DeliveryMonitor>(`/delivery/monitor?branchId=${encodeURIComponent(branchId)}`);
@@ -44,6 +55,15 @@ export class DeliveryService {
   public static async listDrivers(branchId: string): Promise<AssignableDriver[]> {
     const data = await ApiClient.requestData<{ drivers: AssignableDriver[] }>(`/admin/delivery/drivers?branchId=${encodeURIComponent(branchId)}`);
     return data.drivers;
+  }
+
+  /** EXCEPTIONAL handover confirmation (step-up + structured reason + note + explicit confirmation). Not a routine completion path. */
+  public static async overrideDelivery(orderId: string, input: OverrideInput, proof: string): Promise<OverrideResult> {
+    return await ApiClient.requestData<OverrideResult>(`/admin/orders/${encodeURIComponent(orderId)}/delivery-override`, {
+      method: 'POST',
+      headers: { [STEP_UP_HEADER]: proof },
+      body: JSON.stringify({ reasonCode: input.reasonCode, note: input.note.trim(), confirm: true })
+    });
   }
 
   public static async assign(orderId: string, input: AssignmentInput, proof: string): Promise<AssignmentResult> {

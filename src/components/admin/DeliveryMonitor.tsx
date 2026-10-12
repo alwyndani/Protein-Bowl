@@ -1,17 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, Truck } from 'lucide-react';
 import { DeliveryService } from '../../services/deliveryService';
-import type { AssignableDriver, DeliveryMonitorOrder } from '../../services/deliveryTypes';
-import { FAILURE_REASONS } from '../../services/deliveryTypes';
+import type { AssignableDriver, DeliveryMonitorOrder, MonitorProofState, OverrideReasonCode } from '../../services/deliveryTypes';
+import { FAILURE_REASONS, OVERRIDE_REASONS } from '../../services/deliveryTypes';
 import { useDeliveryMonitor } from '../../hooks/useDeliveryMonitor';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminReference } from './AdminReference';
 import { useStepUp } from './StepUp';
 import { useAdminAction } from './useAdminAction';
-import { Chip, EmptyState, ErrorNotice, Field, Modal, Spinner, formatDate, inputClass, primaryButton, secondaryButton } from './adminUi';
+import { Chip, EmptyState, ErrorNotice, Field, Modal, Spinner, dangerButton, formatDate, inputClass, primaryButton, secondaryButton } from './adminUi';
 
 /** Codes after which the screen the administrator was looking at is out of date: the monitor reloads (it also polls). */
-const STALE_CODES = ['DELIVERY_ASSIGNMENT_CHANGED', 'ORDER_NOT_ASSIGNABLE', 'ORDER_STATE_CONFLICT'];
+const STALE_CODES = ['DELIVERY_ASSIGNMENT_CHANGED', 'ORDER_NOT_ASSIGNABLE', 'ORDER_STATE_CONFLICT', 'ORDER_NOT_DISPATCHED', 'ALREADY_DELIVERED', 'INVALID_DELIVERY_STATE', 'ORDER_NOT_OPERATIONALLY_ELIGIBLE'];
+
+const PROOF_LABEL: Record<MonitorProofState, string> = {
+  NOT_ISSUED: 'Delivery code: not generated yet',
+  ISSUED: 'Delivery code: generated',
+  LOCKED: 'Delivery code: entry temporarily locked',
+  CODE_BLOCKED: 'Delivery code: blocked',
+  VERIFIED: 'Delivery code: verified',
+  OVERRIDDEN: 'Handover confirmed by administrator'
+};
 
 const reasonLabel = (code: string) => FAILURE_REASONS.find((r) => r.code === code)?.label ?? 'Other';
 
@@ -101,7 +110,83 @@ const AssignmentDialog: React.FC<{ order: DeliveryMonitorOrder; branchId: string
   );
 };
 
-const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAction: (order: DeliveryMonitorOrder, mode: Mode) => void }> = ({ order, canAssign, onAction }) => {
+/**
+ * EXCEPTIONAL handover confirmation. Deliberately separate from routine delivery (which is the driver entering the customer's code):
+ * step-up, a structured reason, a mandatory note and an explicit confirmation. The customer's code is never shown here.
+ */
+const OverrideDialog: React.FC<{ order: DeliveryMonitorOrder; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, onClose, onDone, onStale }) => {
+  const { withStepUp } = useStepUp();
+  const { run, pending, error, clearError } = useAdminAction();
+  const [reasonCode, setReasonCode] = useState<OverrideReasonCode | ''>('');
+  const [note, setNote] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [touched, setTouched] = useState(false);
+  const previouslyFailed = order.assignment.state === 'FAILED' || !!order.exception;
+  const noteOk = note.trim().length >= 10;
+  const valid = !!reasonCode && noteOk && confirmed;
+
+  useEffect(() => {
+    if (error?.code && STALE_CODES.includes(error.code)) onStale();
+  }, [error, onStale]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!valid || !reasonCode) return;
+    const outcome = await run(() => withStepUp((proof) => DeliveryService.overrideDelivery(order.id, { reasonCode, note: note.trim() }, proof)));
+    if (outcome.ok) onDone(`Handover for ${order.orderNumber} was confirmed by override.`);
+  };
+
+  return (
+    <Modal title={`Exceptional handover confirmation for ${order.orderNumber}`} onClose={onClose} closeDisabled={pending}>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <p role="note" className="text-xs text-amber-200 bg-amber-950/50 border border-amber-700 rounded-xl px-3 py-2">
+          This confirms that the order was handed over to the customer WITHOUT their delivery code. Use it only in an exceptional situation: it is recorded against your account and cannot be undone. Routine deliveries are completed by the driver with the customer's code.
+        </p>
+        {previouslyFailed && (
+          <p role="alert" data-testid="override-failed-warning" className="text-xs text-red-200 bg-red-950/60 border border-red-500/40 rounded-xl px-3 py-2">
+            A delivery issue was previously reported for this order{order.exception ? ` (${FAILURE_REASONS.find((r) => r.code === order.exception!.reasonCode)?.label ?? 'Other'})` : ''}. Confirming the handover records that history; the report is not erased.
+          </p>
+        )}
+        <Field label="Reason" htmlFor="override-reason" error={touched && !reasonCode ? 'Choose a reason.' : undefined}>
+          <select id="override-reason" value={reasonCode} onChange={(e) => setReasonCode(e.target.value as OverrideReasonCode | '')} disabled={pending} className={inputClass} aria-invalid={touched && !reasonCode}>
+            <option value="">Select a reason…</option>
+            {OVERRIDE_REASONS.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Explanation" htmlFor="override-note" hint="Recorded in the audit trail (10–200 characters)." error={touched && !noteOk ? 'Enter an explanation of at least 10 characters.' : undefined}>
+          <textarea id="override-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} rows={3} disabled={pending} className={inputClass} aria-invalid={touched && !noteOk} />
+        </Field>
+        <div>
+          <label className="flex items-start gap-3 text-xs text-stone-200 cursor-pointer min-h-11">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} disabled={pending} className="mt-0.5 w-4 h-4" />
+            <span>I confirm that this order was physically handed over to the customer.</span>
+          </label>
+          {touched && !confirmed && (
+            <p role="alert" className="text-[11px] text-red-300">
+              Tick the confirmation to continue.
+            </p>
+          )}
+        </div>
+        <ErrorNotice error={error} onDismiss={clearError} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>
+            Cancel
+          </button>
+          <button type="submit" disabled={pending} className={dangerButton}>
+            {pending ? 'Working…' : 'Confirm handover'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAction: (order: DeliveryMonitorOrder, mode: Mode) => void; onOverride: (order: DeliveryMonitorOrder) => void }> = ({ order, canAssign, onAction, onOverride }) => {
   const driver = order.assignment.driver;
   return (
     <li data-testid="delivery-monitor-row" data-order-number={order.orderNumber} className="bg-stone-900/70 border border-stone-800 rounded-2xl p-4 flex flex-wrap items-start justify-between gap-3">
@@ -114,10 +199,16 @@ const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAc
         <div className="flex flex-wrap gap-2">
           {driver ? <Chip tone="emerald">Driver: {driver.fullName} ({driver.employeeCode})</Chip> : <Chip tone="amber">No driver yet</Chip>}
           {order.exception && <Chip tone="amber">Issue reported: {reasonLabel(order.exception.reasonCode)}</Chip>}
+          {order.proofState && <Chip>{PROOF_LABEL[order.proofState]}</Chip>}
         </div>
         {order.exception?.note && <p className="text-[11px] text-stone-300">Driver note: {order.exception.note}</p>}
         {order.exception && <p className="text-[11px] text-amber-200">Awaiting review. There is no automatic cancellation, refund or return to the kitchen.</p>}
       </div>
+      {canAssign && order.status === 'DISPATCHED' && order.proofState !== 'VERIFIED' && order.proofState !== 'OVERRIDDEN' && (
+        <button type="button" onClick={() => onOverride(order)} aria-label={`Exceptional handover confirmation for ${order.orderNumber}`} data-testid="override-open" className="text-xs font-bold text-stone-300 underline hover:text-white min-h-11 px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded">
+          Exceptional handover confirmation…
+        </button>
+      )}
       {canAssign && order.status === 'READY' && (
         <div className="flex flex-wrap gap-2">
           {driver ? (
@@ -147,6 +238,7 @@ export const DeliveryMonitor: React.FC = () => {
   const [branchId, setBranchId] = useState('');
   const monitor = useDeliveryMonitor({ branchId, onSessionExpired: () => void auth.logout() });
   const [editing, setEditing] = useState<{ order: DeliveryMonitorOrder; mode: Mode } | null>(null);
+  const [overriding, setOverriding] = useState<DeliveryMonitorOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const data = monitor.data;
   const canAssign = !!data && !data.readOnly;
@@ -228,7 +320,7 @@ export const DeliveryMonitor: React.FC = () => {
               ) : (
                 <ul className="space-y-3" aria-label={title}>
                   {section.items.map((o) => (
-                    <OrderRow key={o.id} order={o} canAssign={canAssign} onAction={(order, mode) => setEditing({ order, mode })} />
+                    <OrderRow key={o.id} order={o} canAssign={canAssign} onAction={(order, mode) => setEditing({ order, mode })} onOverride={setOverriding} />
                   ))}
                 </ul>
               )}
@@ -252,6 +344,18 @@ export const DeliveryMonitor: React.FC = () => {
           onDone={(message) => {
             setNotice(message);
             setEditing(null);
+            void monitor.refresh();
+          }}
+        />
+      )}
+      {overriding && (
+        <OverrideDialog
+          order={overriding}
+          onClose={() => setOverriding(null)}
+          onStale={() => void monitor.refresh()}
+          onDone={(message) => {
+            setNotice(message);
+            setOverriding(null);
             void monitor.refresh();
           }}
         />

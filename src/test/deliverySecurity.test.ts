@@ -104,7 +104,7 @@ describe('DeliveryService request shapes (the only things a driver can send)', (
     const own = Object.getOwnPropertyNames(DeliveryService);
     expect(own).not.toContain('deliver');
     expect(own).not.toContain('markDelivered');
-    expect(own.sort()).toEqual(['act', 'assign', 'getMonitor', 'getQueue', 'length', 'listDrivers', 'name', 'prototype', 'reportFailure']);
+    expect(own.sort()).toEqual(['act', 'assign', 'getMonitor', 'getQueue', 'length', 'listDrivers', 'name', 'overrideDelivery', 'prototype', 'reportFailure', 'verifyDelivery']);
   });
 
   it('report-failure sends ONLY the structured reason (and a trimmed note when present): never a status, notes string, payment or driver field', async () => {
@@ -147,6 +147,17 @@ describe('delivery error mapping (safe copy, never raw text)', () => {
     [409, 'ORDER_NOT_OPERATIONALLY_ELIGIBLE', 'cannot be taken for delivery right now', 'REFRESH'],
     [409, 'SOMETHING_NEW', 'changed in the meantime', 'REFRESH'],
     [422, 'DRIVER_INVALID', 'cannot be assigned', 'NONE'],
+    [422, 'INVALID_DELIVERY_CODE', 'code is not correct', 'REFRESH'],
+    [422, 'INVALID_DELIVERY_CODE_FORMAT', '6-digit', 'NONE'],
+    [409, 'DELIVERY_CODE_NOT_ISSUED', 'has not generated a delivery code', 'REFRESH'],
+    [409, 'DELIVERY_CODE_LOCKED', 'locked', 'REFRESH'],
+    [409, 'DELIVERY_CODE_BLOCKED', 'blocked', 'REFRESH'],
+    [409, 'DELIVERY_CODE_CHANGED', 'new delivery code', 'REFRESH'],
+    [409, 'DELIVERY_IN_EXCEPTION', 'problem was reported', 'REFRESH'],
+    [409, 'ALREADY_DELIVERED', 'already been completed', 'REFRESH'],
+    [409, 'DELIVERY_CODE_ALREADY_ISSUED', 'already generated', 'REFRESH'],
+    [409, 'DELIVERY_CODE_REGENERATION_LIMIT', 'limit for new delivery codes', 'NONE'],
+    [429, 'DELIVERY_CODE_REGENERATE_LIMIT', 'several new codes', 'REFRESH'],
     [422, 'VALIDATION_ERROR', 'not valid', 'NONE'],
     [429, 'TOO_MANY_REQUESTS', 'too many requests', 'NONE'],
     [500, 'INTERNAL_SERVER_ERROR', 'server could not complete', 'NONE'],

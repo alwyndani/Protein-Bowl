@@ -71,7 +71,7 @@ export interface DriverCaller {
 }
 
 /** An order that is not visible to the caller (foreign branch, not owned, ineligible, non-existent): ONE indistinguishable 404. */
-class DeliveryOrderNotVisible extends AppError {
+export class DeliveryOrderNotVisible extends AppError {
   constructor(public readonly existed: boolean, public readonly mode: string) {
     super('Order not found', 404, 'ORDER_NOT_FOUND');
   }
@@ -220,7 +220,7 @@ export class DeliveryService {
 
   // ------------------------------------------------------------------------------------------------ driver mutations
   /** Locks the order, loads its operational facts and assignment. The caller then applies its own visibility rule. */
-  private static async lockAndLoad(tx: Tx, orderId: string) {
+  public static async lockAndLoad(tx: Tx, orderId: string) {
     await lockOrder(tx, orderId);
     return await tx.order.findUnique({
       where: { id: orderId },
@@ -237,7 +237,7 @@ export class DeliveryService {
     });
   }
 
-  private static async denyAudit(err: unknown, caller: DriverCaller, action: string, orderId: string, context?: AuditContext): Promise<never> {
+  public static async denyAudit(err: unknown, caller: DriverCaller, action: string, orderId: string, context?: AuditContext): Promise<never> {
     if (err instanceof DeliveryOrderNotVisible) {
       if (err.existed) {
         await AuditService.recordSafe({

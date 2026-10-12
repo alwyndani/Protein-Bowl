@@ -47,9 +47,9 @@ describe('P7C migration: one additive migration, P7B data preserved, database gu
     }
   }, 60000);
 
-  it('the chain has 13 migrations and the P7C migration sorts LAST, directly after the P7B one', () => {
-    expect(migrations).toHaveLength(13);
-    expect(P7C).toBe(migrations.length - 1);
+  it('the P7C migration is the 13th of the chain and sorts directly after the P7B one (P9B later appended the 14th)', () => {
+    expect(P7C).toBe(12);
+    expect(migrations.length).toBeGreaterThanOrEqual(13);
     expect(migrations[P7C - 1]).toContain('p7b_payment_sessions_ledger_and_webhook_events');
     expect(migrations[P7C] > migrations[P7C - 1]).toBe(true);
   });

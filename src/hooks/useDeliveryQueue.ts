@@ -76,9 +76,14 @@ export function useDeliveryQueue({ branchId, enabled = true, onSessionExpired, i
     (orderId: string, input: FailureReportInput) => run(orderId, () => DeliveryService.reportFailure(orderId, input), 'An issue was already reported for that order. The list has been refreshed.'),
     [run]
   );
+  /** Completes a delivery with the customer's Delivery Code. The code is passed straight through: nothing here stores or logs it. */
+  const verifyDelivery = useCallback(
+    (orderId: string, code: string) => run(orderId, () => DeliveryService.verifyDelivery(orderId, code), 'That delivery was already completed. The list has been refreshed.'),
+    [run]
+  );
   const dismissActionError = useCallback((orderId: string) => {
     setActions((prev) => ({ ...prev, [orderId]: { pending: false, error: null } }));
   }, []);
 
-  return { queue: polled.data, loadState: polled.loadState, loadError: polled.loadError, stale: polled.stale, lastUpdatedMs: polled.lastUpdatedMs, clockOffsetMs: polled.clockOffsetMs, actions, notice, refresh, act, reportFailure, dismissActionError };
+  return { queue: polled.data, loadState: polled.loadState, loadError: polled.loadError, stale: polled.stale, lastUpdatedMs: polled.lastUpdatedMs, clockOffsetMs: polled.clockOffsetMs, actions, notice, refresh, act, reportFailure, verifyDelivery, dismissActionError };
 }

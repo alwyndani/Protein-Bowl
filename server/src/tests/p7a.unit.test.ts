@@ -319,7 +319,7 @@ describe('P7A order status catalogue', () => {
       for (const to of ORDER_TRANSITIONS[from]) {
         const parties = TRANSITION_PARTIES[transitionKey(from, to)];
         expect(parties, `${from}->${to}`).toBeDefined();
-        if (transitionKey(from, to) === 'DISPATCHED->DELIVERED') expect(parties).toEqual([]); // P9A: no reachable party until P9B
+        if (transitionKey(from, to) === 'DISPATCHED->DELIVERED') expect(parties).toEqual(['DELIVERY_PROOF']); // P9B: only the proof-backed internal party, never a human role
         else expect(parties.length).toBeGreaterThan(0);
         if (parties.includes('CUSTOMER_OWNER')) expect(['PENDING->CANCELLED', 'CONFIRMED->CANCELLED']).toContain(transitionKey(from, to));
       }
@@ -330,7 +330,7 @@ describe('P7A order status catalogue', () => {
     expect(TRANSITION_PARTIES['PENDING->CONFIRMED']).toEqual(['SYSTEM']);
     expect(TRANSITION_PARTIES['PREPARING->READY']).toEqual([RoleEnum.CHEF]);
     expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
-    expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([]);
+    expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']);
     // MD is read-only: it appears on no edge
     expect(Object.values(TRANSITION_PARTIES).flat()).not.toContain(RoleEnum.MD);
   });

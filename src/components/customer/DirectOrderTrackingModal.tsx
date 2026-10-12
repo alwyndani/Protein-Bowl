@@ -4,6 +4,7 @@ import { AccessibleDialog } from '../common/AccessibleDialog';
 import { CancelOrderDialog } from './CancelOrderDialog';
 import { OrderStatusBadges } from './OrderStatusBadges';
 import { PaymentPanel } from './PaymentPanel';
+import { DeliveryCodePanel } from './DeliveryCodePanel';
 import { RefundNotice } from './RefundNotice';
 import { OrderService } from '../../services/orderService';
 import type { ApiOrder } from '../../services/commerceTypes';
@@ -244,6 +245,10 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
                   <OrderStatusBadges order={active} />
 
                   <RefundNotice order={active} />
+
+                  {active.status === 'DISPATCHED' && active.paymentMethod === 'ONLINE' && (
+                    <DeliveryCodePanel key={active.id} orderId={active.id} onSessionExpired={onSessionExpired} onVerified={() => void refreshActive()} />
+                  )}
 
                   {showPayment && <PaymentPanel key={active.id} order={active} fetchOrder={fetchActive} onOrder={updateOrder} onSessionExpired={onSessionExpired} />}
 

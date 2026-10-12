@@ -27,6 +27,9 @@ export interface DeliveryAreaOrder {
 }
 
 export type AssignmentState = 'ASSIGNED' | 'IN_TRANSIT' | 'FAILED';
+export type DriverProofState = 'CODE_NOT_ISSUED' | 'READY_FOR_VERIFICATION' | 'LOCKED' | 'CODE_BLOCKED' | 'VERIFIED';
+export type MonitorProofState = 'NOT_ISSUED' | 'ISSUED' | 'LOCKED' | 'CODE_BLOCKED' | 'VERIFIED' | 'OVERRIDDEN';
+export type CustomerProofState = 'NOT_AVAILABLE' | 'NOT_ISSUED' | 'ISSUED' | 'LOCKED' | 'CODE_BLOCKED' | 'VERIFIED';
 
 /** Post-claim order: only ever received by the assigned driver. */
 export interface DeliveryOwnedOrder extends DeliveryAreaOrder {
@@ -37,6 +40,8 @@ export interface DeliveryOwnedOrder extends DeliveryAreaOrder {
     instructions: string | null;
   };
   assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean };
+  /** Delivery Code state for a dispatched order: STATE only (no counters, no code, no hash). null before dispatch. */
+  proof: { state: DriverProofState; lockedUntil: string | null } | null;
 }
 
 export interface DeliverySection<T> {
@@ -87,6 +92,7 @@ export interface DeliveryMonitorOrder extends DeliveryAreaOrder {
     pickupTime: string | null;
   };
   exception: { reasonCode: FailureReasonCode; note: string | null } | null;
+  proofState: MonitorProofState | null;
 }
 
 export interface DeliveryMonitor {
@@ -123,4 +129,43 @@ export interface AssignmentResult {
   action: 'ASSIGNED' | 'REASSIGNED' | 'UNASSIGNED' | 'NONE';
   previousDriverId: string | null;
   driverEmployeeId: string | null;
+}
+
+// ---- Delivery Code (P9B)
+export interface VerifyDeliveryResult {
+  changed: boolean;
+  order: { id: string; orderNumber: string; status: string; deliveredAt: string };
+}
+
+export const OVERRIDE_REASONS = [
+  { code: 'CUSTOMER_CANNOT_ACCESS_CODE', label: 'Customer cannot access the code' },
+  { code: 'CUSTOMER_DEVICE_UNAVAILABLE', label: 'Customer device unavailable' },
+  { code: 'CODE_VERIFICATION_FAILURE', label: 'Code verification failure' },
+  { code: 'ACCESSIBILITY_ASSISTANCE', label: 'Accessibility assistance' },
+  { code: 'OPERATIONAL_EXCEPTION', label: 'Operational exception' },
+  { code: 'OTHER', label: 'Other' }
+] as const;
+export type OverrideReasonCode = (typeof OVERRIDE_REASONS)[number]['code'];
+
+export interface OverrideInput {
+  reasonCode: OverrideReasonCode;
+  note: string;
+}
+
+export interface OverrideResult {
+  changed: boolean;
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  previousAssignmentStatus: string | null;
+}
+
+/** Customer-facing proof state. The plaintext code exists ONLY in the response of issue / regenerate. */
+export interface CustomerProof {
+  state: CustomerProofState;
+  issuedAt: string | null;
+  lockedUntil: string | null;
+}
+export interface IssuedDeliveryCode extends CustomerProof {
+  code: string;
 }

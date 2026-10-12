@@ -26,6 +26,19 @@ const BY_CODE: Record<string, { message: string; action: DeliveryErrorAction }> 
   BRANCH_NOT_FOUND: { message: 'That branch was not found.', action: 'NONE' },
   FORBIDDEN: { message: 'Your account is not allowed to do that.', action: 'NONE' },
   READ_ONLY_ROLE: { message: 'Your account has read-only access to delivery.', action: 'NONE' },
+  // Delivery Code (P9B)
+  INVALID_DELIVERY_CODE: { message: 'That code is not correct. Please check it with the customer and try again.', action: 'REFRESH' },
+  INVALID_DELIVERY_CODE_FORMAT: { message: 'Enter the 6-digit delivery code.', action: 'NONE' },
+  DELIVERY_CODE_NOT_ISSUED: { message: 'The customer has not generated a delivery code yet. Ask them to open their order and tap "Get my delivery code".', action: 'REFRESH' },
+  DELIVERY_CODE_LOCKED: { message: 'Too many incorrect codes. Code entry is locked for a while; the list shows when it unlocks.', action: 'REFRESH' },
+  DELIVERY_CODE_BLOCKED: { message: 'This code is blocked. The customer must generate a new delivery code.', action: 'REFRESH' },
+  DELIVERY_CODE_CHANGED: { message: 'The customer generated a new delivery code. Ask for the latest one.', action: 'REFRESH' },
+  DELIVERY_IN_EXCEPTION: { message: 'A problem was reported for this delivery, so it cannot be completed here. Please wait for instructions from the team.', action: 'REFRESH' },
+  ALREADY_DELIVERED: { message: 'This delivery has already been completed. The list has been refreshed.', action: 'REFRESH' },
+  DELIVERY_CODE_ALREADY_ISSUED: { message: 'You already generated a delivery code for this order. If you no longer have it, generate a new one.', action: 'REFRESH' },
+  DELIVERY_CODE_NOT_AVAILABLE: { message: 'A delivery code is not available for this order right now.', action: 'REFRESH' },
+  DELIVERY_CODE_REGENERATION_LIMIT: { message: 'The limit for new delivery codes on this order has been reached. Please contact Protein Bowl support.', action: 'NONE' },
+  DELIVERY_CODE_REGENERATE_LIMIT: { message: 'You have generated several new codes recently. Please wait before generating another.', action: 'REFRESH' },
   // SUPER_ADMIN assignment
   DELIVERY_ASSIGNMENT_CHANGED: { message: "Someone else changed this order's delivery assignment. The list has been refreshed: review it and try again.", action: 'REFRESH' },
   ORDER_NOT_ASSIGNABLE: { message: 'Delivery can only be assigned while the order is ready and not yet out for delivery. The list has been refreshed.', action: 'REFRESH' },
@@ -38,9 +51,9 @@ export function describeDeliveryError(err: unknown): DeliveryErrorInfo {
   const { code, status } = err;
   if (code === 'NETWORK_ERROR' || status === undefined) return { code, action: 'NONE', message: 'We could not reach the server. Please check your connection; the list will update when it is back.' };
   if (status === 401) return { code, action: 'SIGN_IN', message: 'Your session has expired. Please sign in again.' };
-  if (status === 429) return { code, action: 'NONE', message: 'Too many requests. Please wait a moment and try again.' };
   const mapped = BY_CODE[code];
   if (mapped) return { code, ...mapped };
+  if (status === 429) return { code, action: 'NONE', message: 'Too many requests. Please wait a moment and try again.' };
   if (status === 403) return { code, action: 'NONE', message: 'Your account is not allowed to do that.' };
   if (status === 404) return { code, action: 'REFRESH', message: 'This order is no longer available to you. The list has been refreshed.' };
   if (status === 409) return { code, action: 'REFRESH', message: 'The order changed in the meantime. The list has been refreshed.' };

@@ -708,8 +708,8 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       for (const from of ORDER_STATUSES) {
         for (const to of ORDER_TRANSITIONS[from]) {
           const parties = TRANSITION_PARTIES[transitionKey(from, to)];
-          if (parties.length === 0) {
-            expect(transitionKey(from, to)).toBe('DISPATCHED->DELIVERED'); // P9A: the only edge with no reachable party (P9B proof of delivery)
+          if (parties.length === 0 || parties.includes('DELIVERY_PROOF')) {
+            expect(transitionKey(from, to)).toBe('DISPATCHED->DELIVERED'); // P9B: the only edge with no HUMAN party (only the proof-backed DELIVERY_PROOF party; proof of delivery)
             continue;
           }
           const isCancel = to === 'CANCELLED';

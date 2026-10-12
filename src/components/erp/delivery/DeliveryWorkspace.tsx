@@ -118,7 +118,78 @@ const MineCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch:
   </article>
 );
 
-const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: boolean; error: string | null; onReport: () => void; onDismiss: () => void }> = ({ order, nowMs, showBranch, error, onReport, onDismiss }) => (
+/**
+ * Delivery Code entry for the driver's OWN order. The code lives only in this input's state and is cleared after every submit: it is never
+ * stored, logged or sent anywhere except the verification request. Who may verify, and whether the code is right, is decided by the server.
+ */
+const VerifyForm: React.FC<{ order: DeliveryOwnedOrder; pending: boolean; onVerify: (code: string) => Promise<boolean> }> = ({ order, pending, onVerify }) => {
+  const [value, setValue] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+  const state = order.proof?.state ?? 'CODE_NOT_ISSUED';
+  const blocked = state === 'LOCKED' || state === 'CODE_BLOCKED';
+  const inputId = `delivery-code-${order.id}`;
+  const hintId = `${inputId}-hint`;
+  const hint =
+    state === 'CODE_NOT_ISSUED'
+      ? 'The customer has not generated a code yet. Ask them to open their order and tap "Get my delivery code".'
+      : state === 'LOCKED'
+        ? `Code entry is locked until ${order.proof?.lockedUntil ? new Date(order.proof.lockedUntil).toLocaleTimeString() : 'later'}.`
+        : state === 'CODE_BLOCKED'
+          ? 'This code is blocked. Ask the customer to generate a new delivery code.'
+          : 'Ask the customer for the 6-digit code shown in their order.';
+  return (
+    <form
+      className="space-y-2 rounded-xl border border-stone-300 bg-stone-50 p-3"
+      noValidate
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (pending || blocked) return;
+        if (value.replace(/\D/g, '').length !== 6) {
+          setLocalError('Enter the 6-digit delivery code.');
+          return;
+        }
+        setLocalError(null);
+        const submitted = value;
+        setValue(''); // the code never outlives the submit
+        await onVerify(submitted);
+      }}
+    >
+      <label htmlFor={inputId} className="block text-[11px] font-bold uppercase tracking-wide text-stone-700">
+        Customer delivery code
+      </label>
+      <input
+        id={inputId}
+        data-testid="delivery-code-input"
+        type="text"
+        inputMode="numeric"
+        pattern="[0-9 -]*"
+        autoComplete="off"
+        maxLength={8}
+        value={value}
+        onChange={(e) => setValue(e.target.value.replace(/[^\d\s-]/g, ''))}
+        disabled={pending || blocked}
+        aria-describedby={hintId}
+        aria-invalid={!!localError}
+        placeholder="123 456"
+        className="w-full min-h-11 rounded-xl border border-stone-400 bg-white px-3 text-lg tracking-widest text-stone-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 disabled:opacity-60"
+      />
+      <p id={hintId} data-testid="delivery-code-hint" className="text-[11px] text-stone-700">
+        {hint}
+      </p>
+      {localError && (
+        <p role="alert" className="text-[11px] text-red-800">
+          {localError}
+        </p>
+      )}
+      <button type="submit" disabled={pending || blocked} aria-busy={pending} aria-label={`Verify and complete delivery ${order.orderNumber}`} data-testid="delivery-verify" className={primary}>
+        {pending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+        {pending ? 'Working…' : 'Verify & complete delivery'}
+      </button>
+    </form>
+  );
+};
+
+const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: boolean; pending: boolean; error: string | null; onReport: () => void; onVerify: (code: string) => Promise<boolean>; onDismiss: () => void }> = ({ order, nowMs, showBranch, pending, error, onReport, onVerify, onDismiss }) => (
   <article aria-label={`Order ${order.orderNumber}`} data-testid="delivery-card" data-order-number={order.orderNumber} className="bg-white border border-stone-300 rounded-2xl p-4 shadow-sm space-y-3">
     <Header order={order} badge="Out for delivery" showBranch={showBranch} waiting={elapsedText(order.assignment.pickupTime, nowMs)} waitLabel="On the road" />
     <OwnedDetails order={order} />
@@ -128,9 +199,12 @@ const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: 
         Issue reported, awaiting review. Please wait for instructions from the team.
       </p>
     ) : (
-      <button type="button" onClick={onReport} aria-label={`Report an issue with ${order.orderNumber}`} data-testid="delivery-report" className={secondary}>
-        Report an issue
-      </button>
+      <>
+        <VerifyForm order={order} pending={pending} onVerify={onVerify} />
+        <button type="button" onClick={onReport} aria-label={`Report an issue with ${order.orderNumber}`} data-testid="delivery-report" className={secondary}>
+          Report an issue
+        </button>
+      </>
     )}
     <ErrorBox error={error} onDismiss={onDismiss} />
   </article>
@@ -207,7 +281,7 @@ const ReportDialog: React.FC<{ order: DeliveryOwnedOrder; pending: boolean; erro
  */
 export const DeliveryWorkspace: React.FC<{ onSessionExpired?: () => void }> = ({ onSessionExpired }) => {
   const [branchId, setBranchId] = useState('');
-  const { queue, loadState, loadError, stale, lastUpdatedMs, clockOffsetMs, actions, notice, refresh, act, reportFailure, dismissActionError } = useDeliveryQueue({ branchId: branchId || undefined, onSessionExpired });
+  const { queue, loadState, loadError, stale, lastUpdatedMs, clockOffsetMs, actions, notice, refresh, act, reportFailure, verifyDelivery, dismissActionError } = useDeliveryQueue({ branchId: branchId || undefined, onSessionExpired });
 
   const [knownBranches, setKnownBranches] = useState<DeliveryBranchRef[]>([]);
   useEffect(() => {
@@ -384,7 +458,7 @@ export const DeliveryWorkspace: React.FC<{ onSessionExpired?: () => void }> = ({
               <p className="text-xs text-stone-700">Nothing is out for delivery.</p>
             ) : (
               queue.sections.outForDelivery.items.map((o) => (
-                <OutCard key={o.id} order={o} nowMs={serverNowMs} showBranch={multiBranch} error={reporting?.id === o.id ? null : (actions[o.id]?.error ?? null)} onReport={() => setReporting(o)} onDismiss={() => dismissActionError(o.id)} />
+                <OutCard key={o.id} order={o} nowMs={serverNowMs} showBranch={multiBranch} pending={actions[o.id]?.pending ?? false} error={reporting?.id === o.id ? null : (actions[o.id]?.error ?? null)} onReport={() => setReporting(o)} onVerify={(code) => verifyDelivery(o.id, code)} onDismiss={() => dismissActionError(o.id)} />
               ))
             )}
           </div>

@@ -10,6 +10,7 @@
  * Failure reports live in the existing DeliveryAssignment.deliveryNotes string in ONE server-produced format (see `serializeFailureNote`).
  */
 import { Prisma } from '@prisma/client';
+import { DriverProofState, MonitorProofState, PROOF_STATE_SELECT, driverProofState, monitorProofState } from './deliveryProofState.js';
 
 export const DELIVERY_SECTION_LIMIT = 100;
 
@@ -67,6 +68,8 @@ export const DELIVERY_ORDER_SELECT = Prisma.validator<Prisma.OrderSelect>()({
     select: { id: true, itemTitle: true, variantName: true, quantity: true },
     orderBy: [{ itemTitle: 'asc' }, { id: 'asc' }]
   },
+  // P9B: proof STATE only (never the code hash)
+  deliveryProof: { select: PROOF_STATE_SELECT },
   delivery: {
     select: {
       id: true,
@@ -112,6 +115,8 @@ export interface DeliveryOwnedOrderDto extends DeliveryAreaOrderDto {
     instructions: string | null;
   };
   assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean };
+  /** P9B: safe Delivery Code state for a DISPATCHED order (no counters, no hash). null before dispatch. */
+  proof: { state: DriverProofState; lockedUntil: string | null } | null;
 }
 
 export interface DeliveryMonitorOrderDto extends DeliveryAreaOrderDto {
@@ -122,6 +127,8 @@ export interface DeliveryMonitorOrderDto extends DeliveryAreaOrderDto {
   };
   /** Only for DISPATCHED orders whose assignment is FAILED. */
   exception: FailureReport | null;
+  /** P9B: proof state only (null before dispatch). */
+  proofState: MonitorProofState | null;
 }
 
 function toAreaBase(row: DeliveryOrderRow, readyAt: Date | undefined): DeliveryAreaOrderDto {
@@ -162,7 +169,8 @@ export function toOwnedDto(row: DeliveryOrderRow, readyAt: Date | undefined): De
       },
       instructions: snapshotString(snap, 'deliveryInstructions')
     },
-    assignment: { state, pickupTime: row.delivery?.pickupTime ? row.delivery.pickupTime.toISOString() : null, issueReported: state === 'FAILED' }
+    assignment: { state, pickupTime: row.delivery?.pickupTime ? row.delivery.pickupTime.toISOString() : null, issueReported: state === 'FAILED' },
+    proof: row.status === 'DISPATCHED' ? driverProofState(row.deliveryProof, new Date()) : null
   };
 }
 
@@ -176,6 +184,7 @@ export function toMonitorDto(row: DeliveryOrderRow, readyAt: Date | undefined): 
       driver: a?.driver ? { employeeId: a.driver.id, employeeCode: a.driver.employeeCode, fullName: a.driver.fullName } : null,
       pickupTime: a?.pickupTime ? a.pickupTime.toISOString() : null
     },
-    exception: row.status === 'DISPATCHED' && state === 'FAILED' ? (parseFailureNote(a?.deliveryNotes) ?? { reasonCode: 'OTHER', note: null }) : null
+    exception: row.status === 'DISPATCHED' && state === 'FAILED' ? (parseFailureNote(a?.deliveryNotes) ?? { reasonCode: 'OTHER', note: null }) : null,
+    proofState: row.status === 'DISPATCHED' ? monitorProofState(row.deliveryProof, new Date()) : null
   };
 }

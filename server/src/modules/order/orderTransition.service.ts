@@ -18,6 +18,11 @@ import {
 
 export type TransitionActor =
   | { kind: 'SYSTEM'; source: 'PAYMENT_VERIFICATION' | 'PAYMENT_EXPIRY' }
+  /**
+   * P9B: the proof-backed DISPATCHED -> DELIVERED move. Constructed ONLY by DeliveryProofService, but the transition never trusts the
+   * kind: it independently requires a verified DeliveryProof row (same order, same method, verifiedAt set) inside the caller's transaction.
+   */
+  | { kind: 'PROOF'; method: 'PIN' | 'ADMIN_OVERRIDE'; proofId: string; userId: string; roles: readonly RoleEnum[] }
   | {
       kind: 'USER';
       userId: string;
@@ -59,6 +64,9 @@ type Tx = Prisma.TransactionClient;
  */
 export class OrderTransitionService {
   public static async transition(request: TransitionRequest, tx?: Tx): Promise<TransitionResult> {
+    if (request.actor.kind === 'PROOF' && !tx) {
+      throw new AppError('A proof-backed transition must run inside the proof transaction', 409, 'INVALID_ORDER_TRANSITION');
+    }
     if (tx) return this.run(request, tx);
     return await prisma.$transaction((inner) => this.run(request, inner));
   }
@@ -108,6 +116,15 @@ export class OrderTransitionService {
 
     this.assertActorMayPerform(actor, from, to, order.customerProfileId);
 
+    if (to === 'DELIVERED') {
+      // Defence in depth: even a correctly-typed PROOF actor needs real, verified evidence for THIS order, and the order must still be ONLINE.
+      if (actor.kind !== 'PROOF' || order.paymentMethod !== 'ONLINE') {
+        throw new AppError('This order cannot be marked delivered', 409, 'ORDER_NOT_OPERATIONALLY_ELIGIBLE');
+      }
+      const evidence = await tx.deliveryProof.count({ where: { id: actor.proofId, orderId, verifiedAt: { not: null }, method: actor.method } });
+      if (evidence !== 1) throw new AppError('Delivery has not been verified', 403, 'ORDER_TRANSITION_FORBIDDEN');
+    }
+
     if (to === 'CANCELLED') {
       await this.assertCancellable(tx, { id: order.id, paymentStatus: order.paymentStatus }, from, actor, request);
     }
@@ -136,15 +153,15 @@ export class OrderTransitionService {
         orderId,
         fromStatus: from,
         toStatus: to,
-        actorUserId: actor.kind === 'USER' ? actor.userId : null,
-        actorRole: actor.kind === 'USER' ? actor.roles.join(',') : `SYSTEM:${actor.source}`,
+        actorUserId: actor.kind === 'SYSTEM' ? null : actor.userId,
+        actorRole: actor.kind === 'SYSTEM' ? `SYSTEM:${actor.source}` : actor.roles.join(','),
         reason: request.reason?.trim() || null
       }
     });
 
     await AuditService.record(
       {
-        actor: actor.kind === 'USER' ? { userId: actor.userId, roles: actor.roles } : null,
+        actor: actor.kind === 'SYSTEM' ? null : { userId: actor.userId, roles: actor.roles },
         action: 'ORDER_STATUS_CHANGED',
         entity: 'Order',
         entityId: orderId,
@@ -154,6 +171,7 @@ export class OrderTransitionService {
           to,
           actorKind: actor.kind,
           source: actor.kind === 'SYSTEM' ? actor.source : undefined,
+          method: actor.kind === 'PROOF' ? actor.method : undefined,
           reason: request.reason?.trim() || undefined
         },
         context: request.context
@@ -174,9 +192,11 @@ export class OrderTransitionService {
 
     if (actor.kind === 'SYSTEM') {
       permitted = allowed.includes('SYSTEM');
+    } else if (actor.kind === 'PROOF') {
+      permitted = allowed.includes('DELIVERY_PROOF');
     } else {
       for (const party of allowed) {
-        if (party === 'SYSTEM') continue;
+        if (party === 'SYSTEM' || party === 'DELIVERY_PROOF') continue;
         if (party === 'CUSTOMER_OWNER') {
           if (actor.roles.includes(RoleEnum.CUSTOMER) && !!actor.customerProfileId && actor.customerProfileId === orderCustomerProfileId) permitted = true;
         } else if (actor.roles.includes(party as RoleEnum)) {

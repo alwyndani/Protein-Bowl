@@ -15,7 +15,7 @@ vi.mock('../../services/kitchenService', () => ({
   KitchenService: { getQueue: vi.fn(), act: vi.fn(), listRouting: vi.fn(), assignBranch: vi.fn() }
 }));
 vi.mock('../../services/deliveryService', () => ({
-  DeliveryService: { getQueue: vi.fn(), act: vi.fn(), reportFailure: vi.fn(), getMonitor: vi.fn(), listDrivers: vi.fn(), assign: vi.fn() }
+  DeliveryService: { getQueue: vi.fn(), act: vi.fn(), reportFailure: vi.fn(), verifyDelivery: vi.fn(), overrideDelivery: vi.fn(), getMonitor: vi.fn(), listDrivers: vi.fn(), assign: vi.fn() }
 }));
 
 import { AdminService } from '../../services/adminService';
@@ -106,7 +106,7 @@ describe('SUPER_ADMIN delivery monitor', () => {
     expect(proof).toBe('PROOF-1');
     expect(await screen.findByTestId('delivery-monitor-notice')).toHaveTextContent('PB-UN-1 was assigned');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
+  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
 
   it('reassign offers every OTHER driver and sends the CURRENT driver as expectedDriverId; unassign sends a null driver with the current driver expected', async () => {
     const user = userEvent.setup();
@@ -132,7 +132,7 @@ describe('SUPER_ADMIN delivery monitor', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Unassign' }));
     await waitFor(() => expect(delivery.assign).toHaveBeenCalledTimes(2)); // the proof is reused: no second password prompt
     expect(delivery.assign.mock.calls[1][1]).toEqual({ driverEmployeeId: null, expectedDriverId: DRIVER_1.employeeId, reason: 'Back to the pool' });
-  });
+  }, 15000); // step-up dialog flow: ~2.6 s alone, can exceed the 5 s default under full-suite parallel load
 
   it('a STALE expectedDriverId (409) shows safe copy, keeps the dialog open and reloads the monitor; no raw backend text', async () => {
     const user = userEvent.setup();
@@ -247,5 +247,117 @@ describe('SUPER_ADMIN delivery monitor', () => {
     }
     expect(delivery.getMonitor).not.toHaveBeenCalled();
     expect(delivery.listDrivers).not.toHaveBeenCalled();
+  });
+});
+
+describe('SUPER_ADMIN exceptional handover confirmation (P9B override)', () => {
+  const dispatchedOrder = (over: Parameters<typeof monitorOrder>[0] = {}) =>
+    monitorOrder({ orderNumber: 'PB-OV-1', status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z' }, proofState: 'ISSUED', ...over });
+  const failedOrder = () =>
+    dispatchedOrder({ orderNumber: 'PB-OV-F', assignment: { state: 'FAILED', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z' }, exception: { reasonCode: 'CUSTOMER_UNREACHABLE', note: 'Phone off' }, proofState: 'NOT_ISSUED' });
+
+  it('shows the proof STATE as text (never a code) and a deliberately low-key "Exceptional handover confirmation" link only for dispatched orders', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ unclaimed: [unclaimed()], dispatched: [dispatchedOrder()], exceptions: [failedOrder()] }));
+    const panel = await openDelivery(user);
+    const rows = await within(panel).findAllByTestId('delivery-monitor-row');
+    expect(rows.map((r) => r.textContent).join(' ')).toMatch(/Delivery code: generated/);
+    expect(rows.map((r) => r.textContent).join(' ')).toMatch(/Delivery code: not generated yet/);
+    expect(within(panel).getAllByTestId('override-open')).toHaveLength(2);
+    expect(within(panel).queryByRole('button', { name: /exceptional handover.*PB-UN-1/i })).not.toBeInTheDocument(); // not for READY orders
+    expect(panel.textContent).not.toMatch(/\b\d{6}\b/); // no code anywhere
+    expect(panel.textContent).not.toMatch(/hash|attempt|counter/i);
+  });
+
+  it('a read-only monitor (MD-style) offers no override', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [dispatchedOrder()] }, { readOnly: true }));
+    const panel = await openDelivery(user);
+    await within(panel).findAllByTestId('delivery-monitor-row');
+    expect(within(panel).queryByTestId('override-open')).not.toBeInTheDocument();
+  });
+
+  it('requires reason, an explanation of 10+ characters and an explicit confirmation; then step-up first, and only the approved fields are sent', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [dispatchedOrder()] }));
+    const panel = await openDelivery(user);
+    await user.click(await within(panel).findByRole('button', { name: 'Exceptional handover confirmation for PB-OV-1' }));
+    const dialog = await screen.findByRole('dialog', { name: /Exceptional handover confirmation for PB-OV-1/ });
+    expect(within(dialog).getByRole('note')).toHaveTextContent(/WITHOUT their delivery code/i);
+    expect(within(dialog).queryByTestId('override-failed-warning')).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm handover' }));
+    expect(within(dialog).getByText('Choose a reason.')).toBeInTheDocument();
+    expect(within(dialog).getByText(/at least 10 characters/)).toBeInTheDocument();
+    expect(within(dialog).getByText('Tick the confirmation to continue.')).toBeInTheDocument();
+    expect(admin.stepUp).not.toHaveBeenCalled();
+    expect(delivery.overrideDelivery).not.toHaveBeenCalled();
+
+    await user.selectOptions(within(dialog).getByLabelText('Reason'), 'CUSTOMER_DEVICE_UNAVAILABLE');
+    await user.type(within(dialog).getByLabelText('Explanation'), '  Customer phone broke, confirmed by call  ');
+    await user.click(within(dialog).getByRole('checkbox'));
+    delivery.overrideDelivery.mockResolvedValue({ changed: true, orderId: 'x', orderNumber: 'PB-OV-1', status: 'DELIVERED', previousAssignmentStatus: 'IN_TRANSIT' });
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm handover' }));
+    await confirmPassword(user);
+
+    await waitFor(() => expect(delivery.overrideDelivery).toHaveBeenCalledTimes(1));
+    expect(admin.stepUp).toHaveBeenCalledWith(PW);
+    const [, input, proof] = delivery.overrideDelivery.mock.calls[0];
+    expect(input).toEqual({ reasonCode: 'CUSTOMER_DEVICE_UNAVAILABLE', note: 'Customer phone broke, confirmed by call' });
+    expect(proof).toBe('PROOF-1');
+    expect(await screen.findByTestId('delivery-monitor-notice')).toHaveTextContent('confirmed by override');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('overriding a FAILED delivery shows a clear warning that an issue was reported earlier', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ exceptions: [failedOrder()] }));
+    const panel = await openDelivery(user);
+    await user.click(await within(panel).findByRole('button', { name: 'Exceptional handover confirmation for PB-OV-F' }));
+    const warning = await screen.findByTestId('override-failed-warning');
+    expect(warning).toHaveAttribute('role', 'alert');
+    expect(warning).toHaveTextContent(/delivery issue was previously reported/i);
+    expect(warning).toHaveTextContent(/Customer not reachable/);
+    expect(warning).toHaveTextContent(/not erased/i);
+  });
+
+  it('server refusals are safe copy; a stale order refreshes the monitor; a double submit sends ONE request', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [dispatchedOrder()] }));
+    const panel = await openDelivery(user);
+    await user.click(await within(panel).findByRole('button', { name: 'Exceptional handover confirmation for PB-OV-1' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Reason'), 'OTHER');
+    await user.type(within(dialog).getByLabelText('Explanation'), 'Handover witnessed by branch manager');
+    await user.click(within(dialog).getByRole('checkbox'));
+    delivery.overrideDelivery.mockRejectedValue(new ApiRequestError('RAW SQL ALREADY', 'ALREADY_DELIVERED', 409));
+    const loads = delivery.getMonitor.mock.calls.length;
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm handover' }));
+    await confirmPassword(user);
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(/already been completed/i);
+    expect(alert).not.toHaveTextContent(/RAW SQL/);
+    await waitFor(() => expect(delivery.getMonitor.mock.calls.length).toBeGreaterThan(loads));
+
+    let finish!: () => void;
+    delivery.overrideDelivery.mockImplementation(() => new Promise((res) => (finish = () => res({ changed: true, orderId: 'x', orderNumber: 'n', status: 'DELIVERED', previousAssignmentStatus: 'IN_TRANSIT' }))));
+    delivery.overrideDelivery.mockClear();
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm handover' }));
+    await waitFor(() => expect(delivery.overrideDelivery).toHaveBeenCalledTimes(1));
+    await user.dblClick(within(dialog).getByRole('button', { name: /working/i }));
+    expect(delivery.overrideDelivery).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
+  it('Escape closes the override dialog without sending anything', async () => {
+    const user = userEvent.setup();
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [dispatchedOrder()] }));
+    const panel = await openDelivery(user);
+    const opener = await within(panel).findByTestId('override-open');
+    await user.click(opener);
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(delivery.overrideDelivery).not.toHaveBeenCalled();
   });
 });

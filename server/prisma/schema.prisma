@@ -51,6 +51,7 @@ model User {
   branchAssignmentsMade EmployeeBranchAssignment[] @relation("BranchAssignedBy")
   staffInvitations    StaffInvitation[]    @relation("StaffInvitationUser")
   staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreatedBy")
+  deliveryOverrides   DeliveryProof[]      @relation("DeliveryProofOverrideBy")
 
   @@index([email])
   @@index([phone])
@@ -314,6 +315,7 @@ model EmployeeProfile {
   user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
   deliveries          DeliveryAssignment[]
+  deliveryProofsVerified DeliveryProof[]
   hrmRecord           HRMEmployee?
   branchAssignments   EmployeeBranchAssignment[]
 
@@ -673,6 +675,7 @@ model Order {
   payments               Payment[]
   kot                    KitchenOrderTicket?
   delivery               DeliveryAssignment?
+  deliveryProof          DeliveryProof?
   events                 OrderEvent[]
   providerPayments       ProviderPayment[]
   refunds                Refund[]
@@ -1077,6 +1080,36 @@ model DeliveryAssignment {
   driver        EmployeeProfile? @relation(fields: [driverId], references: [id])
 
   @@map("delivery_assignments")
+}
+
+model DeliveryProof {
+  id                          String    @id @default(uuid())
+  orderId                     String    @unique
+  codeHash                    String? // null only for an exceptional override on an order whose code was never issued
+  codeVersion                 Int       @default(1)
+  issuedAt                    DateTime? // when the CURRENT code was issued/regenerated
+  regenerationCount           Int       @default(0) // cumulative over the order lifetime (cap 10), never reset
+  regenerationWindowStartedAt DateTime? // start of the current 1-hour regeneration window (null = none yet)
+  regenerationsInWindow       Int       @default(0) // successful regenerations in the current window (cap 3)
+  failedAttempts              Int       @default(0)
+  lockCycles                  Int       @default(0)
+  lockedUntil                 DateTime?
+  blockedAt                   DateTime?
+  verifiedAt                  DateTime?
+  method                      String? // PIN | ADMIN_OVERRIDE
+  verifiedByEmployeeId        String?
+  overrideByUserId            String?
+  overrideReasonCode          String?
+  overrideNote                String?
+  previousAssignmentStatus    String? // IN_TRANSIT | FAILED at completion
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
+
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  verifiedBy EmployeeProfile? @relation(fields: [verifiedByEmployeeId], references: [id], onDelete: Restrict)
+  overrideBy User?            @relation("DeliveryProofOverrideBy", fields: [overrideByUserId], references: [id], onDelete: Restrict)
+
+  @@map("delivery_proofs")
 }
 
 model POSTransaction {

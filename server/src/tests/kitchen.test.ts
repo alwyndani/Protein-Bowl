@@ -223,7 +223,7 @@ describe('P8 - kitchen routing, Chef queue and Chef transitions', () => {
       expect(TRANSITION_PARTIES['CONFIRMED->CANCELLED']).toEqual(['CUSTOMER_OWNER', RoleEnum.SUPER_ADMIN]);
       // P9A: dispatch is DELIVERY-only; the DELIVERED edge exists in the graph but no party may perform it yet
       expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
-      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual([]);
+      expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']); // P9B: proof-backed internal party only
     });
 
     it('7. the kitchen module never writes Order.status itself and the retired KOT routes are gone', () => {

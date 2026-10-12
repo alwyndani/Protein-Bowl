@@ -41,6 +41,9 @@ process.env.COMMERCE_MAX_LINE_QUANTITY = '20';
 process.env.COMMERCE_MAX_CART_UNITS = '50';
 process.env.COMMERCE_COD_ENABLED = 'false';
 
+// P9B: fixture value for the Delivery Code HMAC secret (>= 32 chars). A TEST FIXTURE, not a deployment secret.
+process.env.DELIVERY_PROOF_SECRET = 'test-fixture-delivery-proof-secret-0123456789';
+
 // Payments (P7B): the tests always run against the in-process MockPaymentProvider with the default (approved) timings.
 process.env.PAYMENT_PROVIDER = 'mock';
 
