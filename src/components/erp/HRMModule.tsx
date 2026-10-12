@@ -466,7 +466,7 @@ export const HRMModule: React.FC<HRMModuleProps> = ({
       if (emp.id === 'EMP-105' || (emp.department === 'Kerala Mess & Hostel Ops' && emp.role.toLowerCase().includes('chef'))) {
         onSwitchRole('chef');
       } else if (emp.id === 'EMP-106' || emp.role.toLowerCase().includes('hostel') || emp.role.toLowerCase().includes('mess')) {
-        onSwitchRole('mess_customer');
+        onSwitchRole('delivery');
       } else if (emp.id === 'EMP-107' || emp.role.toLowerCase().includes('nutrition') || emp.role.toLowerCase().includes('diet')) {
         onSwitchRole('nutritionist');
       } else if (emp.role.toLowerCase().includes('chef') || emp.department === 'Kitchen & Culinary') {

@@ -23,7 +23,9 @@ export type Permission =
   | 'branch:write'
   | 'payments:read'
   | 'refunds:read'
-  | 'refunds:write';
+  | 'refunds:write'
+  | 'mess:read'
+  | 'mess:admin';
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
@@ -35,9 +37,11 @@ export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permis
     // Payments (P7B): READ-ONLY operational visibility; nobody can mark an order paid through the API
     'payments:read',
     // Refunds / financial cancellation (P7C): SUPER_ADMIN only for mutation; MD read-only
-    'refunds:read', 'refunds:write'
+    'refunds:read', 'refunds:write',
+    // Kerala Mess (P10A): SUPER_ADMIN administers service points, plans, account approvals and exceptional cancellation; MD reads only
+    'mess:read', 'mess:admin'
   ],
-  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read'],
+  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read', 'mess:read'],
   [RoleEnum.CHEF]: ['kds:read', 'kds:write'],
   [RoleEnum.PROCUREMENT]: ['procurement:read', 'procurement:write'],
   [RoleEnum.POS]: ['pos:read', 'pos:write'],

@@ -474,7 +474,7 @@ export const STAFF_USER_ACCOUNTS: StaffUserAccount[] = [
     name: 'Ananthan V. Menon',
     email: 'ananthan.mess@proteinbowl.in',
     phone: '+91 98950 44332',
-    role: 'mess_customer',
+    role: 'delivery',
     designation: 'Kerala Mess Logistics & Hostel Distribution Manager',
     assignedBranchId: 'all',
     branchName: 'Student Hostels & PG Logistics Terminal',

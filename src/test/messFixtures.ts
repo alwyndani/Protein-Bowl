@@ -1,0 +1,129 @@
+import type {
+  MessAccount,
+  MessAdminAccount,
+  MessAdminPlan,
+  MessAdminServicePoint,
+  MessAdminSubscription,
+  MessPublicPlan,
+  MessServicePointOption,
+  MessSubscription
+} from '../services/messTypes';
+
+export const SP_A: MessServicePointOption = { id: 'a1111111-1111-4111-8111-111111111111', code: 'CUSAT-LH-B', name: 'CUSAT Ladies Hostel Block B', gateLabel: 'Main gate', city: 'Kochi' };
+export const SP_B: MessServicePointOption = { id: 'b2222222-2222-4222-8222-222222222222', code: 'NIT-H1', name: 'NIT Hostel 1', gateLabel: null, city: 'Kozhikode' };
+
+export function account(over: Partial<MessAccount> = {}): MessAccount {
+  return {
+    id: 'acc-1',
+    approvalStatus: 'APPROVED',
+    rejectionReasonCode: null,
+    roomNumber: '204',
+    studentIdCard: null,
+    hostelName: SP_A.name,
+    servicePoint: { ...SP_A, status: 'ACTIVE' },
+    reviewedAt: '2026-10-12T08:00:00.000Z',
+    createdAt: '2026-10-12T07:00:00.000Z',
+    updatedAt: '2026-10-12T08:00:00.000Z',
+    ...over
+  };
+}
+
+export function publicPlan(over: Partial<MessPublicPlan> = {}): MessPublicPlan {
+  return {
+    id: 'plan-1',
+    code: 'MONTHLY-LB',
+    name: 'Monthly Lunch + Breakfast',
+    description: 'Thirty days of home-style meals',
+    durationDays: 30,
+    mealsPerDay: 2,
+    mealSlots: ['BREAKFAST', 'LUNCH'],
+    mealsIncluded: 60,
+    minStartLeadDays: 1,
+    validFrom: null,
+    validUntil: null,
+    // deliberately odd numbers: the screen must render what the SERVER computed, never recompute
+    price: { subtotal: 333.33, taxRate: 0.05, taxAmount: 16.67, total: 350, currency: 'INR' },
+    ...over
+  };
+}
+
+export function subscription(over: Partial<MessSubscription> = {}): MessSubscription {
+  return {
+    id: 'sub-1',
+    status: 'PENDING_PAYMENT',
+    plan: { code: 'MONTHLY-LB', name: 'Monthly Lunch + Breakfast', durationDays: 30, mealsPerDay: 2, mealSlots: ['BREAKFAST', 'LUNCH'] },
+    startDate: '2026-10-20',
+    endDate: '2026-11-18',
+    mealsIncluded: 60,
+    servicePoint: { id: SP_A.id, name: SP_A.name, gateLabel: 'Main gate', city: 'Kochi' },
+    price: { subtotal: 333.33, taxRate: 0.05, taxAmount: 16.67, total: 350, currency: 'INR' },
+    purchaseOrder: { id: 'order-mess-1', orderNumber: 'PB-261012-MESS01', paymentStatus: 'PENDING' },
+    payment: { state: 'NOT_STARTED', canStartPayment: true },
+    refund: { state: 'NO_REFUND' },
+    cancellation: { allowed: true },
+    activatedAt: null,
+    cancelledAt: null,
+    createdAt: '2026-10-12T09:00:00.000Z',
+    ...over
+  };
+}
+
+export const adminAccount = (over: Partial<MessAdminAccount> = {}): MessAdminAccount => ({
+  id: 'acc-9',
+  approvalStatus: 'PENDING',
+  rejectionReasonCode: null,
+  customerName: 'Sneha Joseph',
+  phone: '+91 98950 44556',
+  email: 'sneha@example.com',
+  studentIdCard: 'STU-2026-88',
+  roomNumber: '304',
+  hostelName: SP_A.name,
+  servicePoint: { id: SP_A.id, code: SP_A.code, name: SP_A.name, status: 'ACTIVE' },
+  reviewedAt: null,
+  createdAt: '2026-10-12T07:00:00.000Z',
+  updatedAt: '2026-10-12T07:00:00.000Z',
+  ...over
+});
+
+export const adminServicePoint = (over: Partial<MessAdminServicePoint> = {}): MessAdminServicePoint => ({
+  id: SP_A.id,
+  code: SP_A.code,
+  name: SP_A.name,
+  gateLabel: 'Main gate',
+  addressLine: 'CUSAT Campus',
+  city: 'Kochi',
+  postalCode: '682022',
+  status: 'ACTIVE',
+  version: 3,
+  branch: { id: '11111111-1111-4111-8111-111111111111', code: 'kochi', name: 'Kochi Central' },
+  ...over
+});
+
+export const adminPlan = (over: Partial<MessAdminPlan> = {}): MessAdminPlan => ({
+  id: 'plan-1',
+  code: 'MONTHLY-LB',
+  name: 'Monthly Lunch + Breakfast',
+  description: null,
+  status: 'DRAFT',
+  version: 2,
+  durationDays: 30,
+  mealsPerDay: 2,
+  mealSlots: ['BREAKFAST', 'LUNCH'],
+  basePrice: 1000,
+  taxRate: 0.05,
+  pauseCutoffHours: 12,
+  maxPauses: 4,
+  minStartLeadDays: 1,
+  validFrom: null,
+  validUntil: null,
+  branch: null,
+  ...over
+});
+
+export const adminSubscription = (over: Partial<MessAdminSubscription> = {}): MessAdminSubscription => ({
+  ...subscription(),
+  customerName: 'Sneha Joseph',
+  roomNumber: '304',
+  branch: { id: '11111111-1111-4111-8111-111111111111', code: 'kochi', name: 'Kochi Central' },
+  ...over
+});

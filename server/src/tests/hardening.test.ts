@@ -173,9 +173,12 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       for (const role of STAFF_ROLES) {
         const key = role.toLowerCase();
         const account = await request(app).get('/api/v1/mess/account').set(auth(key));
-        const register = await request(app).post('/api/v1/mess/register').set(auth(key)).send({});
+        const save = await request(app).put('/api/v1/mess/account').set(auth(key)).send({});
+        const buy = await request(app).post('/api/v1/mess/subscriptions').set(auth(key)).send({});
+        expect([account.status, save.status, buy.status], role).toEqual([403, 403, 403]);
+        // P10A: the legacy mutation endpoints are retired for EVERYONE (410, nothing changes)
         const pause = await request(app).post('/api/v1/mess/pause-meal').set(auth(key)).send({});
-        expect([account.status, register.status, pause.status], role).toEqual([403, 403, 403]);
+        expect(pause.status, role).toBe(410);
       }
     });
 
@@ -184,9 +187,10 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       expect(res.status).toBe(200);
     });
 
-    it('legacy MESS_CUSTOMER can still use customer Mess endpoints (backward compatibility)', async () => {
+    it('legacy MESS_CUSTOMER is NOT accepted by the new Mess architecture (specific 403, backend-only compatibility)', async () => {
       const res = await request(app).get('/api/v1/mess/account').set(auth('messlegacy'));
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('MESS_CUSTOMER_LEGACY_ROLE');
     });
 
     it('mess plans stay public', async () => {
@@ -194,18 +198,12 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       expect(res.status).toBe(200);
     });
 
-    it('POS/CHEF/MD/SUPER_ADMIN keep gate-pass verification access; others do not', async () => {
-      for (const role of [RoleEnum.POS, RoleEnum.CHEF, RoleEnum.MD, RoleEnum.SUPER_ADMIN]) {
-        const res = await request(app)
-          .post('/api/v1/mess/verify-gatepass')
-          .set(auth(role.toLowerCase()))
-          .send({ code: 'NO-SUCH-CODE' });
-        // Authorized: reaches the service, which rejects the unknown code (not 401/403).
-        expect([401, 403], role).not.toContain(res.status);
+    it('the legacy gate-pass endpoint is retired for every role (410, no mutation, MD included)', async () => {
+      for (const role of [RoleEnum.POS, RoleEnum.CHEF, RoleEnum.MD, RoleEnum.SUPER_ADMIN, RoleEnum.CUSTOMER, RoleEnum.NUTRITIONIST]) {
+        const res = await request(app).post('/api/v1/mess/verify-gatepass').set(auth(role.toLowerCase())).send({ code: 'NO-SUCH-CODE' });
+        expect(res.status, role).toBe(410);
+        expect(res.body.error).toBe('MESS_ENDPOINT_RETIRED');
       }
-      const customer = await request(app).post('/api/v1/mess/verify-gatepass').set(auth('customer')).send({ code: 'X' });
-      const nutritionist = await request(app).post('/api/v1/mess/verify-gatepass').set(auth('nutritionist')).send({ code: 'X' });
-      expect([customer.status, nutritionist.status]).toEqual([403, 403]);
     });
 
     it('missing customer profile returns a valid HTTP 404 (not the invalid 4404)', async () => {

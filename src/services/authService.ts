@@ -6,7 +6,7 @@ export interface RegisterParams {
   fullName: string;
   phone?: string;
   referredByCode?: string;
-  requestedRole?: 'customer' | 'mess_customer';
+  requestedRole?: 'customer';
 }
 
 export interface LoginParams {

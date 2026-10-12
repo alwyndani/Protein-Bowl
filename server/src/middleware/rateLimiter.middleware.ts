@@ -48,6 +48,10 @@ export const deliveryCodeIssueRateLimiter = createRateLimiter('DELIVERY_CODE_ISS
 export const deliveryCodeRegenerateRateLimiter = createRateLimiter('DELIVERY_CODE_REGEN', env.RL_DELIVERY_CODE_REGEN_MAX, env.RL_DELIVERY_CODE_REGEN_WINDOW_MS, undefined, byUserAndOrder);
 export const deliveryVerifyRateLimiter = createRateLimiter('DELIVERY_VERIFY', env.RL_DELIVERY_VERIFY_MAX, env.RL_DELIVERY_VERIFY_WINDOW_MS, undefined, byUser);
 export const deliveryOverrideRateLimiter = createRateLimiter('DELIVERY_OVERRIDE', env.RL_DELIVERY_OVERRIDE_MAX, env.RL_DELIVERY_OVERRIDE_WINDOW_MS, undefined, byUser);
+export const messReadRateLimiter = createRateLimiter('MESS_READ', env.RL_MESS_READ_MAX, env.RL_MESS_READ_WINDOW_MS, undefined, byUser);
+export const messWriteRateLimiter = createRateLimiter('MESS_WRITE', env.RL_MESS_WRITE_MAX, env.RL_MESS_WRITE_WINDOW_MS, undefined, byUser);
+export const messPurchaseRateLimiter = createRateLimiter('MESS_PURCHASE', env.RL_MESS_PURCHASE_MAX, env.RL_MESS_PURCHASE_WINDOW_MS, undefined, byUser);
+export const messAdminRateLimiter = createRateLimiter('MESS_ADMIN', env.RL_MESS_ADMIN_MAX, env.RL_MESS_ADMIN_WINDOW_MS, undefined, byUser);
 export const deliveryResolveRateLimiter = createRateLimiter('DELIVERY_RESOLVE', env.RL_DELIVERY_RESOLVE_MAX, env.RL_DELIVERY_RESOLVE_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);

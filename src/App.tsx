@@ -35,7 +35,6 @@ import {
   INITIAL_VIDEO_SESSIONS 
 } from './data/mockFitnessData';
 import { INITIAL_DIRECT_ORDERS } from './data/mockDirectOrdersData';
-import { INITIAL_MESS_ACCOUNTS, INITIAL_MESS_DAILY_ORDERS } from './data/mockKeralaMessData';
 import { ALL_RECIPES } from './data/recipeDatabase';
 
 // Shared Layout Components
@@ -57,7 +56,7 @@ import { useOrderDeepLink } from './hooks/useOrderDeepLink';
 import { DirectOrderTrackingModal } from './components/customer/DirectOrderTrackingModal';
 
 // Kerala Mess & Swiggy/Zomato Aggregator Portals
-import { MessCustomerPortal } from './components/mess/MessCustomerPortal';
+import { KeralaMessSection } from './components/mess/KeralaMessSection';
 import { SwiggyZomatoAggregatorPortal } from './components/mess/SwiggyZomatoAggregatorPortal';
 
 // ERP Staff Dashboards
@@ -94,37 +93,6 @@ export function App() {
   const [trackingLookupOrderNumber, setTrackingLookupOrderNumber] = useState<string>('');
   const [guestOrders, setGuestOrders] = useState<DirectGuestOrder[]>(INITIAL_DIRECT_ORDERS);
   const [isSRSModalOpen, setIsSRSModalOpen] = useState<boolean>(false);
-
-  // Kerala Mess & Student Hostel State
-  const [messAccounts, setMessAccounts] = useState<MessCustomerAccount[]>(INITIAL_MESS_ACCOUNTS);
-  const [activeMessAccountId, setActiveMessAccountId] = useState<string>(INITIAL_MESS_ACCOUNTS[0]?.id || 'mess-cust-1');
-  const [messOrders, setMessOrders] = useState<MessDailyOrder[]>(INITIAL_MESS_DAILY_ORDERS);
-
-  const activeMessAccount = messAccounts.find(a => a.id === activeMessAccountId) || messAccounts[0];
-
-  const handleUpdateMessAccount = (updatedAcc: MessCustomerAccount) => {
-    setMessAccounts(prev => prev.map(a => a.id === updatedAcc.id ? updatedAcc : a));
-  };
-
-  const handlePlaceMessOrder = (newOrder: MessDailyOrder) => {
-    setMessOrders(prev => [newOrder, ...prev]);
-  };
-
-  const handlePauseMeal = (orderId: string, mealSlot: MessMealSlot, date: string) => {
-    setMessOrders(prev => prev.map(o => {
-      if (o.id === orderId) {
-        return {
-          ...o,
-          orderStatus: 'paused_refunded',
-          trackingSteps: [
-            ...o.trackingSteps,
-            { stage: 'Meal Paused / Home Trip Refunded', time: 'Just now', description: `Refund of ₹50 credited to student wallet for ${date} (${mealSlot}).`, completed: true }
-          ]
-        };
-      }
-      return o;
-    }));
-  };
 
   // Customer Profile & Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
@@ -252,8 +220,10 @@ export function App() {
   };
 
   const handleOpenKeralaMessPortal = () => {
+    // P10A: Kerala Mess lives INSIDE the customer portal (one CUSTOMER identity); there is no separate workspace role.
     requireCustomerAuth(() => {
-      setCurrentRole('mess_customer');
+      setCurrentRole('customer');
+      setActiveTab('kerala_mess');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     });
   };
@@ -261,18 +231,14 @@ export function App() {
   // Guard private tabs and customer roles from unauthenticated direct access
   useEffect(() => {
     if (!isLoggedIn && !auth.isAuthenticated) {
-      if (activeTab === 'dashboard' || activeTab === 'health_profile' || activeTab === 'plan_review' || activeTab === 'plan_builder') {
-        setActiveTab('home');
-      }
-      if (currentRole === 'mess_customer') {
-        setCurrentRole('customer');
+      if (activeTab === 'dashboard' || activeTab === 'health_profile' || activeTab === 'plan_review' || activeTab === 'plan_builder' || activeTab === 'kerala_mess') {
         setActiveTab('home');
       }
     } else if (isLoggedIn || auth.isAuthenticated) {
       // Restrict authenticated customers to valid customer portals only
       const userRoles = auth.user?.roles || ['CUSTOMER'];
       const hasStaffRole = userRoles.some(r => r !== 'CUSTOMER' && r !== 'MESS_CUSTOMER');
-      if (!hasStaffRole && currentRole !== 'customer' && currentRole !== 'mess_customer') {
+      if (!hasStaffRole && currentRole !== 'customer') {
         setCurrentRole('customer');
       }
     }
@@ -503,6 +469,8 @@ export function App() {
               />
             )}
 
+            {activeTab === 'kerala_mess' && <KeralaMessSection onSessionExpired={handleSessionExpired} />}
+
             {activeTab === 'menu' && (
               <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 text-white">
                 <div className="text-center max-w-2xl mx-auto space-y-2">
@@ -723,29 +691,12 @@ export function App() {
           </div>
         )}
 
-        {/* KERALA MESS HOSTEL & STUDENT CUSTOMER PORTAL */}
-        {currentRole === 'mess_customer' && (
-          <MessCustomerPortal
-            accounts={messAccounts}
-            activeAccount={activeMessAccount}
-            onUpdateAccount={handleUpdateMessAccount}
-            orders={messOrders}
-            onPlaceMessOrder={handlePlaceMessOrder}
-            onPauseMeal={handlePauseMeal}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-            onSwitchToChef={() => setCurrentRole('chef')}
-            onSwitchToAggregator={() => setCurrentRole('swiggy_zomato')}
-          />
-        )}
-
         {/* SWIGGY & ZOMATO AGGREGATOR BUFFER MANAGER */}
         {currentRole === 'swiggy_zomato' && (
           <SwiggyZomatoAggregatorPortal
             selectedBranchId={currentBranchId}
             onSelectBranch={(b) => setCurrentBranchId(b)}
             onSwitchToChef={() => setCurrentRole('chef')}
-            onSwitchToMessCustomer={() => setCurrentRole('mess_customer')}
           />
         )}
 
@@ -766,7 +717,7 @@ export function App() {
 
       {/* Universal Footer */}
       <BrandFooter
-        isCustomerRole={currentRole === 'customer' || currentRole === 'mess_customer'}
+        isCustomerRole={currentRole === 'customer'}
         onOpenAuthModal={() => {
           setAuthModalInitialMode('signin');
           setAuthModalOpen(true);

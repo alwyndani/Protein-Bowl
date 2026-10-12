@@ -314,7 +314,7 @@ describe('Invite staff', () => {
     expect(screen.getByLabelText('Current password')).toHaveValue('');
     expect(svc.createStaff).not.toHaveBeenCalled();
     expect(h.auth.logout).not.toHaveBeenCalled();
-  });
+  }, 15000); // step-up dialog flow: >5 s under full-suite parallel load (default 5 s leaves no margin)
 
   it('cancelling the step-up dialog performs no action and shows no error', async () => {
     const user = userEvent.setup();

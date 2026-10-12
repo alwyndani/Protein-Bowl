@@ -1699,7 +1699,8 @@ describe('P7C — cancellation, full refunds, refund webhooks and reconciliation
       const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
       const files = walk(root);
       const passingIntent = files.filter((f) => /refundIntentId\s*:/.test(strip(readFileSync(f, 'utf8'))) && !f.endsWith('orderTransition.service.ts')).map((f) => f.split(/[\\/]/).pop());
-      expect(passingIntent).toEqual(['cancellation.service.ts']);
+      // P10A: the Mess late-payment path (messActivation.service.ts) is the only other, deliberately narrow, caller: it creates the intent itself in the same transaction
+      expect([...passingIntent].sort()).toEqual(['cancellation.service.ts', 'messActivation.service.ts']);
       const refundedWriters = files.filter((f) => /paymentStatus\s*:\s*'REFUNDED'/.test(strip(readFileSync(f, 'utf8')))).map((f) => f.split(/[\\/]/).pop());
       expect(refundedWriters).toEqual(['refundSettlement.service.ts']);
       for (const f of files.filter((x) => x.includes(`${join('modules', 'refund')}`))) {

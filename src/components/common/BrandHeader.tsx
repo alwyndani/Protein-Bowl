@@ -73,11 +73,11 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
-  const isCustomerRole = currentRole === 'customer' || currentRole === 'mess_customer';
+  const isCustomerRole = currentRole === 'customer';
+  const messActive = currentRole === 'customer' && activeCustomerTab === 'kerala_mess';
 
   const roleLabels: Record<UserRole, { title: string; icon: React.ReactNode; color: string }> = {
     customer: { title: 'Customer Portal', icon: <User className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-800' },
-    mess_customer: { title: '🍛 Kerala Mess', icon: <Utensils className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
     swiggy_zomato: { title: '⚡ Swiggy/Zomato', icon: <Layers className="w-4 h-4" />, color: 'bg-orange-100 text-orange-800' },
     super_admin: { title: 'Super Admin', icon: <ShieldAlert className="w-4 h-4" />, color: 'bg-rose-100 text-rose-800' },
     md: { title: 'MD Dashboard', icon: <Building2 className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
@@ -108,7 +108,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
 
             {/* Quick Role Selector Buttons */}
             <div className="flex items-center gap-1 overflow-x-auto py-0.5 scrollbar-none">
-              {(['customer', 'mess_customer', 'swiggy_zomato', 'chef', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => {
+              {(['customer', 'swiggy_zomato', 'chef', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => {
                 const active = currentRole === r;
                 return (
                   <button
@@ -145,7 +145,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
                 onSelectCustomerTab(currentUser ? 'dashboard' : 'home');
               }}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                currentRole === 'customer'
+                currentRole === 'customer' && !messActive
                   ? 'bg-emerald-500 text-stone-950 font-black shadow-md'
                   : 'text-stone-300 hover:text-white hover:bg-stone-800'
               }`}
@@ -155,15 +155,9 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
             </button>
 
             <button
-              onClick={() => {
-                if (onOpenKeralaMessPortal) {
-                  onOpenKeralaMessPortal();
-                } else {
-                  onRoleChange('mess_customer');
-                }
-              }}
+              onClick={() => onOpenKeralaMessPortal?.()}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                currentRole === 'mess_customer'
+                messActive
                   ? 'bg-amber-500 text-stone-950 font-black shadow-md'
                   : 'text-stone-300 hover:text-white hover:bg-stone-800'
               }`}
@@ -369,15 +363,11 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
 
                 <button
                   onClick={() => {
-                    if (onOpenKeralaMessPortal) {
-                      onOpenKeralaMessPortal();
-                    } else {
-                      onRoleChange('mess_customer');
-                    }
+                    onOpenKeralaMessPortal?.();
                     setMobileMenuOpen(false);
                   }}
                   className={`p-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 border ${
-                    currentRole === 'mess_customer'
+                    messActive
                       ? 'bg-amber-500 text-stone-950 border-amber-500 font-black'
                       : 'bg-stone-950 text-stone-300 border-stone-800'
                   }`}
@@ -490,7 +480,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
               <div>
                 <div className="text-[10px] font-black uppercase tracking-wider text-stone-400 mb-2 pt-2">Switch ERP Perspective</div>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['customer', 'mess_customer', 'chef', 'swiggy_zomato', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => (
+                  {(['customer', 'chef', 'swiggy_zomato', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => (
                     <button
                       key={r}
                       onClick={() => {

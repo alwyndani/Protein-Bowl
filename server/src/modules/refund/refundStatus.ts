@@ -39,6 +39,8 @@ export const REFUND_TRIGGER = {
   ADMIN_CANCELLATION: 'ADMIN_CANCELLATION',
   DUPLICATE_CAPTURE: 'DUPLICATE_CAPTURE',
   AFTER_CANCELLATION: 'AFTER_CANCELLATION',
+  /** P10A: a verified Kerala Mess payment arrived after the subscription's selected start date (never activated; refunded in full by the system). */
+  MESS_START_DATE_PASSED: 'MESS_START_DATE_PASSED',
   EXTERNAL: 'EXTERNAL'
 } as const;
 export type RefundTrigger = (typeof REFUND_TRIGGER)[keyof typeof REFUND_TRIGGER];

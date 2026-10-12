@@ -8,7 +8,8 @@ export function mapBackendRoleToUserRole(backendRoles?: string[]): UserRole {
 
   const roleMap: Record<string, UserRole> = {
     CUSTOMER: 'customer',
-    MESS_CUSTOMER: 'mess_customer',
+    // LEGACY: a MESS_CUSTOMER session is presented as a normal customer (Kerala Mess lives inside the Customer Portal; there is no separate workspace)
+    MESS_CUSTOMER: 'customer',
     MD: 'md',
     CHEF: 'chef',
     NUTRITIONIST: 'nutritionist',

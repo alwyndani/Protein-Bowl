@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChefHat, ClipboardList, Lock, MapPin, ShieldCheck, Truck, Users } from 'lucide-react';
+import { ChefHat, ClipboardList, Lock, MapPin, ShieldCheck, Truck, UtensilsCrossed, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { AdminReferenceProvider } from './AdminReference';
 import { StepUpProvider } from './StepUp';
@@ -10,15 +10,17 @@ import { AuditLog } from './AuditLog';
 import { PermissionsView } from './PermissionsView';
 import { KitchenRouting } from './KitchenRouting';
 import { DeliveryMonitor } from './DeliveryMonitor';
+import { MessAdmin } from './MessAdmin';
 import { Spinner } from './adminUi';
 
-type Section = 'staff' | 'branches' | 'kitchen' | 'delivery' | 'audit' | 'permissions';
+type Section = 'staff' | 'branches' | 'kitchen' | 'delivery' | 'mess' | 'audit' | 'permissions';
 
 const NAV: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
   { id: 'staff', label: 'Staff', icon: <Users className="w-4 h-4" aria-hidden="true" /> },
   { id: 'branches', label: 'Branches', icon: <MapPin className="w-4 h-4" aria-hidden="true" /> },
   { id: 'kitchen', label: 'Kitchen routing', icon: <ChefHat className="w-4 h-4" aria-hidden="true" /> },
   { id: 'delivery', label: 'Delivery', icon: <Truck className="w-4 h-4" aria-hidden="true" /> },
+  { id: 'mess', label: 'Kerala Mess', icon: <UtensilsCrossed className="w-4 h-4" aria-hidden="true" /> },
   { id: 'audit', label: 'Audit log', icon: <ClipboardList className="w-4 h-4" aria-hidden="true" /> },
   { id: 'permissions', label: 'Roles & permissions', icon: <ShieldCheck className="w-4 h-4" aria-hidden="true" /> }
 ];
@@ -92,6 +94,7 @@ const AdminShell: React.FC = () => {
           {section === 'branches' && <BranchManagement />}
           {section === 'kitchen' && <KitchenRouting />}
           {section === 'delivery' && <DeliveryMonitor />}
+          {section === 'mess' && <MessAdmin />}
           {section === 'audit' && <AuditLog />}
           {section === 'permissions' && <PermissionsView />}
         </main>

@@ -3,6 +3,8 @@ import { prisma } from '../../config/database.js';
 import { getPaymentConfig } from '../../config/paymentConfig.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
+import { MESS_ORDER_TYPE, PAYABLE_ORDER_TYPES } from '../order/orderStatus.js';
+import { businessDate, dateToString } from '../mess/messPolicy.js';
 import { toMinorUnits } from './money.js';
 import { PaymentSettlementService, SettleOutcome } from './paymentSettlement.service.js';
 import { adoptProviderOrder, lookupProviderOrderByReceipt, markSessionUnknown } from './paymentRecovery.ops.js';
@@ -58,8 +60,13 @@ export class PaymentSessionService {
         });
         if (!order) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
         if (order.paymentStatus === 'PAID' || order.paidByProviderPaymentId) throw new AppError('This order has already been paid', 409, 'PAYMENT_ALREADY_COMPLETED');
-        if (order.orderType !== 'DIRECT' || order.paymentMethod !== 'ONLINE' || order.status !== 'PENDING') {
+        if (!(PAYABLE_ORDER_TYPES as readonly string[]).includes(order.orderType) || order.paymentMethod !== 'ONLINE' || order.status !== 'PENDING') {
           throw new AppError('This order cannot be paid online', 409, 'ORDER_NOT_PAYABLE');
+        }
+        if (order.orderType === MESS_ORDER_TYPE) {
+          // P10A: money is never taken for a Kerala Mess term whose selected start date has already passed (it could not activate).
+          const sub = await tx.messSubscription.findUnique({ where: { purchaseOrderId: order.id }, select: { startDate: true } });
+          if (!sub || dateToString(sub.startDate) < businessDate()) throw new AppError('The start date of this subscription has passed, so it can no longer be paid. Please cancel it and buy again.', 409, 'MESS_START_DATE_PASSED');
         }
         const amountMinor = toMinorUnits(order.netAmount);
         if (amountMinor < provider.minAmountMinor) {

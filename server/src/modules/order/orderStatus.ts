@@ -59,6 +59,16 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'DISPATCHED->CANCELLED': [RoleEnum.SUPER_ADMIN]
 });
 
+/** P10A: order types that ride the shared payment/refund stack. DIRECT is the food order; MESS_SUBSCRIPTION is a Kerala Mess purchase. */
+export const PAYABLE_ORDER_TYPES = ['DIRECT', 'MESS_SUBSCRIPTION'] as const;
+export const MESS_ORDER_TYPE = 'MESS_SUBSCRIPTION';
+
+/**
+ * P10A: a Mess purchase order is a PAYMENT record, not a kitchen/delivery order. It may only be confirmed by verified payment or cancelled
+ * (never ACCEPTED / PREPARING / READY / DISPATCHED / DELIVERED: individual meals are P10B and are not orders).
+ */
+export const MESS_ORDER_EDGES: readonly string[] = ['PENDING->CONFIRMED', 'PENDING->CANCELLED', 'CONFIRMED->CANCELLED'];
+
 export function transitionKey(from: OrderStatus, to: OrderStatus): string {
   return `${from}->${to}`;
 }

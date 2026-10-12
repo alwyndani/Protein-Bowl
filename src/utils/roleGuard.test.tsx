@@ -14,7 +14,6 @@ describe('isUiRoleAllowed (production presentation guard)', () => {
 
   it('production: an anonymous visitor can only present customer views', () => {
     expect(isUiRoleAllowed('customer', undefined, false)).toBe(true);
-    expect(isUiRoleAllowed('mess_customer', [], false)).toBe(true);
     for (const role of STAFF_UI_ROLES) expect(isUiRoleAllowed(role, undefined, false)).toBe(false);
   });
 

@@ -3,11 +3,19 @@ import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { OrderTransitionService, TransitionActor } from '../order/orderTransition.service.js';
+import { MESS_ORDER_TYPE } from '../order/orderStatus.js';
 import { Tx, lockOrder, lockProviderPaymentById, lockSession } from '../payment/paymentOps.js';
 import { ADMIN_CANCELLABLE_STATES, CUSTOMER_CANCELLABLE_STATES, UNDELIVERABLE_REFUND_REASON_CODE } from './cancellationPolicy.js';
 import { RefundService } from './refund.service.js';
 import { LIVE_REFUND_STATUSES, REFUND_TRIGGER } from './refundStatus.js';
 import { RefundViewService } from './refundView.service.js';
+
+export interface MessCancelHooks {
+  /** Called under the Order lock and the payment locks; takes the subscription lock and decides eligibility (throws to refuse). */
+  verify: (tx: Tx) => Promise<'OK' | 'ALREADY_CANCELLED'>;
+  /** Called after the order transition, in the same transaction. */
+  finish: (tx: Tx) => Promise<void>;
+}
 
 export interface CancelResult {
   /** False when the order was already cancelled (idempotent repeat: no second cancellation, no second refund). */
@@ -23,6 +31,8 @@ interface CancelCommand {
   byCustomer: boolean;
   reasonCode: string;
   note: string | null;
+  /** P10A: set only by cancelMessPurchase. Replaces the DIRECT-only rule with the Kerala Mess purchase rules (verified and finished by MessCancellationService). */
+  mess?: MessCancelHooks;
   /** P9C: set only by cancelUndeliverableInTx. Replaces the state allow-list with DISPATCHED (verified again by OrderTransitionService). */
   undeliverable?: { attemptNumber: number };
   context?: AuditContext;
@@ -64,6 +74,15 @@ export class CancellationService {
       context
     });
     return await RefundViewService.cancelResponse(result);
+  }
+
+  // ================================================================================================ P10A Kerala Mess purchase (called ONLY by MessCancellationService)
+  public static async cancelMessPurchase(
+    orderId: string,
+    p: { actor: Extract<TransitionActor, { kind: 'USER' }>; byCustomer: boolean; reasonCode: string; note: string | null; context?: AuditContext },
+    hooks: MessCancelHooks
+  ): Promise<CancelResult> {
+    return await this.cancel({ orderId, actor: p.actor, byCustomer: p.byCustomer, reasonCode: p.reasonCode, note: p.note, context: p.context, mess: hooks });
   }
 
   // ================================================================================================ P9C undeliverable (called ONLY by DeliveryResolutionService)
@@ -109,11 +128,14 @@ export class CancellationService {
 
     // Idempotent repeat: an already cancelled order is returned as is (never a second cancellation or refund).
     if (order.status === 'CANCELLED') {
+      if (cmd.mess) await cmd.mess.verify(tx); // takes the subscription lock only; the order is already cancelled
       const existing = await tx.refund.findFirst({ where: { orderId: order.id, trigger: { in: [REFUND_TRIGGER.CUSTOMER_CANCELLATION, REFUND_TRIGGER.ADMIN_CANCELLATION] }, status: { in: [...LIVE_REFUND_STATUSES] } }, select: { id: true } });
       return { changed: false, orderId: order.id, orderNumber: order.orderNumber, refundId: existing?.id ?? null };
     }
 
-    if (order.orderType !== 'DIRECT') throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
+    // DIRECT orders cancel through the food-order routes; a Mess purchase ONLY through the Mess service (which supplies its hooks). Never mixed.
+    if (cmd.mess ? order.orderType !== MESS_ORDER_TYPE : order.orderType !== 'DIRECT') throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
+    if (cmd.mess && cmd.undeliverable) throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
 
     const allowedStates: readonly string[] = cmd.undeliverable ? ['DISPATCHED'] : cmd.byCustomer ? CUSTOMER_CANCELLABLE_STATES : ADMIN_CANCELLABLE_STATES;
     if (!allowedStates.includes(order.status)) {
@@ -136,6 +158,7 @@ export class CancellationService {
       await lockProviderPaymentById(tx, order.paidByProviderPaymentId);
       const ledger = await tx.providerPayment.findUnique({ where: { id: order.paidByProviderPaymentId } });
       if (!ledger || ledger.reconciliationStatus !== 'APPLIED') throw new AppError('The order\'s effective payment is not in a refundable state', 409, 'CANCELLATION_NOT_ALLOWED');
+      if (cmd.mess) await cmd.mess.verify(tx);
       const intent = await RefundService.createIntent(tx, {
         order,
         ledgerId: ledger.id,
@@ -152,6 +175,7 @@ export class CancellationService {
       for (const s of open) await lockSession(tx, s.id);
       const closed = await tx.payment.updateMany({ where: { id: { in: open.map((s) => s.id) }, status: 'PENDING' }, data: { status: 'EXPIRED', expiresAt: new Date() } });
       sessionsClosed = closed.count;
+      if (cmd.mess) await cmd.mess.verify(tx);
     } else {
       throw new AppError('This order cannot be cancelled', 409, 'CANCELLATION_NOT_ALLOWED');
     }
@@ -169,6 +193,7 @@ export class CancellationService {
     );
 
     await OrderTransitionService.transition({ orderId: order.id, to: 'CANCELLED', actor: cmd.actor, reason: cmd.reasonCode, refundIntentId: refundId, deliveryUndeliverable: cmd.undeliverable, context: cmd.context }, tx);
+    if (cmd.mess) await cmd.mess.finish(tx);
     return { changed: true, orderId: order.id, orderNumber: order.orderNumber, refundId: refundId ?? null };
   }
 }

@@ -1,4 +1,5 @@
 import { prisma } from '../../config/database.js';
+import { PAYABLE_ORDER_TYPES } from '../order/orderStatus.js';
 import { toMinorUnits } from './money.js';
 import { getPaymentProvider } from './providerRegistry.js';
 
@@ -64,7 +65,7 @@ export function derivePaymentSummary(order: SummaryOrderInput, sessions: Summary
   } catch {
     belowMinimum = true; // an amount that cannot be expressed in whole paise can never be paid online
   }
-  if (order.status !== 'PENDING' || order.orderType !== 'DIRECT' || order.paymentMethod !== 'ONLINE' || belowMinimum) {
+  if (order.status !== 'PENDING' || !(PAYABLE_ORDER_TYPES as readonly string[]).includes(order.orderType) || order.paymentMethod !== 'ONLINE' || belowMinimum) {
     return { state: 'NOT_STARTED', canStartPayment: false };
   }
 

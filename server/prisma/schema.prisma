@@ -53,6 +53,7 @@ model User {
   staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreatedBy")
   deliveryOverrides   DeliveryProof[]      @relation("DeliveryProofOverrideBy")
   deliveryAttemptsResolved DeliveryAttempt[] @relation("DeliveryAttemptResolvedBy")
+  messAccountsReviewed MessAccount[]        @relation("MessAccountReviewedBy")
 
   @@index([email])
   @@index([phone])
@@ -129,6 +130,9 @@ model KitchenBranch {
   shifts              CashDrawerShift[]
   employeeAssignments EmployeeBranchAssignment[]
   deliveryAttempts    DeliveryAttempt[]
+  messServicePoints   MessServicePoint[]
+  messPlans           MessSubscriptionPlan[]
+  messSubscriptions   MessSubscription[]
 
   @@map("kitchen_branches")
 }
@@ -680,6 +684,7 @@ model Order {
   delivery               DeliveryAssignment?
   deliveryProof          DeliveryProof?
   deliveryAttempts       DeliveryAttempt[]
+  messSubscription       MessSubscription?
   events                 OrderEvent[]
   providerPayments       ProviderPayment[]
   refunds                Refund[]
@@ -889,54 +894,122 @@ model Subscription {
   @@map("subscriptions")
 }
 
+/// P10A: the hostel/PG identity of a CUSTOMER (Kerala Mess entitlement = an APPROVED MessAccount). servicePointId is the REQUESTED service
+/// point; SUPER_ADMIN approval confirms it. collegeHostelName is derived from the service point by the server (never trusted from the client).
 model MessAccount {
-  id                 String             @id @default(uuid())
-  customerProfileId  String             @unique
-  studentIdCard      String?
-  collegeHostelName  String
-  roomNumber         String
-  isApproved         Boolean            @default(true)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                  String             @id @default(uuid())
+  customerProfileId   String             @unique
+  studentIdCard       String?
+  collegeHostelName   String
+  roomNumber          String
+  isApproved          Boolean            @default(true) // LEGACY (deprecated, no longer read): approvalStatus is authoritative
+  approvalStatus      String             @default("PENDING") // PENDING | APPROVED | REJECTED
+  servicePointId      String?
+  reviewedByUserId    String?
+  reviewedAt          DateTime?
+  rejectionReasonCode String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
 
-  customerProfile    CustomerProfile    @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
-  subscriptions      MessSubscription[]
+  customerProfile     CustomerProfile    @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  servicePoint        MessServicePoint?  @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+  reviewedBy          User?              @relation("MessAccountReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: Restrict)
+  subscriptions       MessSubscription[]
 
+  @@index([approvalStatus])
+  @@index([servicePointId])
   @@map("mess_accounts")
 }
 
+/// P10A: a hostel / PG / institute delivery point managed ONLY by SUPER_ADMIN. It belongs to ONE branch (which owns kitchen and delivery later).
+model MessServicePoint {
+  id          String             @id @default(uuid())
+  code        String             @unique
+  name        String
+  gateLabel   String?
+  addressLine String
+  city        String
+  postalCode  String
+  branchId    String
+  status      String             @default("ACTIVE") // ACTIVE | INACTIVE
+  version     Int                @default(1)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  branch        KitchenBranch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  accounts      MessAccount[]
+  subscriptions MessSubscription[]
+
+  @@index([branchId, status])
+  @@map("mess_service_points")
+}
+
+/// A SUPER_ADMIN-managed Kerala Mess plan. DRAFT plans may be incomplete; an ACTIVE plan must carry an explicit price, an explicit tax rate and
+/// every policy field (CHECK constraints). `active` and `mealsPerDay` are LEGACY columns kept in sync by the service.
 model MessSubscriptionPlan {
   id                String             @id @default(uuid())
   name              String
   code              String             @unique
+  description       String?
   durationDays      Int
   mealsPerDay       Int
   basePrice         Decimal            @db.Decimal(10, 2)
   active            Boolean            @default(true)
+  status            String             @default("DRAFT") // DRAFT | ACTIVE | ARCHIVED
+  mealSlots         String[]           @default([])      // BREAKFAST | LUNCH | DINNER
+  taxRate           Decimal?           @db.Decimal(5, 4) // explicit fraction (0.05 = 5 %), set by SUPER_ADMIN; NO default
+  validFrom         DateTime?
+  validUntil        DateTime?
+  branchId          String?            // null = available at every branch
+  pauseCutoffHours  Int?               // P10B policy, snapshotted at purchase
+  maxPauses         Int?               // P10B policy, snapshotted at purchase
+  minStartLeadDays  Int?               // explicit; >= 0
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @default(now()) @updatedAt
 
+  branch            KitchenBranch?     @relation(fields: [branchId], references: [id], onDelete: Restrict)
   subscriptions     MessSubscription[]
 
+  @@index([status])
   @@map("mess_subscription_plans")
 }
 
+/// A purchased Kerala Mess term. One purchase Order (orderType MESS_SUBSCRIPTION) carries pricing, payment and refunds; individual meals are
+/// NOT orders (P10B). Plan values are SNAPSHOTTED here at purchase, so a later plan edit never changes a subscription.
 model MessSubscription {
-  id                 String               @id @default(uuid())
-  messAccountId      String
-  planId             String
-  status             String               @default("ACTIVE") // ACTIVE, PAUSED, CANCELLED, COMPLETED
-  startDate          DateTime             @default(now())
-  endDate            DateTime
-  totalMealsAllowed  Int
-  mealsRemaining     Int
-  totalPausesUsed    Int                  @default(0)
-  createdAt          DateTime             @default(now())
-  updatedAt          DateTime             @updatedAt
+  id                  String               @id @default(uuid())
+  messAccountId       String
+  planId              String
+  status              String               @default("PENDING_PAYMENT") // PENDING_PAYMENT | ACTIVE | COMPLETED | CANCELLED
+  startDate           DateTime             @db.Date
+  endDate             DateTime             @db.Date
+  totalMealsAllowed   Int
+  mealsRemaining      Int
+  totalPausesUsed     Int                  @default(0)
+  purchaseOrderId     String?              @unique
+  servicePointId      String?
+  branchId            String?
+  mealSlots           String[]             @default([])
+  pauseCutoffHours    Int?
+  maxPauses           Int?
+  planSnapshot        Json?
+  activatedAt         DateTime?
+  cancelledAt         DateTime?
+  cancellationReasonCode String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
 
-  messAccount        MessAccount          @relation(fields: [messAccountId], references: [id], onDelete: Cascade)
-  plan               MessSubscriptionPlan @relation(fields: [planId], references: [id])
-  dailyOrders        MessDailyOrder[]
-  pauseRequests      MealPauseRequest[]
+  messAccount         MessAccount          @relation(fields: [messAccountId], references: [id], onDelete: Cascade)
+  plan                MessSubscriptionPlan @relation(fields: [planId], references: [id])
+  purchaseOrder       Order?               @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  servicePoint        MessServicePoint?    @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+  branch              KitchenBranch?       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  dailyOrders         MessDailyOrder[]
+  pauseRequests       MealPauseRequest[]
 
+  @@index([messAccountId, status])
+  @@index([branchId, status])
   @@map("mess_subscriptions")
 }
 

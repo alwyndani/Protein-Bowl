@@ -12,6 +12,7 @@ import checkoutRoutes from './modules/checkout/checkout.routes.js';
 import orderRoutes from './modules/order/order.routes.js';
 import deliveryCodeRoutes from './modules/delivery/deliveryCode.routes.js';
 import messRoutes from './modules/mess/mess.routes.js';
+import messAdminRoutes from './modules/mess/messAdmin.routes.js';
 import dietRoutes from './modules/diet/diet.routes.js';
 import kdsRoutes from './modules/kds/kds.routes.js';
 import kitchenAdminRoutes from './modules/kds/kitchenAdmin.routes.js';
@@ -98,6 +99,7 @@ app.use('/api/v1/admin', paymentAdminRoutes);
 app.use('/api/v1/admin', refundAdminRoutes);
 app.use('/api/v1/admin', kitchenAdminRoutes);
 app.use('/api/v1/admin', deliveryAdminRoutes);
+app.use('/api/v1/admin', messAdminRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/staff', staffRoutes);
 

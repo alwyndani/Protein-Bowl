@@ -8,6 +8,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, 
 import confetti from 'canvas-confetti';
 import { IngredientPriceCalculator } from '../common/IngredientPriceCalculator';
 import { HRMModule } from './HRMModule';
+import { MessAdmin } from '../admin/MessAdmin';
 import { FinancialsModule } from './FinancialsModule';
 import { OmnichannelSalesModule } from './OmnichannelSalesModule';
 import { MultiKitchenOverviewModule } from './MultiKitchenOverviewModule';
@@ -51,7 +52,7 @@ export const MDDashboard: React.FC<MDDashboardProps> = ({
   onAddBranch,
   onOpenSRS
 }) => {
-  const [activeTab, setActiveTab] = useState<'cloud-kitchens' | 'fmcg' | 'pos' | 'omnichannel' | 'analytics' | 'financials' | 'price-calc' | 'hrm' | 'staff' | 'pricing'>('cloud-kitchens');
+  const [activeTab, setActiveTab] = useState<'cloud-kitchens' | 'fmcg' | 'pos' | 'omnichannel' | 'analytics' | 'financials' | 'price-calc' | 'hrm' | 'staff' | 'pricing' | 'kerala-mess'>('cloud-kitchens');
 
 
 
@@ -60,7 +61,7 @@ export const MDDashboard: React.FC<MDDashboardProps> = ({
     { id: '1', name: 'Dr. Priya Nair', role: 'Nutritionist / Dietician', email: 'priya@proteinbowl.in', status: 'Active', sysRole: 'nutritionist' },
     { id: '2', name: 'Chef Suresh Kumar', role: 'Head Kitchen Chef', email: 'suresh@proteinbowl.in', status: 'Active', sysRole: 'chef' },
     { id: '3', name: 'Chef Murugan K.', role: 'Kerala Mess Lead Chef (KDS & Steam Kettles)', email: 'murugan.mess@proteinbowl.in', status: 'Active', sysRole: 'chef' },
-    { id: '4', name: 'Ananthan V. Menon', role: 'Kerala Mess Logistics & Hostel Distribution Lead', email: 'ananthan.mess@proteinbowl.in', status: 'Active', sysRole: 'mess_customer' },
+    { id: '4', name: 'Ananthan V. Menon', role: 'Kerala Mess Logistics & Hostel Distribution Lead', email: 'ananthan.mess@proteinbowl.in', status: 'Active', sysRole: 'delivery' },
     { id: '5', name: 'Lekshmi Devi R.', role: 'Kerala Mess Nutritional Auditor & Recipe Lead', email: 'lekshmi@proteinbowl.in', status: 'Active', sysRole: 'nutritionist' },
     { id: '6', name: 'Rajesh V.', role: 'Procurement Manager', email: 'rajesh@proteinbowl.in', status: 'Active', sysRole: 'procurement' },
     { id: '7', name: 'Kiran K.', role: 'Logistics Supervisor', email: 'kiran@proteinbowl.in', status: 'Active', sysRole: 'delivery' }
@@ -241,6 +242,7 @@ export const MDDashboard: React.FC<MDDashboardProps> = ({
           { id: 'omnichannel', label: '🛵 Omnichannel & Daily Sales (Swiggy, Zomato, Party Orders)' },
           { id: 'analytics', label: 'Executive Analytics' },
           { id: 'financials', label: 'Financial Transactions, P&L & Balance Sheet' },
+          { id: 'kerala-mess', label: '🍛 Kerala Mess (live, read-only)' },
           { id: 'hrm', label: 'Human Resource Management (HRM)' },
           { id: 'price-calc', label: 'Ingredient Price List Entry & Rates (FR-ADM-02b)' },
           { id: 'staff', label: 'User & Role Management' },
@@ -298,6 +300,13 @@ export const MDDashboard: React.FC<MDDashboardProps> = ({
       )}
 
       {/* TAB: Human Resource Management (HRM) */}
+      {/* P10A: REAL backend data, strictly read-only for the MD (no step-up, no write control is rendered) */}
+      {activeTab === 'kerala-mess' && (
+        <div className="bg-stone-950 rounded-3xl p-4 sm:p-6">
+          <MessAdmin readOnly />
+        </div>
+      )}
+
       {activeTab === 'hrm' && (
         <HRMModule 
           onSwitchRole={(role) => {
@@ -443,7 +452,7 @@ export const MDDashboard: React.FC<MDDashboardProps> = ({
                         onClick={() => {
                           const roleMapping: Record<string, string> = {
                             'Kerala Mess Lead Chef (KDS & Steam Kettles)': 'chef',
-                            'Kerala Mess Logistics & Hostel Distribution Lead': 'mess_customer',
+                            'Kerala Mess Logistics & Hostel Distribution Lead': 'delivery',
                             'Kerala Mess Nutritional Auditor & Recipe Lead': 'nutritionist',
                             'Head Kitchen Chef': 'chef',
                             'Nutritionist / Dietician': 'nutritionist',

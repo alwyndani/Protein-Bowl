@@ -36,14 +36,12 @@ interface SwiggyZomatoAggregatorPortalProps {
   selectedBranchId?: KitchenBranchId;
   onSelectBranch?: (branch: KitchenBranchId) => void;
   onSwitchToChef?: () => void;
-  onSwitchToMessCustomer?: () => void;
 }
 
 export const SwiggyZomatoAggregatorPortal: React.FC<SwiggyZomatoAggregatorPortalProps> = ({
   selectedBranchId = 'all',
   onSelectBranch,
   onSwitchToChef,
-  onSwitchToMessCustomer
 }) => {
   const [activeTab, setActiveTab] = useState<'inventory' | 'live_orders' | 'financials'>('inventory');
   const [inventory, setInventory] = useState<AggregatorReservedInventory[]>(INITIAL_AGGREGATOR_INVENTORY);
@@ -142,15 +140,6 @@ export const SwiggyZomatoAggregatorPortal: React.FC<SwiggyZomatoAggregatorPortal
               </button>
             )}
 
-            {onSwitchToMessCustomer && (
-              <button
-                onClick={onSwitchToMessCustomer}
-                className="bg-emerald-500 hover:bg-emerald-400 text-stone-950 px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2"
-              >
-                <Utensils className="w-4 h-4" />
-                <span>Customer Mess Portal</span>
-              </button>
-            )}
           </div>
         </div>
 

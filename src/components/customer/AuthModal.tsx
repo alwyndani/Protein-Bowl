@@ -85,7 +85,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       id: 'EMP-106',
       name: 'Ananthan V. Menon',
       email: 'ananthan.mess@proteinbowl.in',
-      role: 'mess_customer',
+      role: 'delivery',
       department: 'kerala_mess',
       designation: 'Kerala Mess Logistics & Hostel Distribution Manager',
       badge: '📦 Hostel Distribution',
@@ -815,7 +815,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:ring-2 focus:ring-amber-500"
                       >
                         <option value="chef">🍛 Kerala Mess / Central Kitchen KDS (Chef)</option>
-                        <option value="mess_customer">📦 Kerala Mess Logistics & Hostel Distribution</option>
                         <option value="swiggy_zomato">⚡ Swiggy / Zomato Aggregator Manager</option>
                         <option value="md">🏢 Managing Director (MD) Suite & HRM</option>
                         <option value="nutritionist">🩺 Clinical Nutrition & Diet Plans</option>

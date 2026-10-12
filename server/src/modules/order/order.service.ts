@@ -354,7 +354,8 @@ export class OrderService {
     }
 
     const orders = await prisma.order.findMany({
-      where: { customerProfileId: profile.id },
+      // P10A: Kerala Mess purchase orders are shown in the Mess section (their payment record is fetched by id), never in the food-order history
+      where: { customerProfileId: profile.id, orderType: 'DIRECT' },
       include: { items: true },
       orderBy: { createdAt: 'desc' }
     });

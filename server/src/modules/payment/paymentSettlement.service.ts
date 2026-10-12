@@ -2,6 +2,9 @@ import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { OrderTransitionService } from '../order/orderTransition.service.js';
+import { MESS_ORDER_TYPE } from '../order/orderStatus.js';
+import { MessActivationService } from '../mess/messActivation.service.js';
+import { RefundService } from '../refund/refund.service.js';
 import { fromMinorUnits } from './money.js';
 import { Tx, lockOrder, lockProviderPayment, lockSession, paymentAlert } from './paymentOps.js';
 import { DECIDED_RECON, DEFAULT_CURRENCY, FirstSeenVia, FLAGGED_RECON, RECON, SESSION_STATUS, providerStatusMayAdvance } from './paymentStatus.js';
@@ -34,6 +37,8 @@ export interface SettleResult {
   /** Order state AFTER settlement (for the caller's response). */
   orderStatus: string;
   orderPaymentStatus: string;
+  /** P10A: set when a verified Kerala Mess payment arrived after the start date: the order was cancelled and this full refund intent created (submit it after commit). */
+  lateRefundId?: string;
 }
 
 const flaggedOutcome = (o: string): boolean => FLAGGED_RECON.includes(o);
@@ -52,6 +57,10 @@ export class PaymentSettlementService {
 
   /** Call after the surrounding transaction COMMITTED when settle() was given the caller's tx. */
   public static alertIfFlagged(result: SettleResult, input: Pick<SettleInput, 'paymentId'>): void {
+    if (result.lateRefundId) {
+      paymentAlert('payment.mess_late_payment_refund', { orderId: result.orderId, paymentId: input.paymentId, refundId: result.lateRefundId });
+      RefundService.kick(result.lateRefundId); // best effort after the commit; the reconciliation worker guarantees submission
+    }
     if (result.flagged) paymentAlert('payment.flagged', { outcome: result.outcome, orderId: result.orderId, paymentId: input.paymentId, ledgerId: result.ledgerId });
   }
 
@@ -67,7 +76,7 @@ export class PaymentSettlementService {
     const session = await tx.payment.findUnique({ where: { id: input.paymentId } });
     const order = await tx.order.findUnique({
       where: { id: peek.orderId },
-      select: { id: true, orderNumber: true, status: true, paymentStatus: true, netAmount: true, paidByProviderPaymentId: true }
+      select: { id: true, orderNumber: true, orderType: true, status: true, paymentStatus: true, netAmount: true, paidByProviderPaymentId: true }
     });
     if (!session || !order) throw new AppError('Payment session not found', 404, 'PAYMENT_ATTEMPT_NOT_FOUND');
 
@@ -233,6 +242,14 @@ export class PaymentSettlementService {
       // The ONLY confirmation path: through the central transition service, as the trusted payment-verification actor.
       const t = await OrderTransitionService.transition({ orderId: order.id, to: 'CONFIRMED', actor: { kind: 'SYSTEM', source: 'PAYMENT_VERIFICATION' }, context: input.context }, tx);
       orderStatus = t.order.status;
+    }
+    if (order.orderType === MESS_ORDER_TYPE && orderStatus === 'CONFIRMED') {
+      // P10A: a verified Kerala Mess purchase activates its subscription in THIS transaction (idempotent; lock order Order -> ... -> MessSubscription).
+      const mess = await MessActivationService.activateOrRefundInTx(tx, { id: order.id, orderNumber: order.orderNumber }, ledger.id, input.context);
+      if (mess.lateRefundId) {
+        orderStatus = 'CANCELLED';
+        return result('APPLIED', { orderStatus, orderPaymentStatus: 'PAID', flagged: false, lateRefundId: mess.lateRefundId });
+      }
     }
     return result('APPLIED', { orderStatus, orderPaymentStatus: 'PAID', flagged: false });
   }

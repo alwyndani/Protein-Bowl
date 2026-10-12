@@ -48,8 +48,8 @@ describe('P9C migration (#15): additive, no backfill, and the DeliveryAttempt gu
     }
   }, 60000);
 
-  it('the chain has 15 migrations and #15 sorts directly after the P9B migration', () => {
-    expect(migrations).toHaveLength(15);
+  it('the chain has at least 15 migrations and #15 sorts directly after the P9B migration', () => {
+    expect(migrations.length).toBeGreaterThanOrEqual(15); // later phases append (P10A adds #16)
     expect(P9C).toBe(14);
     expect(migrations[P9C - 1]).toContain('p9b_delivery_proof');
     expect(migrations[P9C] > migrations[P9C - 1]).toBe(true);

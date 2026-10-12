@@ -153,7 +153,8 @@ async function main() {
       email: 'student@proteinbowl.in',
       passwordHash,
       phone: '+91 98950 44556',
-      roles: { create: { role: RoleEnum.MESS_CUSTOMER } },
+      // P10A: Kerala Mess is a CUSTOMER entitlement (an approved MessAccount); MESS_CUSTOMER is legacy and is no longer seeded.
+      roles: { create: { role: RoleEnum.CUSTOMER } },
       customerProfile: {
         create: {
           fullName: 'Sneha Joseph',
@@ -165,27 +166,12 @@ async function main() {
     include: { customerProfile: true }
   });
 
-  if (messUser.customerProfile) {
-    await prisma.messAccount.upsert({
-      where: { customerProfileId: messUser.customerProfile.id },
-      update: {},
-      create: {
-        customerProfileId: messUser.customerProfile.id,
-        studentIdCard: 'STU-2026-88',
-        collegeHostelName: 'CUSAT Ladies Hostel Block B',
-        roomNumber: '304'
-      }
-    });
-
-    await prisma.walletAccount.upsert({
-      where: { customerProfileId: messUser.customerProfile.id },
-      update: {},
-      create: {
-        customerProfileId: messUser.customerProfile.id,
-        balance: 450.00
-      }
-    });
-  }
+  // P10A: demo service point (non-production seed only). The demo student registers their MessAccount through the app and a SUPER_ADMIN approves it.
+  await prisma.messServicePoint.upsert({
+    where: { code: 'CUSAT-LH-B' },
+    update: {},
+    create: { code: 'CUSAT-LH-B', name: 'CUSAT Ladies Hostel Block B', gateLabel: 'Main gate', addressLine: 'CUSAT Campus, Kalamassery', city: 'Kochi', postalCode: '682022', branchId: kochiBranch.id }
+  });
 
   // 3. Product Categories
   const catBowls = await prisma.productCategory.upsert({
@@ -249,8 +235,9 @@ async function main() {
       code: 'MESS-MONTHLY-FULL',
       durationDays: 30,
       mealsPerDay: 2,
-      basePrice: 4999.00,
-      active: true
+      basePrice: 4999.00, // DEMO value. The plan stays a DRAFT: SUPER_ADMIN must set the tax rate and policy fields, then activate it.
+      status: 'DRAFT',
+      active: false
     }
   });
 

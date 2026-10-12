@@ -6,8 +6,8 @@ import type { UserRole } from '../types';
  * SUPER_ADMIN has its own workspace and is NOT allowed the MD dashboard (and vice versa).
  */
 const BACKEND_ROLES_FOR_UI_ROLE: Record<UserRole, readonly string[]> = {
+  // MESS_CUSTOMER is LEGACY: such a session is presented as a normal customer (no separate Mess workspace exists any more)
   customer: ['CUSTOMER', 'MESS_CUSTOMER'],
-  mess_customer: ['CUSTOMER', 'MESS_CUSTOMER'],
   super_admin: ['SUPER_ADMIN'],
   md: ['MD'],
   nutritionist: ['NUTRITIONIST'],
@@ -22,7 +22,7 @@ const BACKEND_ROLES_FOR_UI_ROLE: Record<UserRole, readonly string[]> = {
 };
 
 /** Customer-facing views have their own login guards in the app shell. */
-const PUBLIC_UI_ROLES: readonly UserRole[] = ['customer', 'mess_customer'];
+const PUBLIC_UI_ROLES: readonly UserRole[] = ['customer'];
 
 /**
  * May the UI present `uiRole`?

@@ -263,11 +263,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <div className="space-y-2">
                 <button
                   onClick={() => {
-                    if (onOpenKeralaMessPortal) {
-                      onOpenKeralaMessPortal();
-                    } else if (onRoleChange) {
-                      onRoleChange('mess_customer');
-                    }
+                    onOpenKeralaMessPortal?.();
                   }}
                   className="w-full bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black py-3 rounded-xl text-xs transition-all shadow-lg hover:scale-105 flex items-center justify-center gap-2"
                 >

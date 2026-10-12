@@ -5,6 +5,8 @@ import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { PAID_CANCELLATION_FROM_STATES } from '../refund/cancellationPolicy.js';
 import {
   KITCHEN_BRANCH_REQUIRED_FOR,
+  MESS_ORDER_EDGES,
+  MESS_ORDER_TYPE,
   OPERATIONAL_ORDER_STATUSES,
   ORDER_TRANSITIONS,
   OrderStatus,
@@ -17,7 +19,7 @@ import {
 } from './orderStatus.js';
 
 export type TransitionActor =
-  | { kind: 'SYSTEM'; source: 'PAYMENT_VERIFICATION' | 'PAYMENT_EXPIRY' }
+  | { kind: 'SYSTEM'; source: 'PAYMENT_VERIFICATION' | 'PAYMENT_EXPIRY' | 'MESS_LATE_PAYMENT' }
   /**
    * P9B: the proof-backed DISPATCHED -> DELIVERED move. Constructed ONLY by DeliveryProofService, but the transition never trusts the
    * kind: it independently requires a verified DeliveryProof row (same order, same method, verifiedAt set) inside the caller's transaction.
@@ -114,12 +116,24 @@ export class OrderTransitionService {
     if (!isOrderStatus(from) || !(ORDER_TRANSITIONS[from] as readonly string[]).includes(to)) {
       throw new AppError(`An order that is ${from} cannot become ${to}`, 409, 'INVALID_ORDER_TRANSITION');
     }
-    if (order.orderType !== 'DIRECT') {
-      // Mess/POS/aggregator orders have their own lifecycles (later phases); never drive them through the direct-order policy.
+    if (order.orderType === MESS_ORDER_TYPE) {
+      // P10A: a Mess purchase may only be confirmed by verified payment or cancelled; nothing kitchen/delivery related ever applies.
+      if (!MESS_ORDER_EDGES.includes(transitionKey(from, to))) {
+        throw new AppError('This order type does not support this transition', 409, 'INVALID_ORDER_TRANSITION');
+      }
+    } else if (order.orderType !== 'DIRECT') {
+      // POS/aggregator orders have their own lifecycles (later phases); never drive them through the direct-order policy.
       throw new AppError('This order type does not support this transition yet', 409, 'INVALID_ORDER_TRANSITION');
     }
 
-    this.assertActorMayPerform(actor, from, to, order.customerProfileId);
+    if (actor.kind === 'SYSTEM' && actor.source === 'MESS_LATE_PAYMENT') {
+      // P10A: the ONLY system cancellation of a CONFIRMED order: a Kerala Mess purchase paid after its start date, together with its full refund intent (verified below).
+      if (order.orderType !== MESS_ORDER_TYPE || from !== 'CONFIRMED' || to !== 'CANCELLED' || !request.refundIntentId) {
+        throw new AppError('This system cancellation is not allowed', 403, 'ORDER_TRANSITION_FORBIDDEN');
+      }
+    } else {
+      this.assertActorMayPerform(actor, from, to, order.customerProfileId);
+    }
 
     if (to === 'DELIVERED') {
       // Defence in depth: even a correctly-typed PROOF actor needs real, verified evidence for THIS order, and the order must still be ONLINE.
