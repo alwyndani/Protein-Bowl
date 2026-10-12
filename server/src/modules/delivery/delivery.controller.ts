@@ -7,6 +7,7 @@ import { BranchScope, getRequestScope } from '../../authz/branchScope.js';
 import { AuditService } from '../audit/audit.service.js';
 import { DeliveryService, DriverCaller, ReportFailureBody } from './delivery.service.js';
 import { DeliveryProofService, VerifyBody } from './deliveryProof.service.js';
+import { DeliveryResolutionService } from './deliveryResolution.service.js';
 
 /**
  * The DELIVERY employee's identity and authorized branches, from DATABASE truth (getRequestScope). A client never supplies a driver or branch
@@ -92,6 +93,17 @@ export class DeliveryController {
       const { caller } = await resolveDriver(req);
       const result = await DeliveryService.reportFailure(req.params.id, req.body as ReportFailureBody, caller, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, result, result.changed ? 'Issue reported' : 'No change: an issue was already reported');
+    } catch (err) {
+      next(err);
+    }
+  }
+
+  /** P9C: the driver resumes a retry assigned to them. */
+  public static async resume(req: Request, res: Response, next: NextFunction) {
+    try {
+      const { caller } = await resolveDriver(req);
+      const result = await DeliveryResolutionService.resume(req.params.id, caller, AuditService.contextFromRequest(req));
+      return ApiResponse.success(res, result, result.changed ? 'Delivery resumed' : 'No change: the delivery is already under way');
     } catch (err) {
       next(err);
     }

@@ -194,7 +194,11 @@ export interface ApiOrder {
   refund?: { state: RefundState };
   /** P7D-G1 (server-derived): payment summary. canStartPayment is AUTHORITATIVE: the UI may disable more, never enable. */
   payment?: PaymentSummary;
+  /** P9C (server-derived label, NOT an order status): present once the order was dispatched (or cancelled as undeliverable). Never carries reasons, notes or driver data. */
+  delivery?: { state: CustomerDeliveryState; attemptNumber: number; maxAttempts: number };
 }
+
+export type CustomerDeliveryState = 'ON_THE_WAY' | 'DELIVERY_ISSUE' | 'RETRY_PLANNED' | 'UNDELIVERABLE_REFUND_PENDING' | 'DELIVERED';
 
 export type CancellationState = 'CANCELLATION_AVAILABLE' | 'CANCELLATION_NOT_ALLOWED' | 'CANCELLED';
 export type RefundState = 'NO_REFUND' | 'REFUND_PENDING' | 'REFUND_PROCESSING' | 'REFUNDED' | 'REFUND_REVIEW_REQUIRED';

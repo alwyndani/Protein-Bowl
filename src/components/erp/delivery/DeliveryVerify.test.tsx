@@ -144,7 +144,7 @@ describe('driver Delivery Code verification (own out-for-delivery order)', () =>
   });
 
   it('a FAILED / issue-reported delivery has NO code form (the exception must be resolved by the team); only the exception notice remains', async () => {
-    getQueue.mockResolvedValue(driverQueue({ out: [withProof('READY_FOR_VERIFICATION', null, { assignment: { state: 'FAILED', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: true } })] }));
+    getQueue.mockResolvedValue(driverQueue({ out: [withProof('READY_FOR_VERIFICATION', null, { assignment: { state: 'FAILED', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: true, attemptNumber: 1, maxAttempts: 3 } })] }));
     render(<DeliveryWorkspace />);
     expect(await screen.findByTestId('delivery-issue-reported')).toHaveTextContent(/awaiting review/i);
     expect(screen.queryByLabelText('Customer delivery code')).not.toBeInTheDocument();

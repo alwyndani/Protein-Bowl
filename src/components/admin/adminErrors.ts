@@ -61,6 +61,15 @@ const GUARDRAIL_MESSAGES: Record<string, string> = {
   ORDER_NOT_DISPATCHED: 'Only an order that is out for delivery can be confirmed. The list has been refreshed.',
   ALREADY_DELIVERED: 'This delivery has already been completed. The list has been refreshed.',
   INVALID_DELIVERY_STATE: 'This delivery is not in a state that can be confirmed. The list has been refreshed.',
+  DELIVERY_NOT_FAILED: 'This delivery is not in a failed state, so it cannot be resolved that way. The list has been refreshed.',
+  DELIVERY_ATTEMPT_CHANGED: 'This delivery changed in the meantime (another administrator or the driver acted). The list has been refreshed: review it and try again.',
+  DELIVERY_ATTEMPT_LIMIT_REACHED: 'The maximum number of delivery attempts has been reached. Cancel the order with a full refund, or confirm the handover.',
+  DRIVER_UNCHANGED: 'Choose a different driver, or retry with the same driver.',
+  ORDER_NOT_CANCELLABLE: 'This order cannot be cancelled that way. The list has been refreshed.',
+  CANCELLATION_NOT_ALLOWED: 'This order cannot be cancelled right now. The list has been refreshed.',
+  REFUND_NOT_ALLOWED: 'A refund cannot be created for this order right now. Please check the payment and try again later.',
+  REFUND_ALREADY_EXISTS: 'A refund already exists for this order.',
+  EXTERNAL_REFUND_PRESENT: 'Money for this order was already refunded outside the application. It needs manual review.',
   ORDER_NOT_OPERATIONALLY_ELIGIBLE: 'This order is not eligible for completion right now. The list has been refreshed.'
 };
 

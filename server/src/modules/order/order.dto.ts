@@ -57,6 +57,8 @@ export interface CustomerOrderDto {
   refund?: DerivedOrderState['refund'];
   /** P7D-G1: derived payment summary; canStartPayment is authoritative for the web UI. */
   payment?: DerivedOrderState['payment'];
+  /** P9C: derived delivery label (ON_THE_WAY / DELIVERY_ISSUE / RETRY_PLANNED / UNDELIVERABLE_REFUND_PENDING / DELIVERED). Not an OrderStatus. */
+  delivery?: DerivedOrderState['delivery'];
 }
 
 export function toCustomerOrderDto(
@@ -104,6 +106,7 @@ export function toCustomerOrderDto(
     dto.cancellation = derived.cancellation;
     dto.refund = derived.refund;
     dto.payment = derived.payment;
+    if (derived.delivery) dto.delivery = derived.delivery;
   }
   if (events) {
     dto.timeline = events.map((e) => ({ fromStatus: e.fromStatus, toStatus: e.toStatus, at: e.createdAt }));

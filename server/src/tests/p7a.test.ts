@@ -712,6 +712,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
             expect(transitionKey(from, to)).toBe('DISPATCHED->DELIVERED'); // P9B: the only edge with no HUMAN party (only the proof-backed DELIVERY_PROOF party; proof of delivery)
             continue;
           }
+          if (transitionKey(from, to) === 'DISPATCHED->CANCELLED') continue; // P9C: evidence-gated (FAILED assignment + archived attempt + refund intent); covered by deliveryResolution.test.ts
           const isCancel = to === 'CANCELLED';
           const order = isCancel ? await mkOrder({ status: from, paymentStatus: 'PENDING', kitchenBranchId: branchA.id }) : await paidOrder(from);
           const actor: TransitionActor = parties.includes('SYSTEM') ? sys : isCancel ? adminActor() : parties.includes(RoleEnum.CHEF) ? chefActor([branchA.id]) : driverActor([branchA.id]);

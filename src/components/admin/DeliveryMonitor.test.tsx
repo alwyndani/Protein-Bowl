@@ -43,7 +43,7 @@ async function confirmPassword(user: ReturnType<typeof userEvent.setup>) {
 }
 
 const unclaimed = () => monitorOrder({ orderNumber: 'PB-UN-1' });
-const assigned = () => monitorOrder({ orderNumber: 'PB-AS-1', assignment: { state: 'ASSIGNED', driver: DRIVER_1, pickupTime: null } });
+const assigned = () => monitorOrder({ orderNumber: 'PB-AS-1', assignment: { state: 'ASSIGNED', driver: DRIVER_1, pickupTime: null, attemptNumber: 1 } });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -150,7 +150,7 @@ describe('SUPER_ADMIN delivery monitor', () => {
     expect(alert).not.toHaveTextContent(/RAW/);
     await waitFor(() => expect(delivery.getMonitor.mock.calls.length).toBeGreaterThan(loads));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-  });
+  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
 
   it('an order that is already out for delivery cannot be reassigned: the server refusal (ORDER_NOT_ASSIGNABLE) is shown as safe copy', async () => {
     const user = userEvent.setup();
@@ -182,24 +182,27 @@ describe('SUPER_ADMIN delivery monitor', () => {
     finish();
   });
 
-  it('exceptions: shows the reason, the note and the "awaiting review" policy; there is NO resolve, refund, cancel, dispatch or mark-delivered action', async () => {
+  it('exceptions: shows the reason, the note and the "awaiting review" policy; the only actions are the approved P9C resolutions (retry / reassign / Cancel & Full Refund) and the override: no dispatch, no mark-delivered, no READY-stage assignment controls', async () => {
     const user = userEvent.setup();
     const exception = monitorOrder({
       orderNumber: 'PB-EX-1',
       status: 'DISPATCHED',
-      assignment: { state: 'FAILED', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z' },
+      assignment: { state: 'FAILED', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z', attemptNumber: 1 },
       exception: { reasonCode: 'CUSTOMER_UNREACHABLE', note: 'Phone switched off' }
     });
-    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [monitorOrder({ orderNumber: 'PB-OUT-1', status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', driver: DRIVER_2, pickupTime: '2026-10-11T09:01:00.000Z' } })], exceptions: [exception] }));
+    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ dispatched: [monitorOrder({ orderNumber: 'PB-OUT-1', status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', driver: DRIVER_2, pickupTime: '2026-10-11T09:01:00.000Z', attemptNumber: 1 } })], exceptions: [exception] }));
     const panel = await openDelivery(user);
     const section = await within(panel).findByTestId('delivery-monitor-exceptions');
     expect(section).toHaveTextContent('PB-EX-1');
     expect(section).toHaveTextContent('Issue reported: Customer not reachable');
     expect(section).toHaveTextContent('Driver note: Phone switched off');
     expect(section).toHaveTextContent(/awaiting review/i);
-    expect(within(panel).queryByRole('button', { name: /resolve|refund|cancel|dispatch|deliver|return/i })).not.toBeInTheDocument();
-    // dispatched / exception rows have no assignment controls at all (READY only)
-    expect(within(panel).queryByRole('button', { name: /assign|reassign|unassign/i })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: /dispatch|mark.*deliver|return to|collect/i })).not.toBeInTheDocument();
+    const names = within(section).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent ?? '');
+    expect(names).toContain('Cancel and fully refund PB-EX-1');
+    expect(names.filter((n) => /refund|cancel/i.test(n))).toEqual(['Cancel and fully refund PB-EX-1']);
+    // the READY-stage assignment controls (assign / reassign / unassign) are never shown for dispatched / exception rows
+    expect(within(panel).queryByRole('button', { name: /^(Assign|Reassign|Unassign) S+$/ })).not.toBeInTheDocument();
     expect(within(panel).getByTestId('delivery-monitor-dispatched')).toHaveTextContent('Driver: Meera Nair');
   });
 
@@ -252,9 +255,9 @@ describe('SUPER_ADMIN delivery monitor', () => {
 
 describe('SUPER_ADMIN exceptional handover confirmation (P9B override)', () => {
   const dispatchedOrder = (over: Parameters<typeof monitorOrder>[0] = {}) =>
-    monitorOrder({ orderNumber: 'PB-OV-1', status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z' }, proofState: 'ISSUED', ...over });
+    monitorOrder({ orderNumber: 'PB-OV-1', status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z', attemptNumber: 1 }, proofState: 'ISSUED', ...over });
   const failedOrder = () =>
-    dispatchedOrder({ orderNumber: 'PB-OV-F', assignment: { state: 'FAILED', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z' }, exception: { reasonCode: 'CUSTOMER_UNREACHABLE', note: 'Phone off' }, proofState: 'NOT_ISSUED' });
+    dispatchedOrder({ orderNumber: 'PB-OV-F', assignment: { state: 'FAILED', driver: DRIVER_1, pickupTime: '2026-10-11T09:05:00.000Z', attemptNumber: 1 }, exception: { reasonCode: 'CUSTOMER_UNREACHABLE', note: 'Phone off' }, proofState: 'NOT_ISSUED' });
 
   it('shows the proof STATE as text (never a code) and a deliberately low-key "Exceptional handover confirmation" link only for dispatched orders', async () => {
     const user = userEvent.setup();
@@ -266,7 +269,7 @@ describe('SUPER_ADMIN exceptional handover confirmation (P9B override)', () => {
     expect(within(panel).getAllByTestId('override-open')).toHaveLength(2);
     expect(within(panel).queryByRole('button', { name: /exceptional handover.*PB-UN-1/i })).not.toBeInTheDocument(); // not for READY orders
     expect(panel.textContent).not.toMatch(/\b\d{6}\b/); // no code anywhere
-    expect(panel.textContent).not.toMatch(/hash|attempt|counter/i);
+    expect(panel.textContent).not.toMatch(/hash|counter|failedAttempts|attempts? (left|remaining)/i); // P9C shows the delivery attempt NUMBER, never a code-guess counter
   });
 
   it('a read-only monitor (MD-style) offers no override', async () => {

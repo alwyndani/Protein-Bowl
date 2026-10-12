@@ -46,8 +46,8 @@ describe('P9B migration: one additive migration (#14), no backfill, and the Deli
     }
   }, 60000);
 
-  it('the chain has 14 migrations and the P9B migration is the 14th, sorting directly after P7C', () => {
-    expect(migrations).toHaveLength(14);
+  it('the P9B migration is the 14th of the chain (later migrations such as P9C #15 follow it), sorting directly after P7C', () => {
+    expect(migrations.length).toBeGreaterThanOrEqual(14);
     expect(P9B).toBe(13);
     expect(migrations[P9B - 1]).toContain('p7c_refunds');
     expect(migrations[P9B] > migrations[P9B - 1]).toBe(true);

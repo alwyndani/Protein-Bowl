@@ -220,5 +220,5 @@ describe('useDeliveryQueue actions', () => {
 });
 
 function outOrderLike() {
-  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'FAILED', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: true } });
+  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'FAILED', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: true, attemptNumber: 1, maxAttempts: 3 } });
 }

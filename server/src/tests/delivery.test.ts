@@ -291,7 +291,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       expect(Object.keys(dto.delivery).sort()).toEqual(['address', 'firstName', 'instructions', 'phone']);
       expect(dto.delivery).toMatchObject({ firstName: SECRET.first, phone: SECRET.phone, instructions: SECRET.instructions });
       expect(dto.delivery.address).toEqual({ line1: SECRET.street, line2: SECRET.line2, city: 'Kochi', state: 'Kerala', postalCode: '682001' });
-      expect(dto.assignment).toEqual({ state: 'ASSIGNED', pickupTime: null, issueReported: false });
+      expect(dto.assignment).toEqual({ state: 'ASSIGNED', pickupTime: null, issueReported: false, attemptNumber: 1, maxAttempts: 3 }); // P9C: attempt number added
       for (const res of [c, await detail(who.d1.token, o.id), await queue(who.d1.token)]) {
         piiAbsent(res, ['first', 'phone', 'street', 'line2', 'instructions']);
         expect(text(res)).not.toContain(SECRET.last);
@@ -587,7 +587,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       const res = await fail(who.d1.token, o.id, { reasonCode: 'CUSTOMER_UNAVAILABLE', note: 'Rang the bell twice' });
       expect(res.status, text(res)).toBe(200);
       expect(res.body.data.changed).toBe(true);
-      expect(res.body.data.order.assignment).toEqual({ state: 'FAILED', pickupTime: expect.any(String), issueReported: true });
+      expect(res.body.data.order.assignment).toEqual({ state: 'FAILED', pickupTime: expect.any(String), issueReported: true, attemptNumber: 1, maxAttempts: 3 });
       const row = await assignmentOf(o.id);
       expect(row!.status).toBe('FAILED');
       expect(row!.deliveryNotes).toBe('PBFAIL1:{"reasonCode":"CUSTOMER_UNAVAILABLE","note":"Rang the bell twice"}');
@@ -914,7 +914,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
       expect(m.status).toBe(200);
       piiAbsent(m);
       const item = m.body.data.sections.assigned.items.find((x: { id: string }) => x.id === o.id);
-      expect(Object.keys(item).sort()).toEqual(['area', 'assignment', 'exception', 'id', 'items', 'kitchenBranch', 'orderNumber', 'proofState', 'readyAt', 'status']);
+      expect(Object.keys(item).sort()).toEqual(['area', 'assignment', 'canRetry', 'exception', 'id', 'items', 'kitchenBranch', 'maxAttempts', 'orderNumber', 'proofState', 'readyAt', 'retryPending', 'status']);
       expect((await claim(who.md.token, o.id)).status).toBe(403);
       expect((await dispatch(who.md.token, o.id)).status).toBe(403);
       expect((await fail(who.md.token, o.id)).status).toBe(403);
@@ -971,7 +971,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
         await expect(OrderTransitionService.transition({ orderId: o.id, to: 'DELIVERED', actor })).rejects.toMatchObject({ errorCode: 'ORDER_TRANSITION_FORBIDDEN' });
       }
       expect((await order(o.id)).status).toBe('DISPATCHED');
-      expect(ORDER_TRANSITIONS.DISPATCHED).toEqual(['DELIVERED']); // the edge itself stays for P9B
+      expect(ORDER_TRANSITIONS.DISPATCHED).toEqual(['DELIVERED', 'CANCELLED']); // P9C: CANCELLED exists only for the evidence-gated undeliverable path (see deliveryResolution.test.ts)
       expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']);
       expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
     });
@@ -985,7 +985,7 @@ describe('P9A - delivery claim / assignment / dispatch', () => {
           if (statSync(full).isDirectory()) {
             if (name === 'tests') continue;
             walk(full);
-          } else if (full.endsWith('.ts') && ![join('order', 'orderStatus.ts'), join('order', 'orderTransition.service.ts'), join('delivery', 'deliveryProof.service.ts')].some((allowed) => full.endsWith(allowed))) {
+          } else if (full.endsWith('.ts') && ![join('order', 'orderStatus.ts'), join('order', 'orderTransition.service.ts'), join('delivery', 'deliveryProof.service.ts'), join('delivery', 'deliveryView.service.ts'), join('delivery', 'deliveryResolution.service.ts')] /* P9C: the last two only READ the assignment/order status for display and history */.some((allowed) => full.endsWith(allowed))) {
             const code = readFileSync(full, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
             if (/['"`]DELIVERED['"`]/.test(code)) offenders.push(full);
           }

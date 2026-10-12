@@ -4,7 +4,7 @@ import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { OrderTransitionService, TransitionActor } from '../order/orderTransition.service.js';
 import { Tx, lockOrder, lockProviderPaymentById, lockSession } from '../payment/paymentOps.js';
-import { ADMIN_CANCELLABLE_STATES, CUSTOMER_CANCELLABLE_STATES } from './cancellationPolicy.js';
+import { ADMIN_CANCELLABLE_STATES, CUSTOMER_CANCELLABLE_STATES, UNDELIVERABLE_REFUND_REASON_CODE } from './cancellationPolicy.js';
 import { RefundService } from './refund.service.js';
 import { LIVE_REFUND_STATUSES, REFUND_TRIGGER } from './refundStatus.js';
 import { RefundViewService } from './refundView.service.js';
@@ -23,6 +23,8 @@ interface CancelCommand {
   byCustomer: boolean;
   reasonCode: string;
   note: string | null;
+  /** P9C: set only by cancelUndeliverableInTx. Replaces the state allow-list with DISPATCHED (verified again by OrderTransitionService). */
+  undeliverable?: { attemptNumber: number };
   context?: AuditContext;
 }
 
@@ -64,6 +66,31 @@ export class CancellationService {
     return await RefundViewService.cancelResponse(result);
   }
 
+  // ================================================================================================ P9C undeliverable (called ONLY by DeliveryResolutionService)
+  /**
+   * Cancels a DISPATCHED order whose delivery attempt FAILED permanently, inside the CALLER's transaction (which has already locked the
+   * order and archived the attempt as UNDELIVERABLE_CANCELLED). Creates the FULL refund intent exactly like every other cancellation; the provider
+   * is contacted only after the caller commits (RefundService.kick), and the reconciliation worker guarantees submission.
+   */
+  public static async cancelUndeliverableInTx(
+    tx: Tx,
+    admin: { userId: string; roles: readonly RoleEnum[] },
+    orderId: string,
+    attemptNumber: number,
+    note: string | null,
+    context?: AuditContext
+  ): Promise<CancelResult> {
+    return await this.cancelTx(tx, {
+      orderId,
+      actor: { kind: 'USER', userId: admin.userId, roles: admin.roles, isGlobal: true },
+      byCustomer: false,
+      reasonCode: UNDELIVERABLE_REFUND_REASON_CODE,
+      note,
+      undeliverable: { attemptNumber },
+      context
+    });
+  }
+
   // ================================================================================================ core
   private static async cancel(cmd: CancelCommand): Promise<CancelResult> {
     const result = await prisma.$transaction(async (tx) => await this.cancelTx(tx, cmd), { maxWait: 10000, timeout: 20000 });
@@ -88,7 +115,7 @@ export class CancellationService {
 
     if (order.orderType !== 'DIRECT') throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
 
-    const allowedStates: readonly string[] = cmd.byCustomer ? CUSTOMER_CANCELLABLE_STATES : ADMIN_CANCELLABLE_STATES;
+    const allowedStates: readonly string[] = cmd.undeliverable ? ['DISPATCHED'] : cmd.byCustomer ? CUSTOMER_CANCELLABLE_STATES : ADMIN_CANCELLABLE_STATES;
     if (!allowedStates.includes(order.status)) {
       if (!cmd.byCustomer && (order.status === 'PREPARING' || order.status === 'READY')) {
         throw new AppError('Cancellation of an order that is already being prepared is not supported yet', 409, 'CANCELLATION_STATE_NOT_SUPPORTED');
@@ -103,6 +130,7 @@ export class CancellationService {
     let refundId: string | undefined;
     let sessionsClosed = 0;
 
+    if (cmd.undeliverable && order.paymentStatus !== 'PAID') throw new AppError('This order cannot be cancelled', 409, 'CANCELLATION_NOT_ALLOWED');
     if (order.paymentStatus === 'PAID') {
       if (!order.paidByProviderPaymentId) throw new AppError('The paid order has no effective payment on record; manual review is required', 409, 'CANCELLATION_NOT_ALLOWED');
       await lockProviderPaymentById(tx, order.paidByProviderPaymentId);
@@ -140,7 +168,7 @@ export class CancellationService {
       tx
     );
 
-    await OrderTransitionService.transition({ orderId: order.id, to: 'CANCELLED', actor: cmd.actor, reason: cmd.reasonCode, refundIntentId: refundId, context: cmd.context }, tx);
+    await OrderTransitionService.transition({ orderId: order.id, to: 'CANCELLED', actor: cmd.actor, reason: cmd.reasonCode, refundIntentId: refundId, deliveryUndeliverable: cmd.undeliverable, context: cmd.context }, tx);
     return { changed: true, orderId: order.id, orderNumber: order.orderNumber, refundId: refundId ?? null };
   }
 }

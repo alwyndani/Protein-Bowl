@@ -39,7 +39,8 @@ export interface DeliveryOwnedOrder extends DeliveryAreaOrder {
     address: { line1: string | null; line2: string | null; city: string | null; state: string | null; postalCode: string | null };
     instructions: string | null;
   };
-  assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean };
+  /** P9C: state ASSIGNED on an out-for-delivery order = a retry is waiting for the driver to press "Start delivery again" (Resume). */
+  assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean; attemptNumber: number; maxAttempts: number };
   /** Delivery Code state for a dispatched order: STATE only (no counters, no code, no hash). null before dispatch. */
   proof: { state: DriverProofState; lockedUntil: string | null } | null;
 }
@@ -77,7 +78,7 @@ export interface FailureReportInput {
   note?: string;
 }
 
-export type DriverAction = 'claim' | 'dispatch';
+export type DriverAction = 'claim' | 'dispatch' | 'resume';
 
 export interface DriverActionResult {
   changed: boolean;
@@ -90,7 +91,13 @@ export interface DeliveryMonitorOrder extends DeliveryAreaOrder {
     state: AssignmentState | null;
     driver: { employeeId: string; employeeCode: string; fullName: string } | null;
     pickupTime: string | null;
+    attemptNumber: number;
   };
+  /** P9C: attempt < maxAttempts and the assignment is FAILED. */
+  canRetry: boolean;
+  maxAttempts: number;
+  /** P9C: DISPATCHED + ASSIGNED: the retry was arranged but the driver has not resumed yet. */
+  retryPending: boolean;
   exception: { reasonCode: FailureReasonCode; note: string | null } | null;
   proofState: MonitorProofState | null;
 }

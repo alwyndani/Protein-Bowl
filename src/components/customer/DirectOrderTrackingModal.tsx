@@ -9,7 +9,7 @@ import { RefundNotice } from './RefundNotice';
 import { OrderService } from '../../services/orderService';
 import type { ApiOrder } from '../../services/commerceTypes';
 import { formatInr, moneyToNumber } from '../../utils/money';
-import { cancellationAvailable, orderStatusLabel } from '../../utils/orderLabels';
+import { cancellationAvailable, deliveryNotice, orderStatusLabel } from '../../utils/orderLabels';
 import { describeError, UserFacingError } from '../../utils/paymentErrors';
 
 interface DirectOrderTrackingModalProps {
@@ -245,6 +245,16 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
                   <OrderStatusBadges order={active} />
 
                   <RefundNotice order={active} />
+
+                  {(() => {
+                    const notice = deliveryNotice(active);
+                    return notice ? (
+                      <div role="status" data-testid="delivery-notice" className="bg-amber-950/40 border border-amber-700/50 rounded-2xl p-4 space-y-1">
+                        <p className="text-sm font-black text-amber-200">{notice.title}</p>
+                        <p className="text-xs text-amber-100">{notice.body}</p>
+                      </div>
+                    ) : null;
+                  })()}
 
                   {active.status === 'DISPATCHED' && active.paymentMethod === 'ONLINE' && (
                     <DeliveryCodePanel key={active.id} orderId={active.id} onSessionExpired={onSessionExpired} onVerified={() => void refreshActive()} />

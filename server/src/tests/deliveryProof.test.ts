@@ -832,7 +832,11 @@ describe('P9B - Delivery Code proof of delivery', () => {
       };
       walk(root);
       expect(proofActorFiles.sort()).toEqual(['modules/delivery/deliveryProof.service.ts', 'modules/order/orderTransition.service.ts']); // the service constructs it; the transition only declares/checks it
-      expect(deliveredFiles.sort()).toEqual(['modules/delivery/deliveryProof.service.ts', 'modules/order/orderStatus.ts', 'modules/order/orderTransition.service.ts']);
+      // P9C: deliveryView.service.ts (customer label) and deliveryResolution.service.ts (history read) only READ the delivered status
+      expect(deliveredFiles.sort()).toEqual(['modules/delivery/deliveryProof.service.ts', 'modules/delivery/deliveryResolution.service.ts', 'modules/delivery/deliveryView.service.ts', 'modules/order/orderStatus.ts', 'modules/order/orderTransition.service.ts']);
+      for (const f of ['deliveryView.service.ts', 'deliveryResolution.service.ts']) {
+        expect(strip(readFileSync(join(root, 'modules', 'delivery', f), 'utf8')), f).not.toMatch(/status\s*:\s*['"]DELIVERED['"]|\.order\.(update|updateMany|upsert)\s*\(/);
+      }
       const svc = strip(readFileSync(join(root, 'modules', 'delivery', 'deliveryProof.service.ts'), 'utf8'));
       expect(svc).not.toMatch(/\.order\.(update|updateMany|upsert)\s*\(/);
       expect(svc).not.toMatch(/console\.|Math\.random|cash|\bCOD\b|collect|settle/i);
@@ -868,7 +872,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(monitorItem.proofState).toBe('ISSUED');
       const mine = payloads[0].body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id);
       expect(mine.proof).toEqual({ state: 'READY_FOR_VERIFICATION', lockedUntil: null });
-      expect(JSON.stringify(mine)).not.toMatch(/attempt/i);
+      expect(JSON.stringify(mine)).not.toMatch(/failedAttempts|attempts?Left|remainingAttempts|lockCycles/i); // P9C added attemptNumber (the delivery attempt, not a code-guess counter)
     });
 
     it('39. the code never reaches the console, the audit log or any error body (wrong, correct, malformed, locked and stale submissions)', async () => {

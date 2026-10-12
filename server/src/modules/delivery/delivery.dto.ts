@@ -10,6 +10,7 @@
  * Failure reports live in the existing DeliveryAssignment.deliveryNotes string in ONE server-produced format (see `serializeFailureNote`).
  */
 import { Prisma } from '@prisma/client';
+import { MAX_DELIVERY_ATTEMPTS } from './deliveryAttemptPolicy.js';
 import { DriverProofState, MonitorProofState, PROOF_STATE_SELECT, driverProofState, monitorProofState } from './deliveryProofState.js';
 
 export const DELIVERY_SECTION_LIMIT = 100;
@@ -77,6 +78,7 @@ export const DELIVERY_ORDER_SELECT = Prisma.validator<Prisma.OrderSelect>()({
       status: true,
       pickupTime: true,
       deliveryNotes: true,
+      attemptNumber: true,
       driver: { select: { id: true, employeeCode: true, fullName: true } }
     }
   }
@@ -114,7 +116,8 @@ export interface DeliveryOwnedOrderDto extends DeliveryAreaOrderDto {
     address: { line1: string | null; line2: string | null; city: string | null; state: string | null; postalCode: string | null };
     instructions: string | null;
   };
-  assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean };
+  /** P9C: attemptNumber 1..maxAttempts. state ASSIGNED on a DISPATCHED order = a retry is waiting for the driver to Resume. */
+  assignment: { state: AssignmentState; pickupTime: string | null; issueReported: boolean; attemptNumber: number; maxAttempts: number };
   /** P9B: safe Delivery Code state for a DISPATCHED order (no counters, no hash). null before dispatch. */
   proof: { state: DriverProofState; lockedUntil: string | null } | null;
 }
@@ -124,7 +127,13 @@ export interface DeliveryMonitorOrderDto extends DeliveryAreaOrderDto {
     state: AssignmentState | null;
     driver: { employeeId: string; employeeCode: string; fullName: string } | null;
     pickupTime: string | null;
+    attemptNumber: number;
   };
+  /** P9C: the failed attempt can still be retried / reassigned (attempt < maxAttempts). Only meaningful when exception is set. */
+  canRetry: boolean;
+  maxAttempts: number;
+  /** P9C: DISPATCHED + assignment ASSIGNED = a retry is pending (the driver has not resumed yet), so SUPER_ADMIN may hand it to another driver. */
+  retryPending: boolean;
   /** Only for DISPATCHED orders whose assignment is FAILED. */
   exception: FailureReport | null;
   /** P9B: proof state only (null before dispatch). */
@@ -169,7 +178,7 @@ export function toOwnedDto(row: DeliveryOrderRow, readyAt: Date | undefined): De
       },
       instructions: snapshotString(snap, 'deliveryInstructions')
     },
-    assignment: { state, pickupTime: row.delivery?.pickupTime ? row.delivery.pickupTime.toISOString() : null, issueReported: state === 'FAILED' },
+    assignment: { state, pickupTime: row.delivery?.pickupTime ? row.delivery.pickupTime.toISOString() : null, issueReported: state === 'FAILED', attemptNumber: row.delivery?.attemptNumber ?? 1, maxAttempts: MAX_DELIVERY_ATTEMPTS },
     proof: row.status === 'DISPATCHED' ? driverProofState(row.deliveryProof, new Date()) : null
   };
 }
@@ -182,8 +191,12 @@ export function toMonitorDto(row: DeliveryOrderRow, readyAt: Date | undefined): 
     assignment: {
       state: a?.driverId ? state ?? 'ASSIGNED' : null,
       driver: a?.driver ? { employeeId: a.driver.id, employeeCode: a.driver.employeeCode, fullName: a.driver.fullName } : null,
-      pickupTime: a?.pickupTime ? a.pickupTime.toISOString() : null
+      pickupTime: a?.pickupTime ? a.pickupTime.toISOString() : null,
+      attemptNumber: a?.attemptNumber ?? 1
     },
+    canRetry: row.status === 'DISPATCHED' && state === 'FAILED' && (a?.attemptNumber ?? 1) < MAX_DELIVERY_ATTEMPTS,
+    maxAttempts: MAX_DELIVERY_ATTEMPTS,
+    retryPending: row.status === 'DISPATCHED' && state === 'ASSIGNED',
     exception: row.status === 'DISPATCHED' && state === 'FAILED' ? (parseFailureNote(a?.deliveryNotes) ?? { reasonCode: 'OTHER', note: null }) : null,
     proofState: row.status === 'DISPATCHED' ? monitorProofState(row.deliveryProof, new Date()) : null
   };

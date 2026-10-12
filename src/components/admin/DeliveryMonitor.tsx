@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { RefreshCw, Truck } from 'lucide-react';
 import { DeliveryService } from '../../services/deliveryService';
+import { DeliveryResolutionService } from '../../services/deliveryResolutionService';
 import type { AssignableDriver, DeliveryMonitorOrder, MonitorProofState, OverrideReasonCode } from '../../services/deliveryTypes';
 import { FAILURE_REASONS, OVERRIDE_REASONS } from '../../services/deliveryTypes';
+import type { AttemptOutcome, DeliveryAttempts, RetryReasonCode, UndeliverableReasonCode } from '../../services/deliveryResolutionTypes';
+import { RETRY_REASONS, UNDELIVERABLE_REASONS } from '../../services/deliveryResolutionTypes';
 import { useDeliveryMonitor } from '../../hooks/useDeliveryMonitor';
 import { useAuth } from '../../context/AuthContext';
 import { useAdminReference } from './AdminReference';
@@ -11,7 +14,7 @@ import { useAdminAction } from './useAdminAction';
 import { Chip, EmptyState, ErrorNotice, Field, Modal, Spinner, dangerButton, formatDate, inputClass, primaryButton, secondaryButton } from './adminUi';
 
 /** Codes after which the screen the administrator was looking at is out of date: the monitor reloads (it also polls). */
-const STALE_CODES = ['DELIVERY_ASSIGNMENT_CHANGED', 'ORDER_NOT_ASSIGNABLE', 'ORDER_STATE_CONFLICT', 'ORDER_NOT_DISPATCHED', 'ALREADY_DELIVERED', 'INVALID_DELIVERY_STATE', 'ORDER_NOT_OPERATIONALLY_ELIGIBLE'];
+const STALE_CODES = ['DELIVERY_ATTEMPT_CHANGED', 'DELIVERY_NOT_FAILED', 'DELIVERY_ATTEMPT_LIMIT_REACHED', 'CANCELLATION_NOT_ALLOWED', 'ORDER_NOT_CANCELLABLE', 'DELIVERY_ASSIGNMENT_CHANGED', 'ORDER_NOT_ASSIGNABLE', 'ORDER_STATE_CONFLICT', 'ORDER_NOT_DISPATCHED', 'ALREADY_DELIVERED', 'INVALID_DELIVERY_STATE', 'ORDER_NOT_OPERATIONALLY_ELIGIBLE'];
 
 const PROOF_LABEL: Record<MonitorProofState, string> = {
   NOT_ISSUED: 'Delivery code: not generated yet',
@@ -25,6 +28,16 @@ const PROOF_LABEL: Record<MonitorProofState, string> = {
 const reasonLabel = (code: string) => FAILURE_REASONS.find((r) => r.code === code)?.label ?? 'Other';
 
 type Mode = 'assign' | 'reassign' | 'unassign';
+/** P9C resolution actions on a delivery whose attempt FAILED (or a retry that was arranged but not resumed yet). */
+type ResolveMode = 'RETRY_SAME_DRIVER' | 'REASSIGN_AFTER_FAILURE' | 'REASSIGN_PENDING';
+
+const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
+  RETRY_SAME_DRIVER: 'Retried with the same driver',
+  REASSIGNED: 'Reassigned to another driver',
+  UNDELIVERABLE_CANCELLED: 'Cancelled with a full refund',
+  ADMIN_OVERRIDE_DELIVERED: 'Handover confirmed by administrator'
+};
+const dateOrDash = (iso: string | null) => (iso ? formatDate(iso) : 'time not recorded');
 
 const AssignmentDialog: React.FC<{ order: DeliveryMonitorOrder; branchId: string; mode: Mode; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, branchId, mode, onClose, onDone, onStale }) => {
   const { withStepUp } = useStepUp();
@@ -186,7 +199,232 @@ const OverrideDialog: React.FC<{ order: DeliveryMonitorOrder; onClose: () => voi
   );
 };
 
-const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAction: (order: DeliveryMonitorOrder, mode: Mode) => void; onOverride: (order: DeliveryMonitorOrder) => void }> = ({ order, canAssign, onAction, onOverride }) => {
+/** Retry the same driver / hand the next attempt (or a pending retry) to another driver of the SAME branch. Step-up, structured reason, expected attempt + driver. */
+const RetryDialog: React.FC<{ order: DeliveryMonitorOrder; branchId: string; mode: ResolveMode; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, branchId, mode, onClose, onDone, onStale }) => {
+  const { withStepUp } = useStepUp();
+  const { run, pending, error, clearError } = useAdminAction();
+  const [drivers, setDrivers] = useState<AssignableDriver[] | null>(null);
+  const [driversError, setDriversError] = useState(false);
+  const [driverId, setDriverId] = useState('');
+  const [reasonCode, setReasonCode] = useState<RetryReasonCode | ''>('');
+  const [note, setNote] = useState('');
+  const [touched, setTouched] = useState(false);
+  const current = order.assignment.driver;
+  const needsDriver = mode !== 'RETRY_SAME_DRIVER';
+  const valid = !!reasonCode && (!needsDriver || !!driverId);
+
+  useEffect(() => {
+    if (!needsDriver) return;
+    let cancelled = false;
+    DeliveryService.listDrivers(branchId)
+      .then((list) => !cancelled && setDrivers(list))
+      .catch(() => !cancelled && setDriversError(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [branchId, needsDriver]);
+  useEffect(() => {
+    if (error?.code && STALE_CODES.includes(error.code)) onStale();
+  }, [error, onStale]);
+
+  const options = (drivers ?? []).filter((d) => d.employeeId !== current?.employeeId);
+  const title = mode === 'RETRY_SAME_DRIVER' ? `Retry ${order.orderNumber} with the same driver` : mode === 'REASSIGN_AFTER_FAILURE' ? `Reassign ${order.orderNumber} to another driver` : `Hand the pending retry of ${order.orderNumber} to another driver`;
+  const next = order.assignment.attemptNumber + 1;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!valid || !reasonCode || !current) return;
+    const outcome = await run(() =>
+      withStepUp((proof) =>
+        DeliveryResolutionService.retryDelivery(
+          order.id,
+          { mode: needsDriver ? 'REASSIGN' : 'SAME_DRIVER', ...(needsDriver ? { driverEmployeeId: driverId } : {}), expectedAttemptNumber: order.assignment.attemptNumber, expectedDriverId: current.employeeId, reasonCode, note },
+          proof
+        )
+      )
+    );
+    if (outcome.ok) onDone(mode === 'REASSIGN_PENDING' ? `The pending retry of ${order.orderNumber} was handed to another driver.` : `Another delivery attempt (attempt ${next}) was arranged for ${order.orderNumber}. The driver must press "Start delivery again".`);
+  };
+
+  return (
+    <Modal title={title} onClose={onClose} closeDisabled={pending}>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <p className="text-xs text-stone-400" data-testid="retry-explainer">
+          {mode === 'REASSIGN_PENDING'
+            ? `This retry (attempt ${order.assignment.attemptNumber} of ${order.maxAttempts}) was arranged but the driver has not started it. The same attempt moves to another driver: it does not use up another attempt.`
+            : `The failed attempt is saved in the attempt history. This arranges attempt ${next} of ${order.maxAttempts}; the driver must press "Start delivery again" and the customer needs a NEW delivery code. The order's status and payment are not touched.`}
+        </p>
+        {needsDriver && (
+          <Field label="Driver (same branch)" htmlFor="retry-driver" error={touched && !driverId ? 'Choose a driver.' : undefined}>
+            <select id="retry-driver" value={driverId} onChange={(e) => setDriverId(e.target.value)} disabled={pending || drivers === null} className={inputClass} aria-invalid={touched && !driverId}>
+              <option value="">{drivers === null && !driversError ? 'Loading drivers…' : 'Select an active driver…'}</option>
+              {options.map((d) => (
+                <option key={d.employeeId} value={d.employeeId}>
+                  {d.fullName} ({d.employeeCode})
+                </option>
+              ))}
+            </select>
+            {driversError && (
+              <p role="alert" className="text-[11px] text-red-300">
+                The drivers could not be loaded. Close this dialog and try again.
+              </p>
+            )}
+          </Field>
+        )}
+        <Field label="Reason" htmlFor="retry-reason" error={touched && !reasonCode ? 'Choose a reason.' : undefined}>
+          <select id="retry-reason" value={reasonCode} onChange={(e) => setReasonCode(e.target.value as RetryReasonCode | '')} disabled={pending} className={inputClass} aria-invalid={touched && !reasonCode}>
+            <option value="">Select a reason…</option>
+            {RETRY_REASONS.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Note (optional)" htmlFor="retry-note" hint="Kept in the attempt history (up to 200 characters).">
+          <textarea id="retry-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} rows={2} disabled={pending} className={inputClass} />
+        </Field>
+        <ErrorNotice error={error} onDismiss={clearError} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>
+            Cancel
+          </button>
+          <button type="submit" disabled={pending} className={primaryButton}>
+            {pending ? 'Working…' : mode === 'RETRY_SAME_DRIVER' ? 'Arrange retry' : 'Reassign driver'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+/** Cancel & Full Refund: the ONLY way a DISPATCHED order is cancelled. The refund is always the full captured amount (no amount is entered or sent). */
+const UndeliverableDialog: React.FC<{ order: DeliveryMonitorOrder; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, onClose, onDone, onStale }) => {
+  const { withStepUp } = useStepUp();
+  const { run, pending, error, clearError } = useAdminAction();
+  const [reasonCode, setReasonCode] = useState<UndeliverableReasonCode | ''>('');
+  const [note, setNote] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const [touched, setTouched] = useState(false);
+  const noteOk = note.trim().length >= 10;
+  const valid = !!reasonCode && noteOk && confirmed;
+  useEffect(() => {
+    if (error?.code && STALE_CODES.includes(error.code)) onStale();
+  }, [error, onStale]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTouched(true);
+    if (!valid || !reasonCode) return;
+    const outcome = await run(() => withStepUp((proof) => DeliveryResolutionService.markUndeliverable(order.id, { reasonCode, note: note.trim(), expectedAttemptNumber: order.assignment.attemptNumber }, proof)));
+    if (outcome.ok) onDone(`Order ${order.orderNumber} was cancelled and a full refund was requested. The refund is processed automatically.`);
+  };
+
+  return (
+    <Modal title={`Cancel & Full Refund for ${order.orderNumber}`} onClose={onClose} closeDisabled={pending}>
+      <form onSubmit={submit} className="space-y-4" noValidate>
+        <p role="note" className="text-xs text-amber-200 bg-amber-950/50 border border-amber-700 rounded-xl px-3 py-2">
+          Use this only when the order cannot be handed over to the customer. The order is cancelled and the customer is refunded the FULL amount they paid. This cannot be undone.
+        </p>
+        <Field label="Reason" htmlFor="undeliverable-reason" error={touched && !reasonCode ? 'Choose a reason.' : undefined}>
+          <select id="undeliverable-reason" value={reasonCode} onChange={(e) => setReasonCode(e.target.value as UndeliverableReasonCode | '')} disabled={pending} className={inputClass} aria-invalid={touched && !reasonCode}>
+            <option value="">Select a reason…</option>
+            {UNDELIVERABLE_REASONS.map((r) => (
+              <option key={r.code} value={r.code}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Explanation" htmlFor="undeliverable-note" hint="Kept in the attempt history (10–200 characters)." error={touched && !noteOk ? 'Enter an explanation of at least 10 characters.' : undefined}>
+          <textarea id="undeliverable-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} rows={3} disabled={pending} className={inputClass} aria-invalid={touched && !noteOk} />
+        </Field>
+        <div>
+          <label className="flex items-start gap-3 text-xs text-stone-200 cursor-pointer min-h-11">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} disabled={pending} className="mt-0.5 w-4 h-4" />
+            <span>I understand that this cancels the order and refunds the customer in full.</span>
+          </label>
+          {touched && !confirmed && (
+            <p role="alert" className="text-[11px] text-red-300">
+              Tick the confirmation to continue.
+            </p>
+          )}
+        </div>
+        <ErrorNotice error={error} onDismiss={clearError} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>
+            Keep order
+          </button>
+          <button type="submit" disabled={pending} className={dangerButton}>
+            {pending ? 'Working…' : 'Cancel & Full Refund'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+};
+
+/** Read-only attempt history (SUPER_ADMIN and MD). The server decides what each role may see: MD never receives free-text notes. */
+const AttemptHistory: React.FC<{ orderId: string }> = ({ orderId }) => {
+  const [data, setData] = useState<DeliveryAttempts | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    DeliveryResolutionService.getAttempts(orderId)
+      .then((d) => !cancelled && setData(d))
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [orderId]);
+  if (failed) {
+    return (
+      <p role="alert" className="text-[11px] text-red-300">
+        The attempt history could not be loaded.
+      </p>
+    );
+  }
+  if (!data) return <Spinner label="Loading attempt history…" />;
+  return (
+    <div data-testid="attempt-history" className="space-y-2 bg-stone-950/60 border border-stone-800 rounded-xl p-3">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-stone-400">
+        Delivery attempts (up to {data.maxAttempts})
+      </p>
+      <ol className="space-y-2">
+        {data.attempts.map((a) => (
+          <li key={a.attemptNumber} data-testid="attempt-record" className="text-xs text-stone-200 space-y-0.5">
+            <p className="font-bold">
+              Attempt {a.attemptNumber}: {OUTCOME_LABEL[a.outcome]}
+            </p>
+            <p className="text-stone-400">
+              {a.driver ? `${a.driver.fullName} (${a.driver.employeeCode})` : 'Driver not recorded'}
+              {a.branch ? ` · ${a.branch.name}` : ''} · started {dateOrDash(a.startedAt)} · failed {dateOrDash(a.failedAt)} · resolved {dateOrDash(a.endedAt)}
+            </p>
+            <p className="text-stone-400">
+              Failure: {reasonLabel(a.failureReasonCode)} · Resolution: {RETRY_REASONS.find((r) => r.code === a.resolutionReasonCode)?.label ?? UNDELIVERABLE_REASONS.find((r) => r.code === a.resolutionReasonCode)?.label ?? OVERRIDE_REASONS.find((r) => r.code === a.resolutionReasonCode)?.label ?? 'Other'}
+            </p>
+            {a.failureNote && <p className="text-stone-300">Driver note: {a.failureNote}</p>}
+            {a.resolutionNote && <p className="text-stone-300">Administrator note: {a.resolutionNote}</p>}
+          </li>
+        ))}
+        {data.current && (
+          <li data-testid="attempt-current" className="text-xs text-stone-200">
+            <p className="font-bold">
+              Current: attempt {data.current.attemptNumber} ({data.current.state === 'FAILED' ? 'failed, awaiting a decision' : data.current.state === 'ASSIGNED' ? 'retry assigned, not started yet' : data.current.state === 'IN_TRANSIT' ? 'out for delivery' : (data.current.state ?? 'unknown').toLowerCase()})
+            </p>
+          </li>
+        )}
+        {data.attempts.length === 0 && !data.current && <li className="text-xs text-stone-400">No attempts recorded.</li>}
+      </ol>
+    </div>
+  );
+};
+
+const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAction: (order: DeliveryMonitorOrder, mode: Mode) => void; onOverride: (order: DeliveryMonitorOrder) => void; onResolve: (order: DeliveryMonitorOrder, mode: ResolveMode) => void; onUndeliverable: (order: DeliveryMonitorOrder) => void }> = ({ order, canAssign, onAction, onOverride, onResolve, onUndeliverable }) => {
+  const [history, setHistory] = useState(false);
+  const failed = order.status === 'DISPATCHED' && order.assignment.state === 'FAILED';
+  const showHistory = order.status === 'DISPATCHED' && (order.assignment.attemptNumber > 1 || failed || order.retryPending);
   const driver = order.assignment.driver;
   return (
     <li data-testid="delivery-monitor-row" data-order-number={order.orderNumber} className="bg-stone-900/70 border border-stone-800 rounded-2xl p-4 flex flex-wrap items-start justify-between gap-3">
@@ -200,11 +438,42 @@ const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAc
           {driver ? <Chip tone="emerald">Driver: {driver.fullName} ({driver.employeeCode})</Chip> : <Chip tone="amber">No driver yet</Chip>}
           {order.exception && <Chip tone="amber">Issue reported: {reasonLabel(order.exception.reasonCode)}</Chip>}
           {order.proofState && <Chip>{PROOF_LABEL[order.proofState]}</Chip>}
+          {showHistory && <Chip tone="amber">Attempt {order.assignment.attemptNumber} of {order.maxAttempts}</Chip>}
+          {order.retryPending && <Chip tone="amber">Retry assigned: waiting for the driver to start</Chip>}
         </div>
         {order.exception?.note && <p className="text-[11px] text-stone-300">Driver note: {order.exception.note}</p>}
         {order.exception && <p className="text-[11px] text-amber-200">Awaiting review. There is no automatic cancellation, refund or return to the kitchen.</p>}
+        {failed && !order.canRetry && <p data-testid="attempt-limit" className="text-[11px] text-red-200">The maximum of {order.maxAttempts} delivery attempts has been reached: only Cancel &amp; Full Refund or the exceptional handover confirmation remain.</p>}
+        {showHistory && (
+          <button type="button" onClick={() => setHistory((v) => !v)} aria-expanded={history} data-testid="attempt-history-toggle" className="text-[11px] font-bold text-stone-300 underline min-h-8 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded">
+            {history ? 'Hide attempt history' : 'Attempt history'}
+          </button>
+        )}
+        {history && <AttemptHistory orderId={order.id} />}
       </div>
-      {canAssign && order.status === 'DISPATCHED' && order.proofState !== 'VERIFIED' && order.proofState !== 'OVERRIDDEN' && (
+      {canAssign && failed && (
+        <div className="flex flex-wrap gap-2" data-testid="resolve-actions">
+          {order.canRetry && (
+            <>
+              <button type="button" onClick={() => onResolve(order, 'RETRY_SAME_DRIVER')} aria-label={`Retry ${order.orderNumber} with the same driver`} data-testid="retry-same" className={primaryButton}>
+                Retry same driver
+              </button>
+              <button type="button" onClick={() => onResolve(order, 'REASSIGN_AFTER_FAILURE')} aria-label={`Reassign ${order.orderNumber} to another driver`} data-testid="retry-reassign" className={secondaryButton}>
+                Reassign driver
+              </button>
+            </>
+          )}
+          <button type="button" onClick={() => onUndeliverable(order)} aria-label={`Cancel and fully refund ${order.orderNumber}`} data-testid="undeliverable-open" className={dangerButton}>
+            Cancel &amp; Full Refund
+          </button>
+        </div>
+      )}
+      {canAssign && order.retryPending && (
+        <button type="button" onClick={() => onResolve(order, 'REASSIGN_PENDING')} aria-label={`Hand the pending retry of ${order.orderNumber} to another driver`} data-testid="retry-pending-reassign" className={secondaryButton}>
+          Reassign pending retry
+        </button>
+      )}
+      {canAssign && order.status === 'DISPATCHED' && !order.retryPending && order.proofState !== 'VERIFIED' && order.proofState !== 'OVERRIDDEN' && (
         <button type="button" onClick={() => onOverride(order)} aria-label={`Exceptional handover confirmation for ${order.orderNumber}`} data-testid="override-open" className="text-xs font-bold text-stone-300 underline hover:text-white min-h-11 px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded">
           Exceptional handover confirmation…
         </button>
@@ -239,6 +508,8 @@ export const DeliveryMonitor: React.FC = () => {
   const monitor = useDeliveryMonitor({ branchId, onSessionExpired: () => void auth.logout() });
   const [editing, setEditing] = useState<{ order: DeliveryMonitorOrder; mode: Mode } | null>(null);
   const [overriding, setOverriding] = useState<DeliveryMonitorOrder | null>(null);
+  const [resolving, setResolving] = useState<{ order: DeliveryMonitorOrder; mode: ResolveMode } | null>(null);
+  const [cancelling, setCancelling] = useState<DeliveryMonitorOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const data = monitor.data;
   const canAssign = !!data && !data.readOnly;
@@ -320,7 +591,7 @@ export const DeliveryMonitor: React.FC = () => {
               ) : (
                 <ul className="space-y-3" aria-label={title}>
                   {section.items.map((o) => (
-                    <OrderRow key={o.id} order={o} canAssign={canAssign} onAction={(order, mode) => setEditing({ order, mode })} onOverride={setOverriding} />
+                    <OrderRow key={o.id} order={o} canAssign={canAssign} onAction={(order, mode) => setEditing({ order, mode })} onOverride={setOverriding} onResolve={(order, mode) => setResolving({ order, mode })} onUndeliverable={setCancelling} />
                   ))}
                 </ul>
               )}
@@ -344,6 +615,32 @@ export const DeliveryMonitor: React.FC = () => {
           onDone={(message) => {
             setNotice(message);
             setEditing(null);
+            void monitor.refresh();
+          }}
+        />
+      )}
+      {resolving && (
+        <RetryDialog
+          order={resolving.order}
+          branchId={branchId}
+          mode={resolving.mode}
+          onClose={() => setResolving(null)}
+          onStale={() => void monitor.refresh()}
+          onDone={(message) => {
+            setNotice(message);
+            setResolving(null);
+            void monitor.refresh();
+          }}
+        />
+      )}
+      {cancelling && (
+        <UndeliverableDialog
+          order={cancelling}
+          onClose={() => setCancelling(null)}
+          onStale={() => void monitor.refresh()}
+          onDone={(message) => {
+            setNotice(message);
+            setCancelling(null);
             void monitor.refresh();
           }}
         />

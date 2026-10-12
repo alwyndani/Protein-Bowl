@@ -37,14 +37,14 @@ export function ownedOrder(over: Partial<DeliveryOwnedOrder> = {}): DeliveryOwne
       address: { line1: '12 Marine Drive', line2: 'Flat 4B', city: 'Kochi', state: 'Kerala', postalCode: '682001' },
       instructions: 'Leave with the security guard'
     },
-    assignment: { state: 'ASSIGNED', pickupTime: null, issueReported: false },
+    assignment: { state: 'ASSIGNED', pickupTime: null, issueReported: false, attemptNumber: 1, maxAttempts: 3 },
     proof: null,
     ...over
   };
 }
 
 export function outOrder(over: Partial<DeliveryOwnedOrder> = {}): DeliveryOwnedOrder {
-  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: false }, proof: { state: 'READY_FOR_VERIFICATION', lockedUntil: null }, ...over });
+  return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: false, attemptNumber: 1, maxAttempts: 3 }, proof: { state: 'READY_FOR_VERIFICATION', lockedUntil: null }, ...over });
 }
 
 export function driverQueue(sections: { available?: DeliveryAreaOrder[]; mine?: DeliveryOwnedOrder[]; out?: DeliveryOwnedOrder[] } = {}, over: Partial<DriverQueue> = {}): DriverQueue {
@@ -61,7 +61,11 @@ export function driverQueue(sections: { available?: DeliveryAreaOrder[]; mine?: 
 
 export function monitorOrder(over: Partial<DeliveryMonitorOrder> = {}): DeliveryMonitorOrder {
   const base = areaOrder();
-  return { ...base, assignment: { state: null, driver: null, pickupTime: null }, exception: null, proofState: null, ...over };
+  const merged = { ...base, assignment: { state: null, driver: null, pickupTime: null, attemptNumber: 1 }, exception: null, proofState: null, canRetry: false, maxAttempts: 3, retryPending: false, ...over };
+  // derived flags follow the assignment unless a test sets them explicitly
+  if (over.canRetry === undefined) merged.canRetry = merged.status === 'DISPATCHED' && merged.assignment.state === 'FAILED' && merged.assignment.attemptNumber < merged.maxAttempts;
+  if (over.retryPending === undefined) merged.retryPending = merged.status === 'DISPATCHED' && merged.assignment.state === 'ASSIGNED';
+  return merged;
 }
 
 export function deliveryMonitor(

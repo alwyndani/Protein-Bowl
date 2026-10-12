@@ -18,7 +18,10 @@ export const CUSTOMER_REASON_CODES = ['CHANGED_MIND', 'ORDERED_BY_MISTAKE', 'WRO
 export const ADMIN_REASON_CODES = ['ITEM_UNAVAILABLE', 'KITCHEN_UNAVAILABLE', 'DELIVERY_UNAVAILABLE', 'PAYMENT_ISSUE', 'OPERATIONAL_ISSUE', 'OTHER'] as const;
 
 /** Reason codes written for refunds whose trigger is not a cancellation (derived by the server, never sent by a client). */
-export const SYSTEM_REASON_CODES = ['DUPLICATE_PAYMENT', 'LATE_PAYMENT_AFTER_CANCELLATION', 'EXTERNAL_REFUND'] as const;
+export const SYSTEM_REASON_CODES = ['DUPLICATE_PAYMENT', 'LATE_PAYMENT_AFTER_CANCELLATION', 'EXTERNAL_REFUND', 'DELIVERY_FAILED'] as const;
+
+/** P9C: the refund reason written by the undeliverable path (server-derived, never accepted from a client, deliberately NOT in ADMIN_REASON_CODES). */
+export const UNDELIVERABLE_REFUND_REASON_CODE = 'DELIVERY_FAILED';
 
 export const NOTE_MAX_LENGTH = 200;
 

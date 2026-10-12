@@ -5,7 +5,11 @@ import { PaymentSummary, PaymentSummaryService } from '../payment/paymentSummary
 import { CUSTOMER_CANCELLABLE_STATES } from './cancellationPolicy.js';
 import { LIVE_REFUND_STATUSES, PublicCancellationState, PublicRefundState, publicRefundState } from './refundStatus.js';
 
+import { CustomerDeliveryView, DeliveryViewService } from '../delivery/deliveryView.service.js';
+
 export interface DerivedOrderState {
+  /** P9C (additive): customer-safe delivery label, present only once the order has been dispatched (or cancelled as undeliverable). */
+  delivery?: CustomerDeliveryView;
   cancellation: { state: PublicCancellationState; allowed: boolean };
   refund: { state: PublicRefundState };
   /** P7D-G1: server-derived payment summary (authoritative for the web UI). */
@@ -22,6 +26,7 @@ export class RefundViewService {
     const ids = orders.map((o) => o.id);
     const out = new Map<string, DerivedOrderState>();
     const payments = await PaymentSummaryService.deriveForOrders(orders);
+    const deliveries = await DeliveryViewService.deriveForOrders(orders);
     const refunds = ids.length ? await prisma.refund.findMany({ where: { orderId: { in: ids } }, select: { orderId: true, status: true, providerPaymentId: true } }) : [];
     const flagged = ids.length
       ? await prisma.providerPayment.findMany({ where: { orderId: { in: ids }, reconciliationStatus: { in: [RECON.DUPLICATE, RECON.AFTER_CANCELLATION] } }, select: { id: true, orderId: true } })
@@ -42,7 +47,8 @@ export class RefundViewService {
       out.set(o.id, {
         cancellation: { state: cancelled ? 'CANCELLED' : allowed ? 'CANCELLATION_AVAILABLE' : 'CANCELLATION_NOT_ALLOWED', allowed },
         refund: { state: best },
-        payment: payments.get(o.id)!
+        payment: payments.get(o.id)!,
+        ...(deliveries.has(o.id) ? { delivery: deliveries.get(o.id)! } : {})
       });
     }
     return out;

@@ -69,6 +69,8 @@ const envSchema = z.object({
   RL_DELIVERY_VERIFY_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_DELIVERY_OVERRIDE_MAX: positiveInt(5),
   RL_DELIVERY_OVERRIDE_WINDOW_MS: positiveInt(15 * 60 * 1000),
+  RL_DELIVERY_RESOLVE_MAX: positiveInt(20),
+  RL_DELIVERY_RESOLVE_WINDOW_MS: positiveInt(15 * 60 * 1000),
   RL_WEBHOOK_MAX: positiveInt(3000),
   RL_WEBHOOK_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // Honoured only outside production.

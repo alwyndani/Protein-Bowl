@@ -29,6 +29,8 @@ router.get('/orders/:id', ...driverRead, validateParams(idParams), DeliveryContr
 router.post('/orders/:id/claim', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.claim);
 router.post('/orders/:id/dispatch', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.dispatch);
 router.post('/orders/:id/report-failure', ...driverAction, validateParams(idParams), validateBody(reportFailureBodySchema), DeliveryController.reportFailure);
+// P9C: the assigned driver acknowledges a retry (ASSIGNED -> IN_TRANSIT). Empty strict body; no financial effect.
+router.post('/orders/:id/resume', ...driverAction, validateParams(idParams), validateBody(emptyBodySchema), DeliveryController.resume);
 router.post('/orders/:id/verify-delivery', authenticateToken, requireExactRoles([RoleEnum.DELIVERY]), requirePermission('delivery:write'), deliveryVerifyRateLimiter, validateParams(idParams), validateBody(verifyBodySchema), DeliveryController.verifyDelivery);
 
 router.get(

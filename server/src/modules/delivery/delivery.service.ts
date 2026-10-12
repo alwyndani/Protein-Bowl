@@ -232,7 +232,7 @@ export class DeliveryService {
         paymentMethod: true,
         paymentStatus: true,
         kitchenBranchId: true,
-        delivery: { select: { id: true, driverId: true, status: true, branchId: true } }
+        delivery: { select: { id: true, driverId: true, status: true, branchId: true, attemptNumber: true, failedAt: true, pickupTime: true, deliveryNotes: true } }
       }
     });
   }
@@ -390,7 +390,7 @@ export class DeliveryService {
         } else if (state === 'IN_TRANSIT') {
           const updated = await tx.deliveryAssignment.updateMany({
             where: { id: order.delivery!.id, driverId: caller.employeeProfileId, status: 'IN_TRANSIT' },
-            data: { status: 'FAILED', deliveryNotes: serializeFailureNote(body.reasonCode, body.note ?? null) }
+            data: { status: 'FAILED', deliveryNotes: serializeFailureNote(body.reasonCode, body.note ?? null), failedAt: new Date() }
           });
           if (updated.count !== 1) throw new AppError('The delivery assignment changed. Please refresh.', 409, 'ORDER_STATE_CONFLICT');
           changed = true;

@@ -9,6 +9,7 @@ import { OrderTransitionService } from '../order/orderTransition.service.js';
 import { lockOrder } from '../payment/paymentOps.js';
 import { sanitizeNote } from '../refund/cancellationPolicy.js';
 import { DeliveryOrderNotVisible, DeliveryService, DriverCaller } from './delivery.service.js';
+import { archiveFailedAttempt } from './deliveryAttemptArchive.js';
 
 /**
  * P9B Delivery Code (proof of handover).
@@ -93,10 +94,12 @@ export function normalizeCode(input: string): string | null {
 export * from './deliveryProofState.js';
 import { CustomerProofDto, CustomerProofState, IssuedCodeDto, PROOF_STATE_SELECT, ProofStateRow, isLocked } from './deliveryProofState.js';
 
-function customerState(order: { status: string }, p: ProofStateRow | null, now: Date): CustomerProofDto {
+function customerState(order: { status: string; delivery?: { status: string } | null }, p: ProofStateRow | null, now: Date): CustomerProofDto {
   const out = (state: CustomerProofState, lockedUntil: Date | null = null): CustomerProofDto => ({ state, issuedAt: p?.issuedAt ? p.issuedAt.toISOString() : null, lockedUntil: lockedUntil ? lockedUntil.toISOString() : null });
   if (p?.verifiedAt) return out('VERIFIED');
   if (order.status !== 'DISPATCHED') return { state: 'NOT_AVAILABLE', issuedAt: null, lockedUntil: null };
+  // P9C: while the attempt is FAILED or a retry is ASSIGNED (not resumed yet) the customer has no usable code
+  if (order.delivery?.status !== 'IN_TRANSIT') return { state: 'NOT_AVAILABLE', issuedAt: null, lockedUntil: null };
   if (!p || !p.issuedAt) return out('NOT_ISSUED');
   if (p.blockedAt) return out('CODE_BLOCKED');
   if (isLocked(p, now)) return out('LOCKED', p.lockedUntil);
@@ -107,7 +110,7 @@ function customerState(order: { status: string }, p: ProofStateRow | null, now: 
 type Tx = Prisma.TransactionClient;
 
 /** Creates the proof row if absent (ON CONFLICT DO NOTHING, unique orderId) and locks it. Caller already holds the ORDER lock. */
-async function lockProof(tx: Tx, orderId: string) {
+export async function lockProof(tx: Tx, orderId: string) {
   await tx.deliveryProof.createMany({ data: [{ orderId }], skipDuplicates: true });
   await tx.$queryRaw`SELECT "id" FROM "delivery_proofs" WHERE "orderId" = ${orderId} FOR UPDATE`;
   return await tx.deliveryProof.findUniqueOrThrow({ where: { orderId } });
@@ -132,7 +135,7 @@ export class DeliveryProofService {
   public static async getCustomerState(orderId: string, customerProfileId: string): Promise<CustomerProofDto> {
     const order = await prisma.order.findFirst({
       where: { id: orderId, customerProfileId },
-      select: { status: true, deliveryProof: { select: PROOF_STATE_SELECT } }
+      select: { status: true, delivery: { select: { status: true } }, deliveryProof: { select: PROOF_STATE_SELECT } }
     });
     if (!order) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
     return customerState(order, order.deliveryProof, new Date());
@@ -142,11 +145,12 @@ export class DeliveryProofService {
     await lockOrder(tx, orderId);
     const order = await tx.order.findUnique({
       where: { id: orderId },
-      select: { id: true, orderNumber: true, status: true, orderType: true, paymentMethod: true, paymentStatus: true, customerProfileId: true }
+      select: { id: true, orderNumber: true, status: true, orderType: true, paymentMethod: true, paymentStatus: true, customerProfileId: true, delivery: { select: { status: true } } }
     });
     // ownership is decided under the lock; a foreign or unknown order is the same 404
     if (!order || order.customerProfileId !== customerProfileId) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
-    if (!ELIGIBLE(order)) throw new AppError('A delivery code is not available for this order right now', 409, 'DELIVERY_CODE_NOT_AVAILABLE');
+    // P9C: issue / regenerate need the CURRENT attempt to be IN_TRANSIT (never FAILED, never an ASSIGNED retry that was not resumed)
+    if (!ELIGIBLE(order) || order.delivery?.status !== 'IN_TRANSIT') throw new AppError('A delivery code is not available for this order right now', 409, 'DELIVERY_CODE_NOT_AVAILABLE');
     return order;
   }
 
@@ -350,6 +354,19 @@ export class DeliveryProofService {
       if (!assignment || !['IN_TRANSIT', 'FAILED'].includes(assignment.status)) throw new AppError('This delivery is not in a state that can be completed', 409, 'INVALID_DELIVERY_STATE');
 
       const now = new Date();
+      if (assignment.status === 'FAILED') {
+        // P9C: the failed attempt is archived BEFORE it is completed (failure evidence + override reason/note are kept in DeliveryAttempt)
+        await archiveFailedAttempt(tx, {
+          orderId,
+          kitchenBranchId: order.kitchenBranchId,
+          assignment,
+          proofCodeVersion: proofRow.codeVersion,
+          outcome: 'ADMIN_OVERRIDE_DELIVERED',
+          resolvedByUserId: actor.userId,
+          resolutionReasonCode: body.reasonCode,
+          resolutionNote: body.note
+        });
+      }
       await tx.deliveryProof.update({
         where: { orderId },
         data: {
@@ -383,7 +400,7 @@ export class DeliveryProofService {
           action: 'DELIVERY_OVERRIDE_APPLIED',
           entity: 'Order',
           entityId: orderId,
-          payload: { orderNumber: order.orderNumber, method: 'ADMIN_OVERRIDE', reasonCode: body.reasonCode, previousAssignmentStatus: assignment.status },
+          payload: { orderNumber: order.orderNumber, method: 'ADMIN_OVERRIDE', reasonCode: body.reasonCode, previousAssignmentStatus: assignment.status, attemptNumber: assignment.attemptNumber },
           context
         },
         tx

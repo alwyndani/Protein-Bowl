@@ -27,7 +27,8 @@ export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatu
   ACCEPTED: ['PREPARING', 'CANCELLED'],
   PREPARING: ['READY', 'CANCELLED'],
   READY: ['DISPATCHED', 'CANCELLED'],
-  DISPATCHED: ['DELIVERED'],
+  // P9C: DISPATCHED -> CANCELLED exists ONLY for the internal undeliverable path (OrderTransitionService re-verifies its evidence); it is not a generic cancellation.
+  DISPATCHED: ['DELIVERED', 'CANCELLED'],
   DELIVERED: [],
   CANCELLED: []
 });
@@ -53,7 +54,9 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'READY->DISPATCHED': [RoleEnum.DELIVERY],
   // P9B: DELIVERED is reachable ONLY through a verified DeliveryProof (the internal 'DELIVERY_PROOF' party, never a human role): the delivery
   // service completes it after a valid Delivery Code, or after the exceptional SUPER_ADMIN override. No human role is listed here on purpose.
-  'DISPATCHED->DELIVERED': ['DELIVERY_PROOF']
+  'DISPATCHED->DELIVERED': ['DELIVERY_PROOF'],
+  // P9C: SUPER_ADMIN only AND only with the transition's own evidence checks (FAILED assignment, archived UNDELIVERABLE_CANCELLED attempt, REQUESTED refund intent).
+  'DISPATCHED->CANCELLED': [RoleEnum.SUPER_ADMIN]
 });
 
 export function transitionKey(from: OrderStatus, to: OrderStatus): string {

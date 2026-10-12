@@ -42,6 +42,11 @@ export interface TransitionRequest {
   reason?: string | null;
   /** P7C: id of the Refund intent created in the SAME transaction (required to cancel an order whose money was received). Only the cancellation service passes it. */
   refundIntentId?: string;
+  /**
+   * P9C: set ONLY by CancellationService.cancelUndeliverableInTx for the DISPATCHED -> CANCELLED undeliverable path. It proves nothing by itself:
+   * the transition independently requires a FAILED assignment of that attempt, an archived UNDELIVERABLE_CANCELLED DeliveryAttempt row and a REQUESTED refund.
+   */
+  deliveryUndeliverable?: { attemptNumber: number };
   context?: AuditContext;
 }
 
@@ -126,7 +131,7 @@ export class OrderTransitionService {
     }
 
     if (to === 'CANCELLED') {
-      await this.assertCancellable(tx, { id: order.id, paymentStatus: order.paymentStatus }, from, actor, request);
+      await this.assertCancellable(tx, { id: order.id, paymentStatus: order.paymentStatus, paymentMethod: order.paymentMethod }, from, actor, request);
     }
 
     if ((OPERATIONAL_ORDER_STATUSES as readonly string[]).includes(to)) {
@@ -210,8 +215,25 @@ export class OrderTransitionService {
     }
   }
 
-  private static async assertCancellable(tx: Tx, order: { id: string; paymentStatus: string }, from: OrderStatus, actor: TransitionActor, request: TransitionRequest): Promise<void> {
-    if ((PAID_PAYMENT_STATUSES as readonly string[]).includes(order.paymentStatus)) {
+  private static async assertCancellable(tx: Tx, order: { id: string; paymentStatus: string; paymentMethod: string | null }, from: OrderStatus, actor: TransitionActor, request: TransitionRequest): Promise<void> {
+    if (from === 'DISPATCHED') {
+      // P9C: the ONLY way out of DISPATCHED other than DELIVERED. Everything is re-verified here, under the order lock and in the caller's transaction.
+      const undeliverable = request.deliveryUndeliverable;
+      const adminActor = actor.kind === 'USER' && actor.roles.includes(RoleEnum.SUPER_ADMIN) && actor.isGlobal === true;
+      const ok =
+        !!undeliverable &&
+        adminActor &&
+        order.paymentMethod === 'ONLINE' &&
+        order.paymentStatus === 'PAID' &&
+        !!request.refundIntentId &&
+        (await tx.refund.count({ where: { id: request.refundIntentId, orderId: order.id, status: 'REQUESTED' } })) === 1 &&
+        (await tx.deliveryAssignment.count({ where: { orderId: order.id, status: 'FAILED', attemptNumber: undeliverable.attemptNumber } })) === 1 &&
+        (await tx.deliveryAttempt.count({ where: { orderId: order.id, attemptNumber: undeliverable.attemptNumber, outcome: 'UNDELIVERABLE_CANCELLED' } })) === 1;
+      if (!ok) throw new AppError('An order that is out for delivery cannot be cancelled', 409, 'ORDER_NOT_CANCELLABLE');
+    } else if (request.deliveryUndeliverable) {
+      throw new AppError('Invalid cancellation request', 409, 'ORDER_NOT_CANCELLABLE');
+    }
+    if (from !== 'DISPATCHED' && (PAID_PAYMENT_STATUSES as readonly string[]).includes(order.paymentStatus)) {
       const intentOk =
         !!request.refundIntentId &&
         (PAID_CANCELLATION_FROM_STATES as readonly string[]).includes(from) &&

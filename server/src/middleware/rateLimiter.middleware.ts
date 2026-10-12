@@ -48,6 +48,7 @@ export const deliveryCodeIssueRateLimiter = createRateLimiter('DELIVERY_CODE_ISS
 export const deliveryCodeRegenerateRateLimiter = createRateLimiter('DELIVERY_CODE_REGEN', env.RL_DELIVERY_CODE_REGEN_MAX, env.RL_DELIVERY_CODE_REGEN_WINDOW_MS, undefined, byUserAndOrder);
 export const deliveryVerifyRateLimiter = createRateLimiter('DELIVERY_VERIFY', env.RL_DELIVERY_VERIFY_MAX, env.RL_DELIVERY_VERIFY_WINDOW_MS, undefined, byUser);
 export const deliveryOverrideRateLimiter = createRateLimiter('DELIVERY_OVERRIDE', env.RL_DELIVERY_OVERRIDE_MAX, env.RL_DELIVERY_OVERRIDE_WINDOW_MS, undefined, byUser);
+export const deliveryResolveRateLimiter = createRateLimiter('DELIVERY_RESOLVE', env.RL_DELIVERY_RESOLVE_MAX, env.RL_DELIVERY_RESOLVE_WINDOW_MS, undefined, byUser);
 /** Webhook: deliberately generous per-IP ceiling; the SIGNATURE is the real authentication, and provider retry storms must not be throttled. */
 export const webhookRateLimiter = createRateLimiter('WEBHOOK', env.RL_WEBHOOK_MAX, env.RL_WEBHOOK_WINDOW_MS);
 export const generalRateLimiter = createRateLimiter(

@@ -52,6 +52,7 @@ model User {
   staffInvitations    StaffInvitation[]    @relation("StaffInvitationUser")
   staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreatedBy")
   deliveryOverrides   DeliveryProof[]      @relation("DeliveryProofOverrideBy")
+  deliveryAttemptsResolved DeliveryAttempt[] @relation("DeliveryAttemptResolvedBy")
 
   @@index([email])
   @@index([phone])
@@ -127,6 +128,7 @@ model KitchenBranch {
   posTransactions     POSTransaction[]
   shifts              CashDrawerShift[]
   employeeAssignments EmployeeBranchAssignment[]
+  deliveryAttempts    DeliveryAttempt[]
 
   @@map("kitchen_branches")
 }
@@ -316,6 +318,7 @@ model EmployeeProfile {
   assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
   deliveries          DeliveryAssignment[]
   deliveryProofsVerified DeliveryProof[]
+  deliveryAttempts    DeliveryAttempt[]    @relation("DeliveryAttemptDriver")
   hrmRecord           HRMEmployee?
   branchAssignments   EmployeeBranchAssignment[]
 
@@ -676,6 +679,7 @@ model Order {
   kot                    KitchenOrderTicket?
   delivery               DeliveryAssignment?
   deliveryProof          DeliveryProof?
+  deliveryAttempts       DeliveryAttempt[]
   events                 OrderEvent[]
   providerPayments       ProviderPayment[]
   refunds                Refund[]
@@ -1072,6 +1076,8 @@ model DeliveryAssignment {
   pickupTime    DateTime?
   deliveryTime  DateTime?
   deliveryNotes String?
+  attemptNumber Int             @default(1) // P9C: 1 = the original delivery; max MAX_DELIVERY_ATTEMPTS (CHECK 1..3)
+  failedAt      DateTime?       // P9C: when the current attempt was reported FAILED (null for legacy rows: never fabricated)
   podImageUrl   String?
   temperatureC  Float?
   createdAt     DateTime        @default(now())
@@ -1110,6 +1116,35 @@ model DeliveryProof {
   overrideBy User?            @relation("DeliveryProofOverrideBy", fields: [overrideByUserId], references: [id], onDelete: Restrict)
 
   @@map("delivery_proofs")
+}
+
+/// P9C: append-only history of FAILED delivery attempts, written when an attempt is resolved (retry, reassignment, undeliverable
+/// cancellation, exceptional override). The live attempt stays on DeliveryAssignment. Rows are never updated or deleted by the application.
+model DeliveryAttempt {
+  id                   String   @id @default(uuid())
+  orderId              String
+  attemptNumber        Int
+  driverId             String?
+  branchId             String?
+  startedAt            DateTime?
+  failedAt             DateTime?
+  failureReasonCode    String
+  failureNote          String?
+  proofCodeVersion     Int
+  outcome              String   // RETRY_SAME_DRIVER | REASSIGNED | UNDELIVERABLE_CANCELLED | ADMIN_OVERRIDE_DELIVERED
+  resolvedByUserId     String
+  resolutionReasonCode String
+  resolutionNote       String?
+  endedAt              DateTime @default(now())
+  createdAt            DateTime @default(now())
+
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  driver     EmployeeProfile? @relation("DeliveryAttemptDriver", fields: [driverId], references: [id], onDelete: Restrict)
+  branch     KitchenBranch?   @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  resolvedBy User             @relation("DeliveryAttemptResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([orderId, attemptNumber])
+  @@map("delivery_attempts")
 }
 
 model POSTransaction {

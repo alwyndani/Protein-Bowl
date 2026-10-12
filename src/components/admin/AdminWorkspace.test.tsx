@@ -301,7 +301,7 @@ describe('Invite staff', () => {
     await user.click(screen.getByRole('button', { name: /dismiss/i }));
     expect(screen.queryByLabelText('One-time invitation link')).not.toBeInTheDocument();
     expect(document.body.innerHTML).not.toContain(SECRET_LINK_TOKEN);
-  });
+  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
 
   it('a wrong password shows an error, keeps the dialog open and creates nothing', async () => {
     const user = userEvent.setup();

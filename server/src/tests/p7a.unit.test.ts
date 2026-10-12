@@ -339,7 +339,7 @@ describe('P7A order status catalogue', () => {
     const edges = (s: OrderStatus) => [...ORDER_TRANSITIONS[s]];
     expect(edges('DELIVERED')).toEqual([]);
     expect(edges('CANCELLED')).toEqual([]);
-    expect(edges('DISPATCHED')).toEqual(['DELIVERED']);
+    expect(edges('DISPATCHED')).toEqual(['DELIVERED', 'CANCELLED']); // P9C: CANCELLED only through the evidence-gated undeliverable path
   });
 });
 

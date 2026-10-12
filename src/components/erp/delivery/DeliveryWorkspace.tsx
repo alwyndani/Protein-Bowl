@@ -189,12 +189,30 @@ const VerifyForm: React.FC<{ order: DeliveryOwnedOrder; pending: boolean; onVeri
   );
 };
 
-const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: boolean; pending: boolean; error: string | null; onReport: () => void; onVerify: (code: string) => Promise<boolean>; onDismiss: () => void }> = ({ order, nowMs, showBranch, pending, error, onReport, onVerify, onDismiss }) => (
+const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: boolean; pending: boolean; error: string | null; onReport: () => void; onResume: () => void; onVerify: (code: string) => Promise<boolean>; onDismiss: () => void }> = ({ order, nowMs, showBranch, pending, error, onReport, onResume, onVerify, onDismiss }) => {
+  const retryPending = order.assignment.state === 'ASSIGNED';
+  const attemptLabel = order.assignment.attemptNumber > 1 ? `Attempt ${order.assignment.attemptNumber} of ${order.assignment.maxAttempts}` : null;
+  return (
   <article aria-label={`Order ${order.orderNumber}`} data-testid="delivery-card" data-order-number={order.orderNumber} className="bg-white border border-stone-300 rounded-2xl p-4 shadow-sm space-y-3">
-    <Header order={order} badge="Out for delivery" showBranch={showBranch} waiting={elapsedText(order.assignment.pickupTime, nowMs)} waitLabel="On the road" />
+    <Header order={order} badge={retryPending ? 'Retry assigned' : 'Out for delivery'} showBranch={showBranch} waiting={elapsedText(order.assignment.pickupTime, nowMs)} waitLabel="On the road" />
     <OwnedDetails order={order} />
     <Items order={order} />
-    {order.assignment.issueReported ? (
+    {attemptLabel && (
+      <p data-testid="delivery-attempt" className="text-[11px] font-bold text-stone-800">
+        {attemptLabel}
+      </p>
+    )}
+    {retryPending ? (
+      <>
+        <p role="status" data-testid="delivery-retry-assigned" className="text-xs font-bold text-sky-900 bg-sky-50 border border-sky-300 rounded-xl px-3 py-2">
+          The team arranged another delivery attempt for you. Press the button when you have the bag and are leaving.
+        </p>
+        <button type="button" onClick={onResume} disabled={pending} aria-busy={pending} aria-label={`Start delivery again ${order.orderNumber}`} data-testid="delivery-resume" className={primary}>
+          {pending && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+          {pending ? 'Working…' : 'Start delivery again'}
+        </button>
+      </>
+    ) : order.assignment.issueReported ? (
       <p role="status" data-testid="delivery-issue-reported" className="text-xs font-bold text-amber-900 bg-amber-50 border border-amber-300 rounded-xl px-3 py-2">
         Issue reported, awaiting review. Please wait for instructions from the team.
       </p>
@@ -208,7 +226,8 @@ const OutCard: React.FC<{ order: DeliveryOwnedOrder; nowMs: number; showBranch: 
     )}
     <ErrorBox error={error} onDismiss={onDismiss} />
   </article>
-);
+  );
+};
 
 const ReportDialog: React.FC<{ order: DeliveryOwnedOrder; pending: boolean; error: string | null; onSubmit: (reasonCode: FailureReasonCode, note: string) => void; onClose: () => void }> = ({ order, pending, error, onSubmit, onClose }) => {
   const [reasonCode, setReasonCode] = useState<FailureReasonCode | ''>('');
@@ -458,7 +477,7 @@ export const DeliveryWorkspace: React.FC<{ onSessionExpired?: () => void }> = ({
               <p className="text-xs text-stone-700">Nothing is out for delivery.</p>
             ) : (
               queue.sections.outForDelivery.items.map((o) => (
-                <OutCard key={o.id} order={o} nowMs={serverNowMs} showBranch={multiBranch} pending={actions[o.id]?.pending ?? false} error={reporting?.id === o.id ? null : (actions[o.id]?.error ?? null)} onReport={() => setReporting(o)} onVerify={(code) => verifyDelivery(o.id, code)} onDismiss={() => dismissActionError(o.id)} />
+                <OutCard key={o.id} order={o} nowMs={serverNowMs} showBranch={multiBranch} pending={actions[o.id]?.pending ?? false} error={reporting?.id === o.id ? null : (actions[o.id]?.error ?? null)} onReport={() => setReporting(o)} onResume={() => void act(o.id, 'resume')} onVerify={(code) => verifyDelivery(o.id, code)} onDismiss={() => dismissActionError(o.id)} />
               ))
             )}
           </div>
