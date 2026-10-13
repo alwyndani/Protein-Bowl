@@ -9,6 +9,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "typecheck:web": "tsc --noEmit",
+    "typecheck:server": "cd server && npx tsc --noEmit -p .",
+    "typecheck:mobile": "cd apps/mobile && npm run typecheck",
+    "typecheck:all": "npm run typecheck:web && npm run typecheck:server && npm run typecheck:mobile",
     "test": "vitest run"
   },
   "dependencies": {

@@ -18,3 +18,8 @@ export const loginSchema = z.object({
 
 export type RegisterDto = z.infer<typeof registerSchema>;
 export type LoginDto = z.infer<typeof loginSchema>;
+
+/** P11A mobile auth bodies: strict, the refresh token travels ONLY in the JSON body (never query, URL or cookie). */
+export const mobileRegisterSchema = registerSchema.strict();
+export const mobileLoginSchema = loginSchema.strict();
+export const mobileRefreshSchema = z.object({ refreshToken: z.string().min(1).max(256) }).strict();

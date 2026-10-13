@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser';
 import { env } from './config/env.js';
 import './config/deliveryProofConfig.js'; // P9B: validates DELIVERY_PROOF_SECRET at startup (fail-closed in production)
 import authRoutes from './modules/auth/auth.routes.js';
+import mobileAuthRoutes from './modules/auth/auth.mobile.routes.js';
 import customerRoutes from './modules/customer/customer.routes.js';
 import productRoutes from './modules/product/product.routes.js';
 import cartRoutes from './modules/cart/cart.routes.js';
@@ -75,6 +76,7 @@ app.get('/api/v1/health', (_req, res) => {
 app.use('/api/v1', generalRateLimiter);
 
 // API Domain Routes
+app.use('/api/v1/auth/mobile', mobileAuthRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/products', productRoutes);

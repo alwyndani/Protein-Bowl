@@ -7,7 +7,34 @@ import { RegisterDto, LoginDto } from './auth.validator.js';
 import { RoleEnum } from '@prisma/client';
 import { AuditService, AuditContext } from '../audit/audit.service.js';
 
+/** Lifetime of a refresh token (web cookie and mobile body alike: one session model). */
+const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** P11A: the customer mobile app accepts an account ONLY when every role it holds is the literal CUSTOMER (staff and legacy MESS_CUSTOMER are refused). */
+export function isCustomerAppAccount(roles: readonly RoleEnum[]): boolean {
+  return roles.length > 0 && roles.every((r) => r === RoleEnum.CUSTOMER);
+}
+
+export interface MobileAuthOptions {
+  /** Refuse (403 CUSTOMER_APP_ONLY) any account that is not a pure CUSTOMER, BEFORE a session or token is created. */
+  customerOnly?: boolean;
+  context?: AuditContext;
+}
+
 export class AuthService {
+  private static async refuseNonCustomer(user: { id: string; roles: Array<{ role: RoleEnum }> }, stage: 'login' | 'refresh', context?: AuditContext): Promise<never> {
+    const roles = user.roles.map((r) => r.role);
+    await AuditService.recordSafe({
+      actor: { userId: user.id, roles },
+      action: 'MOBILE_AUTH_CUSTOMER_APP_REFUSED',
+      entity: 'User',
+      entityId: user.id,
+      payload: { stage },
+      context
+    });
+    throw new AppError('This app is for customer accounts only.', 403, 'CUSTOMER_APP_ONLY');
+  }
+
   /**
    * Revoke every active refresh session of a user (used on deactivation / role change / security events).
    * Existing access tokens stop working immediately anyway (authenticateToken checks the database); this ends refresh.
@@ -88,7 +115,7 @@ export class AuthService {
     // Generate & Hash Refresh Token
     const rawRefreshToken = generateRandomToken();
     const tokenHash = hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
 
     await prisma.refreshToken.create({
       data: {
@@ -101,14 +128,15 @@ export class AuthService {
     return {
       user: this.sanitizeUser(newUser),
       accessToken,
-      rawRefreshToken
+      rawRefreshToken,
+      refreshTokenExpiresAt: expiresAt
     };
   }
 
   /**
    * Authenticate user with credentials.
    */
-  static async login(dto: LoginDto) {
+  static async login(dto: LoginDto, opts: MobileAuthOptions = {}) {
     const include = { roles: true, customerProfile: true, employeeProfile: true } as const;
     let user = await prisma.user.findUnique({ where: { email: dto.email }, include });
     // Staff emails are stored lowercase; tolerate a differently-cased login without ever matching a different account.
@@ -129,6 +157,11 @@ export class AuthService {
       throw new AppError('Account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
+    // P11A: the customer mobile app never establishes a session for a non-customer account (checked after the password, before any token exists).
+    if (opts.customerOnly && !isCustomerAppAccount(user.roles.map((r) => r.role))) {
+      await this.refuseNonCustomer(user, 'login', opts.context);
+    }
+
     await prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() }
@@ -144,7 +177,7 @@ export class AuthService {
     // Generate & Hash Refresh Token
     const rawRefreshToken = generateRandomToken();
     const tokenHash = hashToken(rawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
 
     await prisma.refreshToken.create({
       data: {
@@ -157,14 +190,15 @@ export class AuthService {
     return {
       user: this.sanitizeUser(user),
       accessToken,
-      rawRefreshToken
+      rawRefreshToken,
+      refreshTokenExpiresAt: expiresAt
     };
   }
 
   /**
    * Rotate Refresh Token (Revoke old token, issue new token pair).
    */
-  static async rotateRefreshToken(rawRefreshToken: string, context?: AuditContext) {
+  static async rotateRefreshToken(rawRefreshToken: string, context?: AuditContext, opts: Pick<MobileAuthOptions, 'customerOnly'> = {}) {
     if (!rawRefreshToken) {
       throw new AppError('Refresh token required', 401, 'TOKEN_REQUIRED');
     }
@@ -211,11 +245,10 @@ export class AuthService {
       throw new AppError('Your session is no longer valid. Please sign in again.', 401, 'ACCOUNT_INACTIVE');
     }
 
-    // Revoke old token
-    await prisma.refreshToken.update({
-      where: { id: existingToken.id },
-      data: { revokedAt: new Date() }
-    });
+    // P11A: a mobile session whose owner is no longer a pure customer fails safely; nothing is rotated or revoked here.
+    if (opts.customerOnly && !isCustomerAppAccount(tokenOwner.roles.map((r) => r.role))) {
+      await this.refuseNonCustomer(tokenOwner, 'refresh', context);
+    }
 
     // Issue new token pair
     const user = existingToken.user;
@@ -228,19 +261,28 @@ export class AuthService {
 
     const newRawRefreshToken = generateRandomToken();
     const newTokenHash = hashToken(newRawRefreshToken);
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + REFRESH_TTL_MS);
 
-    await prisma.refreshToken.create({
-      data: {
-        userId: user.id,
-        tokenHash: newTokenHash,
-        expiresAt
-      }
+    // P11A: revoking the old token and creating the new one is ONE transaction, so a failure between the two can never leave the
+    // session without a valid refresh token (and the old token is never revoked without a successor).
+    await prisma.$transaction(async (tx) => {
+      await tx.refreshToken.update({
+        where: { id: existingToken.id },
+        data: { revokedAt: new Date() }
+      });
+      await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: newTokenHash,
+          expiresAt
+        }
+      });
     });
 
     return {
       accessToken: newAccessToken,
-      rawRefreshToken: newRawRefreshToken
+      rawRefreshToken: newRawRefreshToken,
+      refreshTokenExpiresAt: expiresAt
     };
   }
 

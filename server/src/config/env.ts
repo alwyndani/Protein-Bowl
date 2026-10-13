@@ -107,7 +107,9 @@ const envSchema = z.object({
   // Public web origin used to build the setup link (defaults to the first allowed CORS origin).
   STAFF_INVITE_BASE_URL: z.string().url().optional(),
   // Lifetime of the password step-up proof in seconds (default 5 min; max 15 min).
-  STEP_UP_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(300)
+  STEP_UP_TTL_SECONDS: z.coerce.number().int().min(30).max(900).default(300),
+  // P11A: minimum supported customer mobile app version (strict MAJOR.MINOR.PATCH). Unset = no minimum enforced. Configuration, never a hard-coded value.
+  MOBILE_MIN_APP_VERSION: z.string().regex(/^\d{1,4}\.\d{1,4}\.\d{1,4}$/, 'MOBILE_MIN_APP_VERSION must be MAJOR.MINOR.PATCH').optional()
 });
 
 const _env = envSchema.safeParse(process.env);
