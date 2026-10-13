@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('../../services/messService', () => ({ MessService: { getMeals: vi.fn(), changeMeal: vi.fn() } }));
+vi.mock('../../services/messService', () => ({ MessService: { getMeals: vi.fn(), changeMeal: vi.fn(), handoverState: vi.fn(), issueHandoverCode: vi.fn(), regenerateHandoverCode: vi.fn() } }));
 
 import { MessService } from '../../services/messService';
 import { ApiRequestError } from '../../services/apiClient';
@@ -102,5 +102,44 @@ describe('Kerala Mess meal calendar (real data, operational only)', () => {
     const r2 = render(<MealCalendar subscriptionId="sub-2" />);
     await screen.findAllByTestId(/^meal-2026/);
     expect(r2.container.textContent).not.toMatch(/wallet|credit|menu|dish|cash|\bCOD\b|out for delivery|tracking/i);
+  });
+});
+
+describe('Kerala Mess meal calendar: delivery progression (P10C)', () => {
+  it('FULFILLED and NOT_DELIVERED are shown with fixed, honest wording (no refund promise), and carry no action', async () => {
+    svc.getMeals.mockResolvedValue(
+      calendar([
+        meal({ id: 'm-f', date: '2026-10-19', status: 'FULFILLED', canPause: false, reason: 'NOT_SCHEDULED', kitchenState: 'READY' }),
+        meal({ id: 'm-n', date: '2026-10-18', status: 'NOT_DELIVERED', canPause: false, reason: 'NOT_SCHEDULED', kitchenState: 'READY' })
+      ])
+    );
+    renderIt();
+    const done = await screen.findByTestId('meal-2026-10-19-LUNCH');
+    expect(done).toHaveTextContent('Fulfilled');
+    expect(within(done).queryByRole('button')).toBeNull();
+    const missed = screen.getByTestId('meal-2026-10-18-LUNCH');
+    expect(missed).toHaveTextContent('Not delivered');
+    expect(screen.getByTestId('not-delivered-note')).toHaveTextContent('Not delivered — This meal could not be completed at your service point.');
+    expect(missed.textContent).not.toMatch(/refund|credit|compensat/i);
+    expect(within(missed).queryByRole('button')).toBeNull();
+  });
+
+  it('a meal that is out for delivery says so, is NOT fulfilled, and offers the resident code panel', async () => {
+    svc.getMeals.mockResolvedValue(calendar([meal({ kitchenState: 'OUT_FOR_DELIVERY', canPause: false, reason: 'MEAL_FROZEN' })]));
+    (svc.handoverState as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ state: 'NOT_ISSUED' });
+    renderIt();
+    const row = await screen.findByTestId('meal-2026-10-20-LUNCH');
+    expect(row).toHaveTextContent('Out for delivery');
+    expect(row).toHaveTextContent('Scheduled');
+    expect(row).not.toHaveTextContent('Fulfilled');
+    expect(await within(row).findByTestId('handover-panel')).toBeInTheDocument();
+  });
+
+  it('a meal that is only prepared / ready shows no code panel', async () => {
+    svc.getMeals.mockResolvedValue(calendar([meal({ kitchenState: 'READY', canPause: false, reason: 'MEAL_FROZEN' })]));
+    renderIt();
+    const row = await screen.findByTestId('meal-2026-10-20-LUNCH');
+    expect(within(row).queryByTestId('handover-panel')).toBeNull();
+    expect(svc.handoverState).not.toHaveBeenCalled();
   });
 });

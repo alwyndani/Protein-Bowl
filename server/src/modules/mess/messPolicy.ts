@@ -36,10 +36,32 @@ export const MAX_PRICE = 1_000_000;
 export const KITCHEN_DEMAND_HORIZON_DAYS = 7;
 /** P10B: largest calendar window a customer can request in one call. */
 export const MAX_CALENDAR_WINDOW_DAYS = 93;
-export const MEAL_STATUS = { SCHEDULED: 'SCHEDULED', PAUSED: 'PAUSED', CANCELLED: 'CANCELLED', FULFILLED: 'FULFILLED' } as const;
+export const MEAL_STATUS = { SCHEDULED: 'SCHEDULED', PAUSED: 'PAUSED', CANCELLED: 'CANCELLED', FULFILLED: 'FULFILLED', NOT_DELIVERED: 'NOT_DELIVERED' } as const;
 /** Meal statuses that mean service already happened (P10C writes FULFILLED; CONSUMED is the legacy spelling). */
 export const FULFILLED_MEAL_STATUSES = ['FULFILLED', 'CONSUMED'] as const;
 export const BATCH_STATUS = { PREPARING: 'PREPARING', READY: 'READY' } as const;
+
+// ------------------------------------------------------------------------------------------------ P10C bulk delivery vocabulary + policy
+export const RUN_STATUS = { AVAILABLE: 'AVAILABLE', CLAIMED: 'CLAIMED', IN_TRANSIT: 'IN_TRANSIT', COMPLETED: 'COMPLETED', CLOSED: 'CLOSED' } as const;
+export const STOP_STATUS = { PENDING: 'PENDING', FAILED: 'FAILED', HANDED_OVER: 'HANDED_OVER', CLOSED_UNDELIVERED: 'CLOSED_UNDELIVERED' } as const;
+export const HANDOVER_METHOD = { CODE: 'CODE', ADMIN_OVERRIDE: 'ADMIN_OVERRIDE' } as const;
+/** Attempt 1 is the first delivery attempt of a stop; a retry makes attemptCount + 1; a stop never exceeds this many attempts (mirrored by the DB CHECK in migration #18). */
+export const MAX_DELIVERY_ATTEMPTS = 3;
+/** The handover code lives 3 hours after issue, but never beyond the end of the meal's Asia/Kolkata business date. */
+export const HANDOVER_CODE_TTL_MS = 3 * 60 * 60 * 1000;
+export const MAX_HANDOVER_REGENERATIONS = 3;
+export const MAX_HANDOVER_ATTEMPTS_PER_WINDOW = 5;
+export const HANDOVER_LOCK_MS = 15 * 60 * 1000;
+export const MAX_HANDOVER_LOCK_CYCLES = 3;
+export const STOP_FAILURE_CODES = ['SERVICE_POINT_CLOSED', 'RECIPIENT_UNAVAILABLE', 'CODE_NOT_AVAILABLE', 'UNABLE_TO_REACH', 'VEHICLE_ISSUE', 'QUANTITY_MISMATCH', 'OTHER'] as const;
+export const STOP_OVERRIDE_REASON_CODES = ['RECIPIENT_CANNOT_ACCESS_CODE', 'RECIPIENT_DEVICE_UNAVAILABLE', 'CODE_VERIFICATION_FAILURE', 'ACCESSIBILITY_ASSISTANCE', 'OPERATIONAL_EXCEPTION', 'OTHER'] as const;
+/** Meal statuses that can never change again by themselves (PAUSED only once the resume window has closed - see MessCompletionService). */
+export const TERMINAL_MEAL_STATUSES = ['FULFILLED', 'NOT_DELIVERED', 'CANCELLED', 'CONSUMED', 'SKIPPED'] as const;
+
+/** First instant AFTER a meal's business date (exclusive end), in Asia/Kolkata. */
+export function endOfBusinessDate(date: string): Date {
+  return new Date(`${addDays(date, 1)}T00:00:00+05:30`);
+}
 
 export const ACCOUNT_REJECTION_REASON_CODES = ['INCOMPLETE_DETAILS', 'NOT_ELIGIBLE', 'SERVICE_POINT_MISMATCH', 'OTHER'] as const;
 export const CUSTOMER_MESS_CANCEL_REASON_CODES = ['CHANGED_MIND', 'ORDERED_BY_MISTAKE', 'WRONG_PLAN', 'WRONG_START_DATE', 'OTHER'] as const;
@@ -147,6 +169,7 @@ export const servicePointCreateSchema = z
     code: codeSchema,
     name: text('Name', 2, 120),
     gateLabel: optionalText(80),
+    deliveryInstructions: optionalText(300),
     addressLine: text('Address', 3, 200),
     city: text('City', 2, 80),
     postalCode: text('Postal code', 3, 12),
@@ -159,6 +182,7 @@ export const servicePointUpdateSchema = z
     expectedVersion: z.number().int().min(1),
     name: text('Name', 2, 120).optional(),
     gateLabel: optionalText(80),
+    deliveryInstructions: optionalText(300),
     addressLine: text('Address', 3, 200).optional(),
     city: text('City', 2, 80).optional(),
     postalCode: text('Postal code', 3, 12).optional(),
@@ -263,6 +287,29 @@ export const idParams = z.object({ id: z.string().uuid() });
 export const mealParams = z.object({ id: z.string().uuid(), mealId: z.string().uuid() });
 export const calendarQuerySchema = z.object({ from: dateString('from').optional(), to: dateString('to').optional() }).strict();
 export const kitchenReadQuerySchema = z.object({ branchId: z.string().uuid().optional(), from: dateString('from').optional(), to: dateString('to').optional() }).strict();
+export const runParams = z.object({ id: z.string().uuid() });
+export const stopParams = z.object({ id: z.string().uuid(), stopId: z.string().uuid() });
+export const deliveryQuerySchema = z.object({ branchId: z.string().uuid().optional() }).strict();
+/** The code is a plain bounded string: a zod error never echoes the value. */
+export const handoverVerifySchema = z.object({ code: z.string().min(1).max(32) }).strict();
+export const stopFailSchema = z
+  .object({
+    reasonCode: z.enum(STOP_FAILURE_CODES),
+    note: z.string().max(1000).transform((v) => sanitizeNote(v)).optional()
+  })
+  .strict()
+  .refine((b) => b.reasonCode !== 'OTHER' || (typeof b.note === 'string' && b.note.length >= 3), { message: 'A short note is required for OTHER', path: ['note'] });
+export const stopOverrideSchema = z
+  .object({
+    reasonCode: z.enum(STOP_OVERRIDE_REASON_CODES),
+    note: z
+      .string()
+      .max(1000)
+      .transform((v) => sanitizeNote(v))
+      .refine((v): v is string => typeof v === 'string' && v.length >= 10, { message: 'A note of at least 10 characters is required' }),
+    confirm: z.literal(true)
+  })
+  .strict();
 export const batchStartSchema = z.object({ branchId: z.string().uuid(), mealDate: dateString('mealDate'), slot: z.enum(MEAL_SLOTS) }).strict();
 export const emptyBodySchema = z.object({}).strict();
 

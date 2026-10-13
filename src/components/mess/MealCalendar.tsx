@@ -4,6 +4,7 @@ import { MessService } from '../../services/messService';
 import type { MessCalendarMeal, MessMealCalendar } from '../../services/messTypes';
 import { describeMessError, MessUserError } from '../../utils/messErrors';
 import { AccessibleDialog } from '../common/AccessibleDialog';
+import { HandoverCodePanel } from './HandoverCodePanel';
 
 const SLOT_LABEL: Record<string, string> = { BREAKFAST: 'Breakfast', LUNCH: 'Lunch', DINNER: 'Dinner' };
 const REASON_TEXT: Record<string, string> = {
@@ -14,7 +15,7 @@ const REASON_TEXT: Record<string, string> = {
   MEAL_CANCELLED: 'Cancelled',
   NOT_SCHEDULED: 'Not available'
 };
-const KITCHEN_TEXT: Record<string, string> = { NOT_STARTED: 'Not started', IN_PREPARATION: 'Being prepared', READY: 'Prepared' };
+const KITCHEN_TEXT: Record<string, string> = { NOT_STARTED: 'Not started', IN_PREPARATION: 'Being prepared', READY: 'Prepared', OUT_FOR_DELIVERY: 'Out for delivery' };
 const timeFmt = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
 const dayFmt = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -128,8 +129,8 @@ export const MealCalendar: React.FC<{ subscriptionId: string; onSessionExpired?:
                     {SLOT_LABEL[m.slot] ?? m.slot} · {timeFmt.format(new Date(m.serviceAt))}
                   </span>
                   <span className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider ${m.status === 'PAUSED' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : m.status === 'CANCELLED' ? 'bg-stone-700/40 text-stone-300 border-stone-600' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'}`}>
-                      {m.status === 'PAUSED' ? 'Paused (forfeited)' : m.status === 'SCHEDULED' ? 'Scheduled' : m.status === 'CANCELLED' ? 'Cancelled' : 'Served'}
+                    <span className={`px-2 py-0.5 rounded-full border text-[10px] font-black uppercase tracking-wider ${m.status === 'PAUSED' ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : m.status === 'NOT_DELIVERED' ? 'bg-red-500/15 text-red-300 border-red-500/30' : m.status === 'CANCELLED' ? 'bg-stone-700/40 text-stone-300 border-stone-600' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'}`}>
+                      {m.status === 'PAUSED' ? 'Paused (forfeited)' : m.status === 'SCHEDULED' ? 'Scheduled' : m.status === 'CANCELLED' ? 'Cancelled' : m.status === 'NOT_DELIVERED' ? 'Not delivered' : 'Fulfilled'}
                     </span>
                     {m.status === 'SCHEDULED' && <span className="text-[11px] text-stone-400">{KITCHEN_TEXT[m.kitchenState]}</span>}
                     {m.canPause && (
@@ -142,8 +143,14 @@ export const MealCalendar: React.FC<{ subscriptionId: string; onSessionExpired?:
                         {busyId === m.id ? 'Working…' : 'Resume'}
                       </button>
                     )}
-                    {!m.canPause && !m.canResume && m.reason && m.status !== 'CANCELLED' && <span className="text-[11px] text-stone-500">{REASON_TEXT[m.reason] ?? ''}</span>}
+                    {!m.canPause && !m.canResume && m.reason && m.status !== 'CANCELLED' && m.status !== 'FULFILLED' && m.status !== 'NOT_DELIVERED' && <span className="text-[11px] text-stone-500">{REASON_TEXT[m.reason] ?? ''}</span>}
                   </span>
+                  {m.status === 'NOT_DELIVERED' && (
+                    <p className="w-full text-[11px] text-red-200" data-testid="not-delivered-note">
+                      Not delivered — This meal could not be completed at your service point.
+                    </p>
+                  )}
+                  {m.status === 'SCHEDULED' && m.kitchenState === 'OUT_FOR_DELIVERY' && <HandoverCodePanel subscriptionId={subscriptionId} mealId={m.id} onSessionExpired={onSessionExpired} />}
                 </li>
               ))}
             </ul>

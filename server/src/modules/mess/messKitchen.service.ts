@@ -25,6 +25,7 @@ async function breakdownFor(db: Db, batchIds: string[]) {
 
 const BATCH_SELECT = {
   id: true, mealDate: true, slot: true, status: true, mealCount: true, startedAt: true, readyAt: true,
+  run: { select: { status: true } },
   branch: { select: { id: true, code: true, name: true } }
 } as const;
 
@@ -34,7 +35,10 @@ function toBatchDto(b: BatchRow, breakdown: Array<{ servicePoint: { id: string; 
   return {
     id: b.id, branch: b.branch, mealDate: dateToString(b.mealDate), slot: b.slot, status: b.status, mealCount: b.mealCount,
     startedAt: b.startedAt.toISOString(), readyAt: b.readyAt ? b.readyAt.toISOString() : null,
-    servicePoints: breakdown ?? []
+    servicePoints: breakdown ?? [],
+    // P10C: where the batch is in delivery (null = not released yet). The CHEF may release a READY batch of today exactly once.
+    delivery: b.run ? { status: b.run.status } : null,
+    canRelease: b.status === BATCH_STATUS.READY && !b.run && dateToString(b.mealDate) === businessDate()
   };
 }
 

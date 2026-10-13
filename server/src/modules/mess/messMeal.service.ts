@@ -158,7 +158,7 @@ export class MessMealService {
     const meals = await prisma.messMeal.findMany({
       where: { messSubscriptionId: sub.id, mealDate: { gte: dateFromString(from), lte: dateFromString(to) } },
       orderBy: [{ mealDate: 'asc' }, { serviceAt: 'asc' }],
-      select: { id: true, mealDate: true, slot: true, status: true, serviceAt: true, batch: { select: { status: true } } }
+      select: { id: true, mealDate: true, slot: true, status: true, serviceAt: true, batch: { select: { status: true } }, deliveryStop: { select: { run: { select: { status: true } } } } }
     });
     const now = Date.now();
     return {
@@ -172,7 +172,8 @@ export class MessMealService {
         let canPause = false;
         let canResume = false;
         let reason: MealUnavailableReason | null = null;
-        if (!active) reason = 'SUBSCRIPTION_NOT_ACTIVE';
+        if (m.status === MEAL_STATUS.FULFILLED || m.status === MEAL_STATUS.NOT_DELIVERED) reason = 'NOT_SCHEDULED'; // P10C terminal operational states
+        else if (!active) reason = 'SUBSCRIPTION_NOT_ACTIVE';
         else if (m.status === MEAL_STATUS.CANCELLED) reason = 'MEAL_CANCELLED';
         else if (frozen) reason = 'MEAL_FROZEN';
         else if (afterCutoff) reason = 'PAUSE_CUTOFF_PASSED';
@@ -187,7 +188,8 @@ export class MessMealService {
           slot: m.slot,
           serviceAt: m.serviceAt.toISOString(),
           status: m.status,
-          kitchenState: m.batch ? (m.batch.status === 'READY' ? 'READY' : 'IN_PREPARATION') : 'NOT_STARTED',
+          // P10C: derived, safe progression. READY is NOT fulfilment and OUT_FOR_DELIVERY is NOT fulfilment: only status FULFILLED means the stop handover was verified.
+          kitchenState: m.batch ? (m.deliveryStop?.run.status === 'IN_TRANSIT' ? 'OUT_FOR_DELIVERY' : m.batch.status === 'READY' ? 'READY' : 'IN_PREPARATION') : 'NOT_STARTED',
           canPause,
           canResume,
           reason: canPause || canResume ? null : reason,

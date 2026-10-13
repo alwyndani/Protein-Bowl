@@ -168,7 +168,19 @@ export const MessKitchenPanel: React.FC<{ readOnly?: boolean; branchId?: string;
                   Mark ready
                 </button>
               )}
-              {b.status === 'READY' && <p className="text-[11px] text-stone-500">Prepared. Delivery to hostels is handled in a later phase; these meals are not marked as served.</p>}
+              {!readOnly && b.canRelease && (
+                <button type="button" disabled={!!busy} onClick={() => void run(`release-${b.id}`, () => MessService.releaseBatch(b.id))} className="inline-flex items-center gap-2 bg-sky-500 hover:bg-sky-400 text-stone-950 font-black px-4 py-2 rounded-xl text-xs disabled:opacity-50">
+                  {busy === `release-${b.id}` && <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />}
+                  Release for delivery
+                </button>
+              )}
+              {b.status === 'READY' && (
+                <p className="text-[11px] text-stone-500" data-testid="mess-batch-delivery">
+                  {b.delivery
+                    ? `Released for delivery: ${({ AVAILABLE: 'waiting for a driver', CLAIMED: 'claimed by a driver', IN_TRANSIT: 'on the road', COMPLETED: 'all service points received their meals', CLOSED: 'closed' } as Record<string, string>)[b.delivery.status] ?? b.delivery.status}.`
+                    : 'Prepared. Release it for delivery so a driver can take it to the service points. Meals are marked fulfilled only after a service point confirms the handover.'}
+                </p>
+              )}
             </li>
           ))}
         </ul>

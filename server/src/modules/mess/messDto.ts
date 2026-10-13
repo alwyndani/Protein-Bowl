@@ -9,11 +9,11 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 // ---------------------------------------------------------------------------------------------------- service points
 export function toAdminServicePointDto(sp: {
-  id: string; code: string; name: string; gateLabel: string | null; addressLine: string; city: string; postalCode: string; status: string; version: number; createdAt: Date; updatedAt: Date;
+  id: string; code: string; name: string; gateLabel: string | null; deliveryInstructions?: string | null; addressLine: string; city: string; postalCode: string; status: string; version: number; createdAt: Date; updatedAt: Date;
   branch: BranchRef;
 }) {
   return {
-    id: sp.id, code: sp.code, name: sp.name, gateLabel: sp.gateLabel, addressLine: sp.addressLine, city: sp.city, postalCode: sp.postalCode,
+    id: sp.id, code: sp.code, name: sp.name, gateLabel: sp.gateLabel, deliveryInstructions: sp.deliveryInstructions ?? null, addressLine: sp.addressLine, city: sp.city, postalCode: sp.postalCode,
     status: sp.status, version: sp.version, branch: { id: sp.branch.id, code: sp.branch.code, name: sp.branch.name }, createdAt: sp.createdAt.toISOString(), updatedAt: sp.updatedAt.toISOString()
   };
 }

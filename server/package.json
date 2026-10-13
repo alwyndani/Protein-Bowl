@@ -16,6 +16,7 @@
     "prisma:seed": "prisma db seed",
     "admin:bootstrap": "tsx scripts/bootstrapSuperAdmin.ts",
     "mess:generate-meals": "tsx scripts/generateMessMeals.ts",
+    "mess:close-day": "tsx scripts/closeMessDay.ts",
     "payments:reconcile": "tsx scripts/reconcilePayments.ts",
     "payments:recovery": "tsx scripts/paymentsRecovery.ts",
     "payments:mock-webhook": "tsx scripts/mockPaymentWebhook.ts"

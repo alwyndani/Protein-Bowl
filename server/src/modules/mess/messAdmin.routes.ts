@@ -1,8 +1,8 @@
 import { NextFunction, Request, Response, Router } from 'express';
 import { RoleEnum } from '@prisma/client';
-import { authenticateToken, requirePermission } from '../../middleware/auth.middleware.js';
+import { authenticateToken, requireExactRoles, requirePermission } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../middleware/error.middleware.js';
-import { messAdminRateLimiter, messReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { messAdminRateLimiter, messDeliveryOverrideRateLimiter, messReadRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AuditService } from '../audit/audit.service.js';
@@ -10,6 +10,7 @@ import { requireStepUp } from '../admin/stepUp.service.js';
 import { MessAccountService } from './messAccount.service.js';
 import { MessAdminService } from './messAdmin.service.js';
 import { MessCancellationService } from './messCancellation.service.js';
+import { MessDeliveryService } from './messDelivery.service.js';
 import { MessPurchaseService } from './messPurchase.service.js';
 import {
   accountApproveSchema,
@@ -21,7 +22,8 @@ import {
   planCreateSchema,
   planUpdateSchema,
   servicePointCreateSchema,
-  servicePointUpdateSchema
+  servicePointUpdateSchema,
+  stopOverrideSchema
 } from './messPolicy.js';
 
 /**
@@ -68,5 +70,22 @@ router.post('/mess/subscriptions/:id/cancel', ...write('mess.subscription.cancel
   const out = await MessCancellationService.adminCancel(actorOf(req), req.params.id, req.body, ctx(req));
   return ApiResponse.success(res, out, out.alreadyCancelled ? 'This subscription was already cancelled' : 'Subscription cancelled');
 }));
+
+// P10C: EXCEPTIONAL service-point handover confirmation. NOT routine: SUPER_ADMIN only (mess:delivery:override), step-up, fixed reason code, mandatory note and explicit
+// confirmation. It never reveals or regenerates a handover code and never pretends a code was verified (method ADMIN_OVERRIDE).
+router.post(
+  '/mess/delivery/stops/:id/override',
+  authenticateToken,
+  requireExactRoles([RoleEnum.SUPER_ADMIN]),
+  requirePermission('mess:delivery:override'),
+  messDeliveryOverrideRateLimiter,
+  requireStepUp('mess.delivery.override'),
+  validateParams(idParams),
+  validateBody(stopOverrideSchema),
+  wrap(async (req, res) => {
+    const out = await MessDeliveryService.override(actorOf(req), req.params.id, req.body, ctx(req));
+    return ApiResponse.success(res, out, out.changed ? 'Handover confirmed by override' : 'No change: this stop was already confirmed by override');
+  })
+);
 
 export default router;

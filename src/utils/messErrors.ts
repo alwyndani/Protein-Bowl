@@ -39,16 +39,46 @@ const TABLE: Record<string, { action: MessErrorAction; message: string }> = {
   MEAL_CANCELLED: { action: 'REFRESH', message: 'This meal was cancelled.' },
   MEAL_NOT_SCHEDULED: { action: 'REFRESH', message: 'This meal can no longer be paused.' },
   MEAL_NOT_PAUSED: { action: 'REFRESH', message: 'This meal is not paused.' },
+  BATCH_NOT_READY: { action: 'REFRESH', message: 'Only a batch that is marked ready can be released for delivery.' },
+  BATCH_EXPIRED: { action: 'REFRESH', message: 'This batch belongs to a day that has already ended.' },
+  BATCH_CHANGED: { action: 'REFRESH', message: 'This batch changed. Please refresh and try again.' },
+  ALREADY_CLAIMED: { action: 'REFRESH', message: 'Another driver has already claimed this run.' },
+  RUN_NOT_AVAILABLE: { action: 'REFRESH', message: 'This run is no longer available.' },
+  RUN_NOT_CLAIMED: { action: 'REFRESH', message: 'Claim the run before starting it.' },
+  RUN_NOT_IN_TRANSIT: { action: 'REFRESH', message: 'Start the run before confirming a handover.' },
+  DELIVERY_DAY_ENDED: { action: 'REFRESH', message: 'The day of this run has ended, so it can no longer be worked on.' },
+  HANDOVER_CODE_NOT_ISSUED: { action: 'NONE', message: 'No resident has requested the handover code yet. Ask a resident of this service point to open their meal calendar.' },
+  HANDOVER_CODE_LOCKED: { action: 'REFRESH', message: 'Too many incorrect codes. Code entry is locked for a while.' },
+  HANDOVER_CODE_BLOCKED: { action: 'REFRESH', message: 'This handover code is blocked. A resident must generate a new one.' },
+  HANDOVER_CODE_EXPIRED: { action: 'REFRESH', message: 'The handover code has expired. A resident must generate a new one.' },
+  HANDOVER_CODE_CHANGED: { action: 'NONE', message: 'A new handover code was generated. Ask the resident for the latest one.' },
+  INVALID_HANDOVER_CODE: { action: 'NONE', message: 'That handover code is not correct.' },
+  INVALID_HANDOVER_CODE_FORMAT: { action: 'NONE', message: 'Enter the 6-digit handover code.' },
+  ALREADY_HANDED_OVER: { action: 'REFRESH', message: 'This stop has already been handed over.' },
+  STOP_CLOSED: { action: 'REFRESH', message: 'This stop has been closed.' },
+  STOP_FAILED: { action: 'REFRESH', message: 'A problem was reported for this stop. Retry it first.' },
+  STOP_NOT_PENDING: { action: 'REFRESH', message: 'This stop is not waiting for a handover.' },
+  STOP_NOT_FAILED: { action: 'REFRESH', message: 'Only a stop with a reported problem can be retried.' },
+  STOP_CHANGED: { action: 'REFRESH', message: 'This stop just changed. Please refresh.' },
+  STOP_QUANTITY_MISMATCH: { action: 'REFRESH', message: 'The meals of this stop changed, so nothing was confirmed. Please contact the Protein Bowl team.' },
+  DELIVERY_ATTEMPT_LIMIT_REACHED: { action: 'REFRESH', message: 'The maximum number of delivery attempts for this stop has been reached.' },
+  HANDOVER_NOT_AVAILABLE: { action: 'REFRESH', message: 'A handover code is not available for this meal right now.' },
+  HANDOVER_CODE_ALREADY_ISSUED: { action: 'REFRESH', message: 'You already generated the handover code for your service point.' },
+  HANDOVER_CODE_ISSUED_TO_ANOTHER: { action: 'REFRESH', message: 'A resident of your service point already holds the handover code for this delivery.' },
+  HANDOVER_REGENERATION_LIMIT: { action: 'NONE', message: 'You cannot generate more new handover codes for this delivery.' },
   MEAL_CHANGED: { action: 'REFRESH', message: 'This meal was just changed. Please check its state and try again.' },
   NOT_FOUND: { action: 'REFRESH', message: 'We could not find that. Please refresh.' },
   TOO_MANY_REQUESTS: { action: 'NONE', message: 'Too many requests. Please wait a moment and try again.' },
   VALIDATION_ERROR: { action: 'NONE', message: 'Please check the details you entered.' }
 };
 
+/** 422 answers that carry their own safe copy (a wrong code is not a form-validation problem). */
+const HANDOVER_422 = new Set(['INVALID_HANDOVER_CODE', 'INVALID_HANDOVER_CODE_FORMAT']);
+
 export function describeMessError(err: unknown): MessUserError {
   if (err instanceof ApiRequestError) {
     if (err.status === 401) return { code: 'UNAUTHORIZED', ...TABLE.UNAUTHORIZED };
-    if (err.status === 422) return { code: err.code, ...TABLE.VALIDATION_ERROR };
+    if (err.status === 422 && !HANDOVER_422.has(err.code)) return { code: err.code, ...TABLE.VALIDATION_ERROR };
     const hit = TABLE[err.code];
     if (hit) return { code: err.code, ...hit };
     if (err.status === 429) return { code: 'TOO_MANY_REQUESTS', ...TABLE.TOO_MANY_REQUESTS };

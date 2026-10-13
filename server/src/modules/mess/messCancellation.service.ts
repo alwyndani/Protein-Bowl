@@ -12,7 +12,7 @@ import { FULFILLED_MEAL_STATUSES, MessTx, SUBSCRIPTION_STATUS, adminCancelSchema
  * cancellation rule "no fulfilled meal" is already evaluated here (under the subscription lock) so P10B only has to make this real.
  */
 export async function fulfilledMealCount(tx: MessTx, subscriptionId: string): Promise<number> {
-  return await tx.messMeal.count({ where: { messSubscriptionId: subscriptionId, status: { in: [...FULFILLED_MEAL_STATUSES] } } });
+  return await tx.messMeal.count({ where: { messSubscriptionId: subscriptionId, status: { in: [...FULFILLED_MEAL_STATUSES, 'NOT_DELIVERED'] } } }); // P10C: an expired / undelivered meal also means service days have passed
 }
 
 type Row = { status: string; startDate: Date };

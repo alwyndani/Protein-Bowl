@@ -405,3 +405,5 @@ All phases follow the Git workflow in the directive (implement → gates → rep
 > **Status update 2026-10-12 — P10A (Kerala Mess foundation) VERIFIED in the working tree, NOT YET COMMITTED:** accounts + approval, service points, plans, paid/activated subscriptions, full-refund cancellation, real web screens (see CLAUDE.md §22i). **P10B (meal generation / pause / Chef demand) and P10C (bulk delivery / handover) are NOT STARTED**; D10 inputs used for P10A: explicit plan price + tax rate set by SUPER_ADMIN, explicit start lead days, SUPER_ADMIN-managed service points, branch-level plan availability.
 
 > **Status update 2026-10-13 — P10B (Kerala Mess meals / pause / kitchen batches) VERIFIED in the working tree, NOT YET COMMITTED** (CLAUDE.md 22j). **P10C (bulk delivery, handover, FULFILLED, COMPLETED) and P11 (mobile) are NOT STARTED.**
+
+> **Status update 2026-10-13 — P10B COMMITTED (1b33679); P10C (Kerala Mess bulk delivery / secure service-point handover / fulfilment / completion) VERIFIED in the working tree, NOT YET COMMITTED** (CLAUDE.md 22k). **P11 (mobile) is NOT STARTED.**

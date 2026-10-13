@@ -971,7 +971,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
     it('66. SUPER_ADMIN exception: a started subscription with NO fulfilled meal is cancelled with a FULL refund; with a fulfilled meal it is refused', async () => {
       const sub = (globalThis as Record<string, unknown>).__startedSub as { id: string; purchaseOrder: { id: string } };
       const lunch = await prisma.messMeal.findFirstOrThrow({ where: { messSubscriptionId: sub.id, mealDate: new Date(`${today}T00:00:00.000Z`), slot: 'LUNCH' } });
-      await prisma.messMeal.update({ where: { id: lunch.id }, data: { status: 'FULFILLED', consumedAt: new Date() } }); // simulates P10C fulfilment
+      await prisma.messMeal.update({ where: { id: lunch.id }, data: { status: 'FULFILLED', fulfilledAt: new Date(), consumedAt: new Date() } }); // simulates P10C fulfilment
       const refused = await adminCancel(sub.id);
       expect(refused.status).toBe(409);
       expect(refused.body.error).toBe('MESS_CANCELLATION_NOT_ALLOWED');

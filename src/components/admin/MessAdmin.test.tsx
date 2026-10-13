@@ -15,7 +15,7 @@ vi.mock('../../services/messService', () => ({
   MessService: {
     adminAccounts: vi.fn(), adminServicePoints: vi.fn(), adminPlans: vi.fn(), adminSubscriptions: vi.fn(),
     approveAccount: vi.fn(), rejectAccount: vi.fn(), createServicePoint: vi.fn(), updateServicePoint: vi.fn(),
-    createPlan: vi.fn(), updatePlan: vi.fn(), planAction: vi.fn(), adminCancel: vi.fn(), kitchenDemand: vi.fn(), kitchenBatches: vi.fn(), startBatch: vi.fn(), markBatchReady: vi.fn()
+    createPlan: vi.fn(), updatePlan: vi.fn(), planAction: vi.fn(), adminCancel: vi.fn(), kitchenDemand: vi.fn(), kitchenBatches: vi.fn(), startBatch: vi.fn(), markBatchReady: vi.fn(), deliveryMonitor: vi.fn(), overrideStop: vi.fn()
   }
 }));
 
@@ -24,7 +24,7 @@ import { MessService } from '../../services/messService';
 import { AdminWorkspace } from './AdminWorkspace';
 import { MessAdmin } from './MessAdmin';
 import { BRANCHES, BRANCH_A_ID, catalogue, page, staff } from '../../test/adminFixtures';
-import { SP_A, adminAccount, adminPlan, adminServicePoint, adminSubscription } from '../../test/messFixtures';
+import { SP_A, adminAccount, adminPlan, adminServicePoint, adminSubscription, messRun, stop } from '../../test/messFixtures';
 
 const admin = vi.mocked(AdminService);
 const mess = vi.mocked(MessService);
@@ -271,4 +271,74 @@ describe('Kerala Mess administration (MD, read-only)', () => {
     expect(mess.adminAccounts).not.toHaveBeenCalled();
     void BRANCH_A_ID;
   });
+});
+
+describe('Kerala Mess administration: delivery monitor and exceptional handover (P10C)', () => {
+  const BRANCH = '11111111-1111-4111-8111-111111111111';
+  const monitor = (withNote = true) => ({
+    serverTime: '2026-10-20T05:30:00.000Z',
+    today: '2026-10-20',
+    runs: [messRun({ driver: { name: 'Kiran Driver', employeeCode: 'DEL-7' }, stops: [stop(), stop({ id: 'stop-2', status: 'FAILED', failureCode: 'OTHER', ...(withNote ? { failureNote: 'Gate was locked' } : {}), servicePoint: { name: 'Hostel B2', gateLabel: null, addressLine: 'NIT Road', city: 'Kozhikode', postalCode: '673601', deliveryInstructions: null } })] })]
+  });
+
+  it('SUPER_ADMIN watches one explicit branch; the monitor never shows a code, and an exceptional handover needs step-up, a reason, a note and a confirmation', async () => {
+    const user = userEvent.setup();
+    mess.deliveryMonitor.mockResolvedValue(monitor());
+    mess.overrideStop.mockResolvedValue({ changed: true });
+    const panel = await openMess(user, 'Mess delivery');
+    expect(mess.deliveryMonitor).not.toHaveBeenCalled();
+    await user.selectOptions(await within(panel).findByLabelText('Branch'), BRANCH);
+    const run = await within(panel).findByTestId('mess-monitor-run-2026-10-20-LUNCH');
+    expect(mess.deliveryMonitor).toHaveBeenCalledWith(BRANCH);
+    expect(run).toHaveTextContent('Kiran Driver (DEL-7)');
+    expect(within(run).getByTestId('mess-monitor-note')).toHaveTextContent('Gate was locked'); // SUPER_ADMIN sees the driver's note
+    expect(run.textContent).not.toMatch(/\b\d{6}\b|code:|recipient/i);
+    const a1 = within(run).getByTestId('mess-monitor-stop-Hostel A1');
+    await user.click(within(a1).getByRole('button', { name: 'Confirm handover (exception)…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('without a handover code');
+    const submit = within(dialog).getByRole('button', { name: 'Confirm handover' });
+    expect(submit).toBeDisabled();
+    await user.selectOptions(within(dialog).getByLabelText('Reason'), 'RECIPIENT_DEVICE_UNAVAILABLE');
+    await user.type(within(dialog).getByLabelText(/Note/), 'short');
+    await user.click(within(dialog).getByLabelText(/I confirm that this service point received its meals/));
+    expect(submit).toBeDisabled(); // the note is too short
+    await user.type(within(dialog).getByLabelText(/Note/), ' note that is long enough');
+    await user.click(submit);
+    await confirmPassword(user);
+    await waitFor(() => expect(mess.overrideStop).toHaveBeenCalledTimes(1));
+    expect(mess.overrideStop).toHaveBeenCalledWith('stop-1', { reasonCode: 'RECIPIENT_DEVICE_UNAVAILABLE', note: 'short note that is long enough' }, 'PROOF-1');
+    // only a PENDING stop of a run on the road is offered the exception
+    expect(within(run).getByTestId('mess-monitor-stop-Hostel B2').querySelector('button')).toBeNull();
+  }, 15000); // step-up dialog flow: slower under full-suite parallel load
+
+  it('the MD sees the same monitor read-only: no exception button, no free-text driver note, no step-up', async () => {
+    mess.deliveryMonitor.mockResolvedValue(monitor(false));
+    const user = userEvent.setup();
+    render(<MessAdmin readOnly />);
+    await user.click(screen.getByRole('tab', { name: 'Mess delivery' }));
+    await user.selectOptions(await screen.findByLabelText('Branch'), BRANCH);
+    const run = await screen.findByTestId('mess-monitor-run-2026-10-20-LUNCH');
+    expect(run).toHaveTextContent('Hostel B2');
+    expect(screen.queryByTestId('mess-monitor-note')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Confirm handover/ })).toBeNull();
+    expect(admin.stepUp).not.toHaveBeenCalled();
+    expect(mess.overrideStop).not.toHaveBeenCalled();
+  });
+
+  it('a service point carries optional delivery instructions (no phone field), sent with the edit', async () => {
+    const user = userEvent.setup();
+    mess.updateServicePoint.mockResolvedValue(adminServicePoint());
+    const panel = await openMess(user, 'Service points');
+    await user.click(await within(panel).findByRole('button', { name: 'Edit…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText(/phone|contact/i)).toBeNull();
+    const field = within(dialog).getByLabelText('Delivery instructions (optional)');
+    expect(field).toHaveAttribute('maxlength', '300');
+    await user.type(field, 'Ring the bell twice');
+    await user.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await confirmPassword(user);
+    await waitFor(() => expect(mess.updateServicePoint).toHaveBeenCalledTimes(1));
+    expect(mess.updateServicePoint.mock.calls[0][1]).toMatchObject({ deliveryInstructions: 'Ring the bell twice' });
+  }, 15000);
 });

@@ -31,6 +31,8 @@ enum UserStatus {
 }
 
 model User {
+  messDeliveryRunsReleased MessDeliveryRun[] @relation("MessDeliveryRunReleasedBy")
+  messStopOverrides    MessDeliveryStop[] @relation("MessStopOverrideBy")
   id                  String               @id @default(uuid())
   email               String               @unique
   passwordHash        String
@@ -113,6 +115,7 @@ model AuditLog {
 }
 
 model KitchenBranch {
+  messDeliveryRuns    MessDeliveryRun[]
   id                  String               @id @default(uuid())
   code                String               @unique
   name                String
@@ -181,6 +184,7 @@ model StaffInvitation {
 }
 
 model CustomerProfile {
+  messHandoverStops   MessDeliveryStop[] @relation("MessStopRecipient")
   id                  String               @id @default(uuid())
   userId              String               @unique
   fullName            String
@@ -312,6 +316,8 @@ model HealthBiometrics {
 }
 
 model EmployeeProfile {
+  messRunsClaimed     MessDeliveryRun[]  @relation("MessRunClaimedBy")
+  messStopsHandedOver MessDeliveryStop[] @relation("MessStopHandedOverBy")
   id                  String               @id @default(uuid())
   userId              String               @unique
   employeeCode        String               @unique
@@ -935,6 +941,7 @@ model MessServicePoint {
   addressLine String
   city        String
   postalCode  String
+  deliveryInstructions String?     // P10C: optional operational note for the delivery team (max 300), SUPER_ADMIN managed
   branchId    String
   status      String             @default("ACTIVE") // ACTIVE | INACTIVE
   version     Int                @default(1)
@@ -945,6 +952,7 @@ model MessServicePoint {
   accounts      MessAccount[]
   subscriptions MessSubscription[]
   meals         MessMeal[]
+  deliveryStops MessDeliveryStop[]
 
   @@index([branchId, status])
   @@map("mess_service_points")
@@ -1039,6 +1047,8 @@ model MessMeal {
   servicePointId     String
   serviceAt          DateTime         // the service INSTANT (date + slot time in Asia/Kolkata)
   batchId            String?          // frozen kitchen membership
+  deliveryStopId     String?          // P10C: frozen delivery membership (set when the batch is released into a run)
+  fulfilledAt        DateTime?        // P10C: set ONLY by a verified (or overridden) stop handover
   pausedAt           DateTime?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @default(now()) @updatedAt
@@ -1047,11 +1057,13 @@ model MessMeal {
   branch             KitchenBranch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
   servicePoint       MessServicePoint @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
   batch              MessMealBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  deliveryStop       MessDeliveryStop? @relation(fields: [deliveryStopId], references: [id], onDelete: Restrict)
   events             MessMealEvent[]
 
   @@unique([messSubscriptionId, mealDate, slot])
   @@index([branchId, mealDate, slot, status])
   @@index([batchId])
+  @@index([deliveryStopId])
   @@map("mess_daily_orders")
 }
 
@@ -1074,6 +1086,7 @@ model MessMealBatch {
   startedBy       User          @relation("MessMealBatchStartedBy", fields: [startedByUserId], references: [id], onDelete: Restrict)
   readiedBy       User?         @relation("MessMealBatchReadiedBy", fields: [readyByUserId], references: [id], onDelete: Restrict)
   meals           MessMeal[]
+  run             MessDeliveryRun?
 
   @@unique([branchId, mealDate, slot])
   @@map("mess_meal_batches")
@@ -1502,4 +1515,84 @@ model MealPlanDefinition {
   includesList  String[] @default([])
 
   @@map("meal_plan_definitions")
+}
+
+/// P10C: ONE bulk delivery run per READY kitchen batch (explicitly released by the CHEF). NOT a commerce Order and NOT a P9 DeliveryAssignment.
+model MessDeliveryRun {
+  id                  String   @id @default(uuid())
+  batchId             String   @unique
+  branchId            String
+  mealDate            DateTime @db.Date
+  slot                String
+  status              String   @default("AVAILABLE") // AVAILABLE | CLAIMED | IN_TRANSIT | COMPLETED | CLOSED
+  stopCount           Int
+  mealCount           Int
+  releasedByUserId    String
+  releasedAt          DateTime @default(now())
+  claimedByEmployeeId String?
+  claimedAt           DateTime?
+  dispatchedAt        DateTime?
+  completedAt         DateTime?
+  closedAt            DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @default(now()) @updatedAt
+
+  batch      MessMealBatch    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  branch     KitchenBranch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  releasedBy User             @relation("MessDeliveryRunReleasedBy", fields: [releasedByUserId], references: [id], onDelete: Restrict)
+  claimedBy  EmployeeProfile? @relation("MessRunClaimedBy", fields: [claimedByEmployeeId], references: [id], onDelete: Restrict)
+  stops      MessDeliveryStop[]
+
+  @@index([branchId, status])
+  @@index([claimedByEmployeeId, status])
+  @@map("mess_delivery_runs")
+}
+
+/// P10C: one stop = one frozen service point of the batch. The snapshot fields never change after release; the handover proof is HMAC-only.
+model MessDeliveryStop {
+  id                         String   @id @default(uuid())
+  runId                      String
+  servicePointId             String
+  servicePointName           String
+  gateLabel                  String?
+  addressLine                String
+  city                       String
+  postalCode                 String
+  deliveryInstructions       String?
+  expectedQuantity           Int
+  status                     String   @default("PENDING") // PENDING | FAILED | HANDED_OVER | CLOSED_UNDELIVERED
+  attemptCount               Int      @default(1)
+  lastFailureCode            String?
+  lastFailureNote            String?
+  failedAt                   DateTime?
+  codeHash                   String?
+  codeVersion                Int      @default(0)
+  codeIssuedAt               DateTime?
+  codeExpiresAt              DateTime?
+  recipientCustomerProfileId String?
+  regenerationCount          Int      @default(0)
+  failedCodeAttempts         Int      @default(0)
+  lockCycles                 Int      @default(0)
+  lockedUntil                DateTime?
+  blockedAt                  DateTime?
+  handedOverAt               DateTime?
+  handoverMethod             String?  // CODE | ADMIN_OVERRIDE
+  handedOverByEmployeeId     String?
+  overrideByUserId           String?
+  overrideReasonCode         String?
+  overrideNote               String?
+  closedAt                   DateTime?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @default(now()) @updatedAt
+
+  run                MessDeliveryRun  @relation(fields: [runId], references: [id], onDelete: Restrict)
+  servicePoint       MessServicePoint @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+  recipient          CustomerProfile? @relation("MessStopRecipient", fields: [recipientCustomerProfileId], references: [id], onDelete: Restrict)
+  handedOverBy       EmployeeProfile? @relation("MessStopHandedOverBy", fields: [handedOverByEmployeeId], references: [id], onDelete: Restrict)
+  overrideBy         User?            @relation("MessStopOverrideBy", fields: [overrideByUserId], references: [id], onDelete: Restrict)
+  meals              MessMeal[]
+
+  @@unique([runId, servicePointId])
+  @@index([status])
+  @@map("mess_delivery_stops")
 }

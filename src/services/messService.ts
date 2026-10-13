@@ -7,6 +7,13 @@ import type {
   MessAdminServicePoint,
   MessAdminSubscription,
   MessCancelResult,
+  MessDeliveryMonitor,
+  MessDriverRuns,
+  MessHandoverStatus,
+  MessIssuedHandoverCode,
+  MessRun,
+  MessStopFailureCode,
+  MessStopOverrideReason,
   MessKitchenBatch,
   MessKitchenDemand,
   MessMealCalendar,
@@ -99,6 +106,49 @@ export class MessService {
     return await ApiClient.requestData(`/mess/kitchen/batches/${encodeURIComponent(batchId)}/ready`, { method: 'POST', body: JSON.stringify({}) });
   }
 
+  public static async releaseBatch(batchId: string): Promise<{ changed: boolean; run: MessRun }> {
+    return await ApiClient.requestData(`/mess/kitchen/batches/${encodeURIComponent(batchId)}/release`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  // ------------------------------------------------------------------ P10C bulk delivery (DELIVERY actions; SUPER_ADMIN / MD read-only monitor)
+  public static async deliveryRuns(branchId?: string): Promise<MessDriverRuns> {
+    return await ApiClient.requestData(`/mess/delivery/runs${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`);
+  }
+  public static async claimRun(runId: string): Promise<{ changed: boolean }> {
+    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/claim`, { method: 'POST', body: JSON.stringify({}) });
+  }
+  public static async dispatchRun(runId: string): Promise<{ changed: boolean }> {
+    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/dispatch`, { method: 'POST', body: JSON.stringify({}) });
+  }
+  /** The code is sent ONLY in this body; it is never stored, logged or kept after the request. */
+  public static async verifyStop(runId: string, stopId: string, code: string): Promise<{ changed: boolean }> {
+    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/verify`, { method: 'POST', body: JSON.stringify({ code }) });
+  }
+  public static async failStop(runId: string, stopId: string, reasonCode: MessStopFailureCode, note?: string): Promise<{ changed: boolean }> {
+    const n = note?.trim();
+    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/fail`, { method: 'POST', body: JSON.stringify(n ? { reasonCode, note: n } : { reasonCode }) });
+  }
+  public static async retryStop(runId: string, stopId: string): Promise<{ changed: boolean }> {
+    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/retry`, { method: 'POST', body: JSON.stringify({}) });
+  }
+  public static async deliveryMonitor(branchId: string): Promise<MessDeliveryMonitor> {
+    return await ApiClient.requestData(`/mess/delivery/monitor?branchId=${encodeURIComponent(branchId)}`);
+  }
+
+  // ------------------------------------------------------------------ P10C resident handover code (CUSTOMER)
+  private static codePath(subscriptionId: string, mealId: string) {
+    return `/mess/subscriptions/${encodeURIComponent(subscriptionId)}/meals/${encodeURIComponent(mealId)}/handover-code`;
+  }
+  public static async handoverState(subscriptionId: string, mealId: string): Promise<MessHandoverStatus> {
+    return await ApiClient.requestData(this.codePath(subscriptionId, mealId));
+  }
+  public static async issueHandoverCode(subscriptionId: string, mealId: string): Promise<MessIssuedHandoverCode> {
+    return await ApiClient.requestData(this.codePath(subscriptionId, mealId), { method: 'POST', body: JSON.stringify({}) });
+  }
+  public static async regenerateHandoverCode(subscriptionId: string, mealId: string): Promise<MessIssuedHandoverCode> {
+    return await ApiClient.requestData(`${this.codePath(subscriptionId, mealId)}/regenerate`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
   // ------------------------------------------------------------------ staff reads (SUPER_ADMIN + MD)
   public static async adminServicePoints(): Promise<MessAdminServicePoint[]> {
     return (await ApiClient.requestData<{ servicePoints: MessAdminServicePoint[] }>('/admin/mess/service-points')).servicePoints;
@@ -135,6 +185,10 @@ export class MessService {
   public static async rejectAccount(id: string, reasonCode: string, note: string | undefined, proof: string): Promise<MessAdminAccount> {
     const n = note?.trim();
     return (await ApiClient.requestData<{ account: MessAdminAccount }>(`/admin/mess/accounts/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify(n ? { reasonCode, note: n } : { reasonCode }), ...stepUp(proof) })).account;
+  }
+  /** EXCEPTIONAL handover confirmation (SUPER_ADMIN + step-up). It never reveals or creates a code. */
+  public static async overrideStop(stopId: string, input: { reasonCode: MessStopOverrideReason; note: string }, proof: string): Promise<{ changed: boolean }> {
+    return await ApiClient.requestData(`/admin/mess/delivery/stops/${encodeURIComponent(stopId)}/override`, { method: 'POST', body: JSON.stringify({ reasonCode: input.reasonCode, note: input.note.trim(), confirm: true }), ...stepUp(proof) });
   }
   public static async adminCancel(id: string, reasonCode: string, note: string | undefined, proof: string): Promise<MessCancelResult> {
     const n = note?.trim();

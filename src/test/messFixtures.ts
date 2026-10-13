@@ -9,6 +9,8 @@ import type {
   MessAdminServicePoint,
   MessAdminSubscription,
   MessPublicPlan,
+  MessRun,
+  MessStop,
   MessServicePointOption,
   MessSubscription
 } from '../services/messTypes';
@@ -179,5 +181,39 @@ export const batch = (over: Partial<MessKitchenBatch> = {}): MessKitchenBatch =>
   startedAt: '2026-10-19T02:00:00.000Z',
   readyAt: null,
   servicePoints: [{ servicePoint: { id: 'sp-1', name: 'Hostel A1', gateLabel: null }, mealCount: 4 }],
+  delivery: null,
+  canRelease: false,
+  ...over
+});
+
+// ---------------------------------------------------------------------------------------------------- P10C: bulk delivery
+export const stop = (over: Partial<MessStop> = {}): MessStop => ({
+  id: 'stop-1',
+  servicePoint: { name: 'Hostel A1', gateLabel: 'Main gate', addressLine: 'CUSAT Campus', city: 'Kochi', postalCode: '682022', deliveryInstructions: 'Ring the bell twice' },
+  expectedQuantity: 3,
+  status: 'PENDING',
+  attempt: { number: 1, max: 3 },
+  failureCode: null,
+  proof: { state: 'READY_FOR_VERIFICATION', lockedUntil: null },
+  handedOverAt: null,
+  handoverMethod: null,
+  closedAt: null,
+  ...over
+});
+
+export const messRun = (over: Partial<MessRun> = {}): MessRun => ({
+  id: 'run-1',
+  branch: BR,
+  mealDate: '2026-10-20',
+  slot: 'LUNCH',
+  status: 'IN_TRANSIT',
+  mealCount: 4,
+  stopCount: 2,
+  releasedAt: '2026-10-20T05:00:00.000Z',
+  claimedAt: '2026-10-20T05:10:00.000Z',
+  dispatchedAt: '2026-10-20T05:20:00.000Z',
+  completedAt: null,
+  closedAt: null,
+  stops: [stop(), stop({ id: 'stop-2', servicePoint: { name: 'Hostel B2', gateLabel: null, addressLine: 'NIT Road', city: 'Kozhikode', postalCode: '673601', deliveryInstructions: null }, expectedQuantity: 1 })],
   ...over
 });

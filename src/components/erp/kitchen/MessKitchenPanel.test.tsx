@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-vi.mock('../../../services/messService', () => ({ MessService: { kitchenDemand: vi.fn(), kitchenBatches: vi.fn(), startBatch: vi.fn(), markBatchReady: vi.fn() } }));
+vi.mock('../../../services/messService', () => ({ MessService: { kitchenDemand: vi.fn(), kitchenBatches: vi.fn(), startBatch: vi.fn(), markBatchReady: vi.fn(), releaseBatch: vi.fn() } }));
 
 import { MessService } from '../../../services/messService';
 import { ApiRequestError } from '../../../services/apiClient';
@@ -48,7 +48,7 @@ describe('Mess kitchen panel (CHEF)', () => {
     await waitFor(() => expect(svc.kitchenDemand.mock.calls.length).toBeGreaterThanOrEqual(2));
   });
 
-  it('a PREPARING batch shows its frozen count and breakdown and can be marked ready; a READY batch cannot, and says it is not served', async () => {
+  it('a PREPARING batch shows its frozen count and breakdown and can be marked ready; a READY batch cannot, and says meals are fulfilled only after a handover', async () => {
     const user = userEvent.setup();
     svc.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch(), batch({ id: 'b2', slot: 'LUNCH', status: 'READY', mealCount: 7, readyAt: '2026-10-19T05:00:00.000Z' })] });
     svc.markBatchReady.mockResolvedValue({ changed: true, batch: batch({ status: 'READY' }) });
@@ -60,8 +60,8 @@ describe('Mess kitchen panel (CHEF)', () => {
     await waitFor(() => expect(svc.markBatchReady).toHaveBeenCalledWith('batch-1'));
     const ready = screen.getByTestId('mess-batch-2026-10-19-LUNCH');
     expect(within(ready).queryByRole('button')).toBeNull();
-    expect(ready).toHaveTextContent('not marked as served');
-    expect(document.body.textContent).not.toMatch(/out for delivery|handover|gate pass/i);
+    expect(ready).toHaveTextContent('fulfilled only after a service point confirms the handover');
+    expect(document.body.textContent).not.toMatch(/gate pass|cash|refund|wallet/i);
   });
 
   it('a refused action shows fixed copy (never the server text)', async () => {
@@ -84,5 +84,29 @@ describe('Mess kitchen panel (SUPER_ADMIN / MD read-only)', () => {
     expect(svc.kitchenDemand).toHaveBeenCalledWith(BRANCH);
     expect(screen.queryByRole('button', { name: /Start preparation|Mark ready/ })).toBeNull();
     expect(screen.getByTestId('mess-kitchen')).toHaveTextContent('read-only');
+  });
+
+  it('a READY batch can be released for delivery exactly once; the released state is shown; read-only views never offer it', async () => {
+    const user = userEvent.setup();
+    svc.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch({ id: 'b3', status: 'READY', slot: 'LUNCH', readyAt: '2026-10-19T05:00:00.000Z', canRelease: true })] });
+    svc.releaseBatch.mockImplementation(() => new Promise((r) => setTimeout(() => r({ changed: true, run: {} as never }), 50)));
+    const { unmount } = render(<MessKitchenPanel />);
+    const ready = await screen.findByTestId('mess-batch-2026-10-19-LUNCH');
+    await user.dblClick(within(ready).getByRole('button', { name: 'Release for delivery' }));
+    await waitFor(() => expect(svc.releaseBatch).toHaveBeenCalledTimes(1));
+    expect(svc.releaseBatch).toHaveBeenCalledWith('b3');
+    unmount();
+    svc.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch({ id: 'b3', status: 'READY', slot: 'LUNCH', readyAt: '2026-10-19T05:00:00.000Z', canRelease: false, delivery: { status: 'IN_TRANSIT' } })] });
+    render(<MessKitchenPanel />);
+    const released = await screen.findByTestId('mess-batch-2026-10-19-LUNCH');
+    expect(within(released).queryByRole('button')).toBeNull();
+    expect(within(released).getByTestId('mess-batch-delivery')).toHaveTextContent('Released for delivery: on the road');
+  });
+
+  it('SUPER_ADMIN / MD read-only mode never shows a release control even when the batch could be released', async () => {
+    svc.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch({ id: 'b4', status: 'READY', slot: 'LUNCH', readyAt: '2026-10-19T05:00:00.000Z', canRelease: true })] });
+    render(<MessKitchenPanel readOnly branchId={BRANCH} />);
+    const row = await screen.findByTestId('mess-batch-2026-10-19-LUNCH');
+    expect(within(row).queryByRole('button', { name: 'Release for delivery' })).toBeNull();
   });
 });

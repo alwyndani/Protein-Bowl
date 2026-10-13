@@ -1213,7 +1213,7 @@ describe('P10B - Kerala Mess meals: generation, calendar, pause/resume, kitchen 
       for (const f of ['messMeal.service.ts', 'messKitchen.service.ts', 'messKitchen.routes.ts']) {
         const s = src(f);
         expect(s, f).not.toMatch(/prisma\.order\.|tx\.order\.|\.payment\.|providerPayment|\.refund\.|walletAccount|walletTransaction|PaymentProvider|RefundService/);
-        expect(s, f).not.toMatch(/COMPLETED|FULFILLED'|MEAL_STATUS\.FULFILLED|CONSUMED'/);
+        expect(s, f).not.toMatch(/COMPLETED|data: {[^}]*FULFILLED|CONSUMED'/); // P10C: the calendar may READ the status; it never writes it
         expect(s, f).not.toMatch(/\bCOD\b|cash|refundAmount/i);
         expect(s, f).not.toMatch(/deliveryAssignment|kitchenOrderTicket|orderTransition/i);
       }

@@ -9,6 +9,7 @@ import { BranchScope, getRequestScope } from '../../authz/branchScope.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AuditService } from '../audit/audit.service.js';
 import { MessKitchenService } from './messKitchen.service.js';
+import { MessDeliveryService } from './messDelivery.service.js';
 import { batchStartSchema, emptyBodySchema, idParams, kitchenReadQuerySchema } from './messPolicy.js';
 
 /**
@@ -68,6 +69,12 @@ router.post('/batches', ...chef, validateBody(batchStartSchema), wrap(async (req
 router.post('/batches/:id/ready', ...chef, validateParams(idParams), validateBody(emptyBodySchema), wrap(async (req, res) => {
   const out = await MessKitchenService.markReady(await chefScope(req), req.params.id, AuditService.contextFromRequest(req));
   return ApiResponse.success(res, out, out.changed ? 'Batch marked ready' : 'No change: the batch was already ready');
+}));
+
+// P10C: the CHEF explicitly releases a READY batch into ONE bulk delivery run (one stop per frozen service point). Idempotent (unique batchId).
+router.post('/batches/:id/release', ...chef, validateParams(idParams), validateBody(emptyBodySchema), wrap(async (req, res) => {
+  const out = await MessDeliveryService.release(await chefScope(req), req.params.id, AuditService.contextFromRequest(req));
+  return ApiResponse.success(res, out, out.changed ? 'Batch released for delivery' : 'No change: this batch was already released', out.changed ? 201 : 200);
 }));
 
 export default router;

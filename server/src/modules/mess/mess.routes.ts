@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { RoleEnum } from '@prisma/client';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../middleware/error.middleware.js';
-import { messPauseRateLimiter, messPurchaseRateLimiter, messReadRateLimiter, messWriteRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { messHandoverRateLimiter, messPauseRateLimiter, messPurchaseRateLimiter, messReadRateLimiter, messWriteRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AuditService } from '../audit/audit.service.js';
 import { resolveIdempotencyKey } from '../order/idempotency.js';
+import { MessDeliveryService } from './messDelivery.service.js';
 import { MessMealService } from './messMeal.service.js';
 import { MessAccountService } from './messAccount.service.js';
 import { MessCancellationService } from './messCancellation.service.js';
@@ -118,6 +119,32 @@ router.post('/subscriptions/:id/meals/:mealId/resume', ...customer, messPauseRat
   try {
     const out = await MessMealService.resume(req.user!.userId, req.params.id, req.params.mealId, AuditService.contextFromRequest(req));
     return ApiResponse.success(res, out, out.changed ? 'Meal resumed' : 'No change: this meal was already scheduled');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// P10C: the service-point handover code. ONLY a resident CUSTOMER with a frozen meal in the stop can obtain it (the first one becomes THE recipient); DELIVERY can never read it.
+router.get('/subscriptions/:id/meals/:mealId/handover-code', ...customer, messHandoverRateLimiter, validateParams(mealParams), async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    return ApiResponse.success(res, await MessDeliveryService.handoverState(req.user!.userId, req.params.id, req.params.mealId), 'Handover code state retrieved');
+  } catch (err) {
+    next(err);
+  }
+});
+router.post('/subscriptions/:id/meals/:mealId/handover-code', ...customer, messHandoverRateLimiter, validateParams(mealParams), validateBody(emptyBodySchema), async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    return ApiResponse.success(res, await MessDeliveryService.issueHandoverCode(req.user!.userId, req.params.id, req.params.mealId, 'ISSUE', AuditService.contextFromRequest(req)), 'Handover code generated', 201);
+  } catch (err) {
+    next(err);
+  }
+});
+router.post('/subscriptions/:id/meals/:mealId/handover-code/regenerate', ...customer, messHandoverRateLimiter, validateParams(mealParams), validateBody(emptyBodySchema), async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    return ApiResponse.success(res, await MessDeliveryService.issueHandoverCode(req.user!.userId, req.params.id, req.params.mealId, 'REGENERATE', AuditService.contextFromRequest(req)), 'New handover code generated');
   } catch (err) {
     next(err);
   }

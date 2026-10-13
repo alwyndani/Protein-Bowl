@@ -72,7 +72,7 @@ describe('P9A delivery web security / data minimization (static)', () => {
     expect(before).toMatch(/import\.meta\.env\.DEV\s*&&/);
     expect(before).toContain('Demo (mock data)');
     // and the real workspace is the production view for the delivery role
-    expect(app).toMatch(/currentRole === 'delivery'[\s\S]{0,400}<DeliveryWorkspace/);
+    expect(app).toMatch(/currentRole === 'delivery'[\s\S]{0,400}<DeliveryHome/);
   });
 
   it('the customer tracking UI shows the order status text only: no delivery PIN / OTP / proof / fake tracking', () => {

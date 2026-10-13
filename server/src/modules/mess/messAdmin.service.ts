@@ -46,7 +46,7 @@ export class MessAdminService {
         const branch = await tx.kitchenBranch.findUnique({ where: { id: body.branchId }, select: { id: true, isActive: true } });
         if (!branch || !branch.isActive) throw new AppError('The selected branch does not exist or is not active', 422, 'BRANCH_INVALID');
         const created = await tx.messServicePoint.create({
-          data: { code: body.code, name: body.name, gateLabel: body.gateLabel ?? null, addressLine: body.addressLine, city: body.city, postalCode: body.postalCode, branchId: body.branchId },
+          data: { code: body.code, name: body.name, gateLabel: body.gateLabel ?? null, deliveryInstructions: body.deliveryInstructions ?? null, addressLine: body.addressLine, city: body.city, postalCode: body.postalCode, branchId: body.branchId },
           include: { branch: { select: { id: true, code: true, name: true } } }
         });
         await audit(actor, 'MESS_SERVICE_POINT_CREATED', 'MessServicePoint', created.id, { code: created.code, branchId: created.branchId }, context, tx);

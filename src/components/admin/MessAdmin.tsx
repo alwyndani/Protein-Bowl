@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { MessService } from '../../services/messService';
-import type { MealSlot, MessAdminAccount, MessAdminPlan, MessAdminServicePoint, MessAdminSubscription, MessPlanInput } from '../../services/messTypes';
+import type { MealSlot, MessAdminAccount, MessAdminPlan, MessAdminServicePoint, MessAdminSubscription, MessDeliveryMonitor, MessPlanInput, MessRun, MessStop, MessStopOverrideReason } from '../../services/messTypes';
+import { usePolledResource } from '../../hooks/usePolledResource';
+import { describeMessError } from '../../utils/messErrors';
 import { formatInr } from '../../utils/money';
 import { useAdminReference } from './AdminReference';
 import { useStepUp } from './StepUp';
@@ -11,13 +13,14 @@ import type { AdminErrorInfo } from './adminErrors';
 import { MessKitchenPanel } from '../erp/kitchen/MessKitchenPanel';
 import { Chip, EmptyState, ErrorNotice, Field, Modal, Spinner, formatDate, inputClass, primaryButton, secondaryButton } from './adminUi';
 
-type Tab = 'accounts' | 'servicePoints' | 'plans' | 'subscriptions' | 'kitchen';
+type Tab = 'accounts' | 'servicePoints' | 'plans' | 'subscriptions' | 'kitchen' | 'delivery';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'accounts', label: 'Account approvals' },
   { id: 'servicePoints', label: 'Service points' },
   { id: 'plans', label: 'Plans' },
   { id: 'subscriptions', label: 'Subscriptions' },
-  { id: 'kitchen', label: 'Mess kitchen (read-only)' }
+  { id: 'kitchen', label: 'Mess kitchen (read-only)' },
+  { id: 'delivery', label: 'Mess delivery' }
 ];
 const SLOTS: MealSlot[] = ['BREAKFAST', 'LUNCH', 'DINNER'];
 const REJECT_REASONS = ['INCOMPLETE_DETAILS', 'NOT_ELIGIBLE', 'SERVICE_POINT_MISMATCH', 'OTHER'];
@@ -58,7 +61,7 @@ export const MessAdmin: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }
       <div className="space-y-1">
         <h2 className="text-lg font-black">Kerala Mess</h2>
         <p className="text-xs text-stone-400">
-          {readOnly ? 'Read-only view of service points, plans, account approvals and subscriptions.' : 'Manage service points, plans, account approvals and subscriptions. Meal scheduling is not available yet.'}
+          {readOnly ? 'Read-only view of service points, plans, account approvals and subscriptions.' : 'Manage service points, plans, account approvals and subscriptions, and watch the meal deliveries.'}
         </p>
       </div>
       <div role="tablist" aria-label="Kerala Mess sections" className="flex gap-2 overflow-x-auto pb-1">
@@ -73,6 +76,7 @@ export const MessAdmin: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }
       {tab === 'plans' && <PlansTab readOnly={readOnly} />}
       {tab === 'subscriptions' && <SubscriptionsTab readOnly={readOnly} />}
       {tab === 'kitchen' && <KitchenTab />}
+      {tab === 'delivery' && <DeliveryTab readOnly={readOnly} />}
     </section>
   );
 };
@@ -206,15 +210,15 @@ const ServicePointDialog: React.FC<{ sp: MessAdminServicePoint | null; onClose: 
   const reference = useAdminReference();
   const { withStepUp } = useStepUp();
   const { run, pending, error, clearError } = useAdminAction();
-  const [f, setF] = useState({ code: sp?.code ?? '', name: sp?.name ?? '', gateLabel: sp?.gateLabel ?? '', addressLine: sp?.addressLine ?? '', city: sp?.city ?? '', postalCode: sp?.postalCode ?? '', branchId: sp?.branch.id ?? '', status: sp?.status ?? 'ACTIVE' });
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const [f, setF] = useState({ code: sp?.code ?? '', name: sp?.name ?? '', gateLabel: sp?.gateLabel ?? '', deliveryInstructions: sp?.deliveryInstructions ?? '', addressLine: sp?.addressLine ?? '', city: sp?.city ?? '', postalCode: sp?.postalCode ?? '', branchId: sp?.branch.id ?? '', status: sp?.status ?? 'ACTIVE' });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const out = await run(() =>
       withStepUp((proof) =>
         sp
-          ? MessService.updateServicePoint(sp.id, { expectedVersion: sp.version, name: f.name, gateLabel: f.gateLabel || null, addressLine: f.addressLine, city: f.city, postalCode: f.postalCode, status: f.status }, proof)
-          : MessService.createServicePoint({ code: f.code, name: f.name, gateLabel: f.gateLabel || null, addressLine: f.addressLine, city: f.city, postalCode: f.postalCode, branchId: f.branchId }, proof)
+          ? MessService.updateServicePoint(sp.id, { expectedVersion: sp.version, name: f.name, gateLabel: f.gateLabel || null, deliveryInstructions: f.deliveryInstructions.trim() || null, addressLine: f.addressLine, city: f.city, postalCode: f.postalCode, status: f.status }, proof)
+          : MessService.createServicePoint({ code: f.code, name: f.name, gateLabel: f.gateLabel || null, deliveryInstructions: f.deliveryInstructions.trim() || null, addressLine: f.addressLine, city: f.city, postalCode: f.postalCode, branchId: f.branchId }, proof)
       )
     );
     if (out.ok) onDone();
@@ -226,6 +230,7 @@ const ServicePointDialog: React.FC<{ sp: MessAdminServicePoint | null; onClose: 
           {!sp && <Field label="Code" htmlFor="sp-code"><input id="sp-code" value={f.code} onChange={set('code')} required className={inputClass} /></Field>}
           <Field label="Name" htmlFor="sp-name"><input id="sp-name" value={f.name} onChange={set('name')} required className={inputClass} /></Field>
           <Field label="Gate / pickup label" htmlFor="sp-gate"><input id="sp-gate" value={f.gateLabel} onChange={set('gateLabel')} className={inputClass} /></Field>
+          <Field label="Delivery instructions (optional)" htmlFor="sp-instr" hint="Shown to the delivery team (max 300 characters). Never put phone numbers or personal data here."><textarea id="sp-instr" value={f.deliveryInstructions} onChange={set('deliveryInstructions')} maxLength={300} rows={2} className={inputClass} /></Field>
           <Field label="Address" htmlFor="sp-addr"><input id="sp-addr" value={f.addressLine} onChange={set('addressLine')} required className={inputClass} /></Field>
           <Field label="City" htmlFor="sp-city"><input id="sp-city" value={f.city} onChange={set('city')} required className={inputClass} /></Field>
           <Field label="Postal code" htmlFor="sp-pin"><input id="sp-pin" value={f.postalCode} onChange={set('postalCode')} required className={inputClass} /></Field>
@@ -436,6 +441,114 @@ const KitchenTab: React.FC = () => {
       </Field>
       <MessKitchenPanel readOnly branchId={branchId || undefined} />
     </div>
+  );
+};
+
+// ------------------------------------------------------------------------------------------------ delivery (P10C)
+const RUN_LABEL: Record<string, string> = { AVAILABLE: 'Waiting for a driver', CLAIMED: 'Claimed', IN_TRANSIT: 'On the road', COMPLETED: 'Completed', CLOSED: 'Closed (some stops not delivered)' };
+const STOP_LABEL: Record<string, string> = { PENDING: 'Waiting', FAILED: 'Problem reported', HANDED_OVER: 'Handed over', CLOSED_UNDELIVERED: 'Closed: not delivered' };
+const OVERRIDE_REASONS: MessStopOverrideReason[] = ['RECIPIENT_CANNOT_ACCESS_CODE', 'RECIPIENT_DEVICE_UNAVAILABLE', 'CODE_VERIFICATION_FAILURE', 'ACCESSIBILITY_ASSISTANCE', 'OPERATIONAL_EXCEPTION', 'OTHER'];
+const toPolledError = (e: unknown) => {
+  const info = describeMessError(e);
+  return { ...info, action: info.action === 'SIGN_IN' ? ('SIGN_IN' as const) : ('NONE' as const) };
+};
+
+const DeliveryTab: React.FC<{ readOnly: boolean }> = ({ readOnly }) => {
+  const { data } = useList(() => MessService.adminServicePoints());
+  const [branchId, setBranchId] = useState('');
+  const [overriding, setOverriding] = useState<{ run: MessRun; stop: MessStop } | null>(null);
+  const branches: Array<{ id: string; code: string; name: string }> = [...new Map<string, { id: string; code: string; name: string }>((data ?? []).map((sp) => [sp.branch.id, sp.branch] as const)).values()];
+  const poll = usePolledResource<MessDeliveryMonitor, ReturnType<typeof toPolledError>>({ fetcher: () => MessService.deliveryMonitor(branchId), resetKey: branchId, describeError: toPolledError, enabled: !!branchId });
+  return (
+    <div className="space-y-3" data-testid="mess-delivery-monitor">
+      <Field label="Branch" htmlFor="mess-delivery-branch" hint="Deliveries are made by the branch's drivers; this view only watches them. You never see a handover code.">
+        <select id="mess-delivery-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} className={inputClass}>
+          <option value="">Select a branch…</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name} ({b.code})
+            </option>
+          ))}
+        </select>
+      </Field>
+      {!branchId && <p className="text-sm text-stone-400">Choose a branch to see its Kerala Mess deliveries.</p>}
+      {branchId && poll.loadState === 'loading' && <Spinner />}
+      {branchId && !poll.data && poll.loadState !== 'loading' && <p role="alert" className="text-sm text-red-200">{poll.loadError?.message ?? 'The deliveries could not be loaded.'}</p>}
+      {poll.data && poll.data.runs.length === 0 && <EmptyState message="No deliveries yet. Runs appear when the kitchen releases a ready batch." />}
+      {poll.data?.runs.map((r) => (
+        <article key={r.id} data-testid={`mess-monitor-run-${r.mealDate}-${r.slot}`} className="rounded-2xl border border-stone-800 bg-stone-900/70 p-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-black">
+              {pretty(r.slot)} · {r.mealDate} · {r.branch.name}
+            </p>
+            <Chip tone={r.status === 'COMPLETED' ? 'emerald' : 'amber'}>{RUN_LABEL[r.status] ?? r.status}</Chip>
+          </div>
+          <p className="text-xs text-stone-400">
+            {r.mealCount} meals, {r.stopCount} service points{r.driver ? ` · driver ${r.driver.name} (${r.driver.employeeCode})` : ' · no driver yet'}
+          </p>
+          <ul className="space-y-1.5">
+            {r.stops.map((s) => (
+              <li key={s.id} data-testid={`mess-monitor-stop-${s.servicePoint.name}`} className="rounded-xl border border-stone-800 bg-stone-950/50 p-3 text-xs space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-stone-100">
+                    {s.servicePoint.name} · {s.expectedQuantity} meals
+                  </span>
+                  <Chip tone={s.status === 'HANDED_OVER' ? 'emerald' : s.status === 'CLOSED_UNDELIVERED' ? 'neutral' : 'amber'}>{STOP_LABEL[s.status] ?? s.status}</Chip>
+                </div>
+                <p className="text-stone-400">
+                  Attempt {s.attempt.number} of {s.attempt.max}
+                  {s.handoverMethod ? ` · confirmed by ${s.handoverMethod === 'CODE' ? 'the handover code' : 'an administrator (exception)'}` : ''}
+                  {s.failureCode ? ` · problem: ${pretty(s.failureCode)}` : ''}
+                </p>
+                {s.failureNote && <p className="text-stone-300" data-testid="mess-monitor-note">Driver's note: {s.failureNote}</p>}
+                {!readOnly && r.status === 'IN_TRANSIT' && s.status === 'PENDING' && (
+                  <button type="button" className={secondaryButton} onClick={() => setOverriding({ run: r, stop: s })}>
+                    Confirm handover (exception)…
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </article>
+      ))}
+      {!readOnly && overriding && <OverrideDialog run={overriding.run} stop={overriding.stop} onClose={() => setOverriding(null)} onDone={() => { setOverriding(null); void poll.refresh(); }} />}
+    </div>
+  );
+};
+
+const OverrideDialog: React.FC<{ run: MessRun; stop: MessStop; onClose: () => void; onDone: () => void }> = ({ stop, onClose, onDone }) => {
+  const { withStepUp } = useStepUp();
+  const { run, pending, error, clearError } = useAdminAction();
+  const [reason, setReason] = useState<MessStopOverrideReason | ''>('');
+  const [note, setNote] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reason || !confirmed || note.trim().length < 10) return;
+    const out = await run(() => withStepUp((proof) => MessService.overrideStop(stop.id, { reasonCode: reason, note }, proof)));
+    if (out.ok) onDone();
+  };
+  return (
+    <Modal title={`Confirm the handover at ${stop.servicePoint.name}?`} onClose={onClose} closeDisabled={pending}>
+      <form onSubmit={submit} className="space-y-4">
+        <p className="text-xs text-stone-300">
+          This is an EXCEPTION, not the normal way. It marks all {stop.expectedQuantity} meals of this service point as fulfilled without a handover code. It does not reveal or create a code, and nothing is refunded or charged. Use it only when you have confirmed the delivery yourself.
+        </p>
+        <Field label="Reason" htmlFor="mess-override-reason">
+          <select id="mess-override-reason" value={reason} onChange={(e) => setReason(e.target.value as MessStopOverrideReason)} required className={inputClass}>
+            <option value="">Select a reason…</option>
+            {OVERRIDE_REASONS.map((r) => <option key={r} value={r}>{pretty(r)}</option>)}
+          </select>
+        </Field>
+        <Field label="Note (required, at least 10 characters)" htmlFor="mess-override-note"><textarea id="mess-override-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} rows={2} required className={inputClass} /></Field>
+        <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} className="mt-0.5" />I confirm that this service point received its meals.</label>
+        <ErrorNotice error={error} onDismiss={clearError} />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>Cancel</button>
+          <button type="submit" disabled={pending || !reason || !confirmed || note.trim().length < 10} className={primaryButton}>{pending ? 'Working…' : 'Confirm handover'}</button>
+        </div>
+      </form>
+    </Modal>
   );
 };
 
