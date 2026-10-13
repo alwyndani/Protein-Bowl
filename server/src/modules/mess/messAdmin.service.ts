@@ -103,6 +103,7 @@ export class MessAdminService {
         if (body.branchId) await this.assertBranch(tx, body.branchId);
         this.assertWindowOrder(body.validFrom ? dateFromString(body.validFrom) : null, body.validUntil ? dateFromString(body.validUntil) : null);
         const slots = body.mealSlots ?? [];
+        this.assertSlotTimesKeys(body.slotTimes, slots);
         const created = await tx.messSubscriptionPlan.create({
           data: {
             code: body.code,
@@ -119,6 +120,7 @@ export class MessAdminService {
             validFrom: body.validFrom ? dateFromString(body.validFrom) : null,
             validUntil: body.validUntil ? dateFromString(body.validUntil) : null,
             branchId: body.branchId ?? null,
+            slotTimes: body.slotTimes ?? Prisma.DbNull,
             status: PLAN_STATUS.DRAFT,
             active: false
           },
@@ -159,6 +161,7 @@ export class MessAdminService {
       if (body.validFrom !== undefined) data.validFrom = body.validFrom ? dateFromString(body.validFrom) : null;
       if (body.validUntil !== undefined) data.validUntil = body.validUntil ? dateFromString(body.validUntil) : null;
       if (body.branchId !== undefined) data.branchId = body.branchId;
+      if (body.slotTimes !== undefined) (data as Record<string, unknown>).slotTimes = body.slotTimes ?? Prisma.DbNull;
 
       // The merged result must be coherent; an ACTIVE plan must stay complete after the edit.
       const merged = {
@@ -170,9 +173,11 @@ export class MessAdminService {
         maxPauses: data.maxPauses !== undefined ? (data.maxPauses as number | null) : current.maxPauses,
         minStartLeadDays: data.minStartLeadDays !== undefined ? (data.minStartLeadDays as number | null) : current.minStartLeadDays,
         validFrom: data.validFrom !== undefined ? (data.validFrom as Date | null) : current.validFrom,
-        validUntil: data.validUntil !== undefined ? (data.validUntil as Date | null) : current.validUntil
+        validUntil: data.validUntil !== undefined ? (data.validUntil as Date | null) : current.validUntil,
+        slotTimes: body.slotTimes !== undefined ? body.slotTimes : current.slotTimes
       };
       this.assertWindowOrder(merged.validFrom, merged.validUntil);
+      this.assertSlotTimesKeys(merged.slotTimes, merged.mealSlots);
       if (current.status === PLAN_STATUS.ACTIVE) assertPlanActivatable(merged);
 
       const result = await tx.messSubscriptionPlan.updateMany({ where: { id, version: body.expectedVersion }, data: data as Prisma.MessSubscriptionPlanUpdateManyMutationInput });
@@ -237,6 +242,13 @@ export class MessAdminService {
   private static async assertBranch(tx: MessTx, branchId: string): Promise<void> {
     const branch = await tx.kitchenBranch.findUnique({ where: { id: branchId }, select: { id: true, isActive: true } });
     if (!branch || !branch.isActive) throw new AppError('The selected branch does not exist or is not active', 422, 'BRANCH_INVALID');
+  }
+
+  /** A time for a slot that is not enabled is always an error (a draft may still be MISSING times, but never carry a stray one). */
+  private static assertSlotTimesKeys(slotTimes: unknown, slots: readonly string[]): void {
+    if (slotTimes && typeof slotTimes === 'object' && Object.keys(slotTimes).some((k) => !slots.includes(k))) {
+      throw new AppError('slotTimes contains a time for a slot that is not enabled', 422, 'PLAN_SLOT_TIMES_INVALID');
+    }
   }
 
   private static assertWindowOrder(validFrom: Date | null, validUntil: Date | null): void {

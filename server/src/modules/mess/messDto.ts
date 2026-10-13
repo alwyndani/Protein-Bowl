@@ -27,7 +27,7 @@ export function toCustomerServicePointDto(sp: { id: string; code: string; name: 
 type PlanRow = {
   id: string; code: string; name: string; description: string | null; durationDays: number; mealsPerDay: number; basePrice: unknown; taxRate: unknown;
   status: string; mealSlots: string[]; validFrom: Date | null; validUntil: Date | null; pauseCutoffHours: number | null; maxPauses: number | null; minStartLeadDays: number | null;
-  version: number; createdAt: Date; updatedAt: Date; branchId: string | null; branch?: BranchRef | null;
+  version: number; createdAt: Date; updatedAt: Date; branchId: string | null; branch?: BranchRef | null; slotTimes?: unknown;
 };
 
 export function toAdminPlanDto(p: PlanRow) {
@@ -35,7 +35,7 @@ export function toAdminPlanDto(p: PlanRow) {
     id: p.id, code: p.code, name: p.name, description: p.description, status: p.status, version: p.version,
     durationDays: p.durationDays, mealsPerDay: p.mealsPerDay, mealSlots: p.mealSlots,
     basePrice: num(p.basePrice), taxRate: num(p.taxRate),
-    pauseCutoffHours: p.pauseCutoffHours, maxPauses: p.maxPauses, minStartLeadDays: p.minStartLeadDays,
+    pauseCutoffHours: p.pauseCutoffHours, maxPauses: p.maxPauses, minStartLeadDays: p.minStartLeadDays, slotTimes: p.slotTimes ?? null,
     validFrom: p.validFrom ? dateToString(p.validFrom) : null, validUntil: p.validUntil ? dateToString(p.validUntil) : null,
     branch: p.branch ? { id: p.branch.id, code: p.branch.code, name: p.branch.name } : null,
     createdAt: p.createdAt.toISOString(), updatedAt: p.updatedAt.toISOString()
@@ -50,6 +50,7 @@ export function toPublicPlanDto(p: PlanRow) {
     durationDays: p.durationDays, mealsPerDay: p.mealsPerDay, mealSlots: p.mealSlots,
     mealsIncluded: p.durationDays * p.mealsPerDay,
     minStartLeadDays: p.minStartLeadDays ?? 0,
+    slotTimes: p.slotTimes ?? null,
     validFrom: p.validFrom ? dateToString(p.validFrom) : null, validUntil: p.validUntil ? dateToString(p.validUntil) : null,
     price: { subtotal: pricing.subtotal, taxRate: pricing.taxRate, taxAmount: pricing.taxAmount, total: pricing.total, currency: 'INR' as const }
   };

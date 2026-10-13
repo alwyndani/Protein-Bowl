@@ -1,4 +1,8 @@
 import type {
+  MessCalendarMeal,
+  MessKitchenBatch,
+  MessKitchenDemand,
+  MessMealCalendar,
   MessAccount,
   MessAdminAccount,
   MessAdminPlan,
@@ -114,6 +118,7 @@ export const adminPlan = (over: Partial<MessAdminPlan> = {}): MessAdminPlan => (
   pauseCutoffHours: 12,
   maxPauses: 4,
   minStartLeadDays: 1,
+  slotTimes: { BREAKFAST: '08:00', LUNCH: '13:00' },
   validFrom: null,
   validUntil: null,
   branch: null,
@@ -125,5 +130,54 @@ export const adminSubscription = (over: Partial<MessAdminSubscription> = {}): Me
   customerName: 'Sneha Joseph',
   roomNumber: '304',
   branch: { id: '11111111-1111-4111-8111-111111111111', code: 'kochi', name: 'Kochi Central' },
+  ...over
+});
+
+// ---------------------------------------------------------------------------------------------------- P10B
+export const meal = (over: Partial<MessCalendarMeal> = {}): MessCalendarMeal => ({
+  id: 'meal-1',
+  date: '2026-10-20',
+  slot: 'LUNCH',
+  serviceAt: '2026-10-20T07:30:00.000Z', // 13:00 in Asia/Kolkata
+  status: 'SCHEDULED',
+  kitchenState: 'NOT_STARTED',
+  canPause: true,
+  canResume: false,
+  reason: null,
+  forfeitIfPaused: true,
+  ...over
+});
+
+export const calendar = (meals: MessCalendarMeal[], over: Partial<MessMealCalendar['subscription']> = {}): MessMealCalendar => ({
+  subscription: { status: 'ACTIVE', pausesUsed: 1, maxPauses: 3, pauseCutoffHours: 2, mealsReady: true, ...over },
+  window: { from: '2026-10-20', to: '2026-10-22' },
+  meals
+});
+
+const BR = { id: '11111111-1111-4111-8111-111111111111', code: 'kochi', name: 'Kochi Central' };
+const SP1 = { id: 'sp-1', name: 'Hostel A1', gateLabel: 'Main gate' };
+const SP2 = { id: 'sp-2', name: 'Hostel A2', gateLabel: null };
+export const demand = (over: Partial<MessKitchenDemand> = {}): MessKitchenDemand => ({
+  today: '2026-10-20',
+  from: '2026-10-20',
+  to: '2026-10-27',
+  branchIds: [BR.id],
+  groups: [
+    { branch: BR, mealDate: '2026-10-20', slot: 'LUNCH', batchStatus: null, canStart: true, total: 3, servicePoints: [{ servicePoint: SP1, mealCount: 2 }, { servicePoint: SP2, mealCount: 1 }] },
+    { branch: BR, mealDate: '2026-10-21', slot: 'LUNCH', batchStatus: null, canStart: false, total: 5, servicePoints: [{ servicePoint: SP1, mealCount: 5 }] }
+  ],
+  ...over
+});
+
+export const batch = (over: Partial<MessKitchenBatch> = {}): MessKitchenBatch => ({
+  id: 'batch-1',
+  branch: BR,
+  mealDate: '2026-10-19',
+  slot: 'BREAKFAST',
+  status: 'PREPARING',
+  mealCount: 4,
+  startedAt: '2026-10-19T02:00:00.000Z',
+  readyAt: null,
+  servicePoints: [{ servicePoint: { id: 'sp-1', name: 'Hostel A1', gateLabel: null }, mealCount: 4 }],
   ...over
 });

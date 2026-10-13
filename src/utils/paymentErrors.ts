@@ -35,6 +35,7 @@ const TABLE: Record<string, { action: ErrorAction; message: string }> = {
   // payment
   PAYMENT_ALREADY_COMPLETED: { action: 'REFRESH_ORDER', message: 'This order has already been paid.' },
   ORDER_NOT_PAYABLE: { action: 'REFRESH_ORDER', message: 'This order can no longer be paid online.' },
+  MESS_START_DAY_UNAVAILABLE: { action: 'REFRESH_ORDER', message: "Today's meals can no longer be prepared for this subscription, so it can no longer be paid. Please cancel it and buy again with a later start date." },
   PAYMENT_ATTEMPT_IN_PROGRESS: { action: 'CONFIRMING', message: 'Payment is being confirmed. Please do not pay again yet.' },
   PAYMENT_AMOUNT_TOO_SMALL: { action: 'NONE', message: 'This order total is too small to be paid online.' },
   PAYMENT_PROVIDER_UNAVAILABLE: { action: 'RETRY', message: 'The payment service is temporarily unavailable. No payment was taken. Please try again shortly.' },

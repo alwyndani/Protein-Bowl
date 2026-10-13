@@ -8,6 +8,7 @@ import { describeMessError, MESS_CANCEL_REASONS, MessUserError, REJECTION_LABELS
 import { formatInr } from '../../utils/money';
 import { AccessibleDialog } from '../common/AccessibleDialog';
 import { PaymentPanel } from '../customer/PaymentPanel';
+import { MealCalendar } from './MealCalendar';
 
 interface Props {
   onSessionExpired?: () => void;
@@ -113,7 +114,7 @@ export const KeralaMessSection: React.FC<Props> = ({ onSessionExpired }) => {
       </header>
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-100 text-xs px-4 py-3" data-testid="mess-checkpoint-note">
-        Meal scheduling, pausing and daily delivery are not available yet. Your subscription is recorded and activated once your payment is confirmed.
+        Your subscription is activated once your payment is confirmed. You can then see your meal calendar and pause meals (a paused meal is not refunded or replaced). Hostel delivery arrives in a later update.
       </div>
 
       <ErrorBox error={loadError} />
@@ -325,6 +326,7 @@ const SubscriptionList: React.FC<{ subscriptions: MessSubscription[]; onChanged:
 
 const SubscriptionCard: React.FC<{ sub: MessSubscription; onChanged: () => Promise<void>; handleError: (e: unknown) => MessUserError; onSessionExpired?: () => void }> = ({ sub, onChanged, handleError, onSessionExpired }) => {
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const refundText = REFUND_LABEL[sub.refund.state];
   return (
     <article className={card} data-testid={`mess-sub-${sub.id}`} data-status={sub.status}>
@@ -340,6 +342,14 @@ const SubscriptionCard: React.FC<{ sub: MessSubscription; onChanged: () => Promi
       {sub.price && <p className="text-xs text-stone-300">Total {formatInr(sub.price.total)} (incl. {formatInr(sub.price.taxAmount)} tax)</p>}
       {sub.status === 'ACTIVE' && <p className="text-xs text-emerald-200" data-testid="mess-sub-active-note">Your payment is confirmed and your subscription is active.</p>}
       {refundText && <p role="status" className="text-xs text-stone-200" data-testid="mess-refund">{refundText}</p>}
+      {sub.status === 'ACTIVE' && (
+        <div className="space-y-2">
+          <button type="button" className={secondary} aria-expanded={calendarOpen} onClick={() => setCalendarOpen((v) => !v)} data-testid="meal-calendar-toggle">
+            {calendarOpen ? 'Hide my meals' : 'View my meals'}
+          </button>
+          {calendarOpen && <MealCalendar subscriptionId={sub.id} onSessionExpired={onSessionExpired} />}
+        </div>
+      )}
       {sub.status === 'PENDING_PAYMENT' && sub.purchaseOrder && <MessPayment sub={sub} onChanged={onChanged} onSessionExpired={onSessionExpired} />}
       {sub.cancellation.allowed && (
         <button type="button" className={secondary} onClick={() => setCancelOpen(true)} data-testid="mess-cancel-open">

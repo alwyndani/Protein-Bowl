@@ -4,6 +4,7 @@ import { getPaymentConfig } from '../../config/paymentConfig.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { MESS_ORDER_TYPE, PAYABLE_ORDER_TYPES } from '../order/orderStatus.js';
+import { MessMealService } from '../mess/messMeal.service.js';
 import { businessDate, dateToString } from '../mess/messPolicy.js';
 import { toMinorUnits } from './money.js';
 import { PaymentSettlementService, SettleOutcome } from './paymentSettlement.service.js';
@@ -65,8 +66,12 @@ export class PaymentSessionService {
         }
         if (order.orderType === MESS_ORDER_TYPE) {
           // P10A: money is never taken for a Kerala Mess term whose selected start date has already passed (it could not activate).
-          const sub = await tx.messSubscription.findUnique({ where: { purchaseOrderId: order.id }, select: { startDate: true } });
+          const sub = await tx.messSubscription.findUnique({ where: { purchaseOrderId: order.id }, select: { startDate: true, branchId: true, mealSlots: true, slotTimes: true } });
           if (!sub || dateToString(sub.startDate) < businessDate()) throw new AppError('The start date of this subscription has passed, so it can no longer be paid. Please cancel it and buy again.', 409, 'MESS_START_DATE_PASSED');
+          // P10B: a same-day start whose first-day meals can no longer be prepared is not payable either (the authoritative check is repeated at trusted settlement).
+          if (await MessMealService.firstDayProblem(tx, { startDate: dateToString(sub.startDate), branchId: sub.branchId, mealSlots: sub.mealSlots, slotTimes: sub.slotTimes })) {
+            throw new AppError("Today's meals can no longer be prepared for this subscription, so it can no longer be paid. Please cancel it and buy again with a later start date.", 409, 'MESS_START_DAY_UNAVAILABLE');
+          }
         }
         const amountMinor = toMinorUnits(order.netAmount);
         if (amountMinor < provider.minAmountMinor) {

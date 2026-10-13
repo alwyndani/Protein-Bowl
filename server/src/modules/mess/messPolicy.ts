@@ -32,6 +32,14 @@ export const MAX_PAUSE_CUTOFF_HOURS = 168;
 export const MAX_PAUSES = 60;
 export const MAX_START_AHEAD_DAYS = 366;
 export const MAX_PRICE = 1_000_000;
+/** P10B: how far ahead the kitchen may READ demand (informational beyond today). Batches can only be started for today. */
+export const KITCHEN_DEMAND_HORIZON_DAYS = 7;
+/** P10B: largest calendar window a customer can request in one call. */
+export const MAX_CALENDAR_WINDOW_DAYS = 93;
+export const MEAL_STATUS = { SCHEDULED: 'SCHEDULED', PAUSED: 'PAUSED', CANCELLED: 'CANCELLED', FULFILLED: 'FULFILLED' } as const;
+/** Meal statuses that mean service already happened (P10C writes FULFILLED; CONSUMED is the legacy spelling). */
+export const FULFILLED_MEAL_STATUSES = ['FULFILLED', 'CONSUMED'] as const;
+export const BATCH_STATUS = { PREPARING: 'PREPARING', READY: 'READY' } as const;
 
 export const ACCOUNT_REJECTION_REASON_CODES = ['INCOMPLETE_DETAILS', 'NOT_ELIGIBLE', 'SERVICE_POINT_MISMATCH', 'OTHER'] as const;
 export const CUSTOMER_MESS_CANCEL_REASON_CODES = ['CHANGED_MIND', 'ORDERED_BY_MISTAKE', 'WRONG_PLAN', 'WRONG_START_DATE', 'OTHER'] as const;
@@ -72,6 +80,21 @@ export function termEnd(startDate: string, durationDays: number): string {
   return addDays(startDate, durationDays - 1);
 }
 
+// ------------------------------------------------------------------------------------------------ slot service times (P10B)
+export const HHMM_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** null when valid, otherwise a short problem: exactly one strict HH:mm per enabled slot, no missing, no extra, no unknown key. */
+export function slotTimesProblem(slotTimes: unknown, slots: readonly string[]): string | null {
+  if (slotTimes === null || slotTimes === undefined || typeof slotTimes !== 'object' || Array.isArray(slotTimes)) return 'slotTimes must be set';
+  const map = slotTimes as Record<string, unknown>;
+  const keys = Object.keys(map);
+  for (const k of keys) if (!slots.includes(k)) return `slotTimes has a time for a slot that is not enabled: ${k}`;
+  for (const s of slots) {
+    if (typeof map[s] !== 'string' || !HHMM_PATTERN.test(map[s] as string)) return `slotTimes needs a valid HH:mm time for ${s}`;
+  }
+  return null;
+}
+
 const dateString = (label: string) => z.string().refine(isValidDateString, { message: `${label} must be a valid date (YYYY-MM-DD)` });
 
 // ------------------------------------------------------------------------------------------------ zod schemas
@@ -105,6 +128,14 @@ function decimalInput(label: string, places: number) {
 
 export const priceSchema = decimalInput('Price', 2).refine((v) => Number(v) <= MAX_PRICE, { message: `Price must not exceed ${MAX_PRICE}` });
 export const taxRateSchema = decimalInput('Tax rate', 4).refine((v) => Number(v) <= 1, { message: 'Tax rate must be a fraction between 0 and 1 (a fraction, not a percentage)' }); // a fraction, never a percentage
+
+const slotTimesSchema = z
+  .object({
+    BREAKFAST: z.string().regex(HHMM_PATTERN, 'Use HH:mm (24-hour)').optional(),
+    LUNCH: z.string().regex(HHMM_PATTERN, 'Use HH:mm (24-hour)').optional(),
+    DINNER: z.string().regex(HHMM_PATTERN, 'Use HH:mm (24-hour)').optional()
+  })
+  .strict();
 
 const slotsSchema = z
   .array(z.enum(MEAL_SLOTS))
@@ -147,7 +178,8 @@ const planFields = {
   minStartLeadDays: z.number().int().min(0).max(MAX_LEAD_DAYS).nullable(),
   validFrom: dateString('validFrom').nullable(),
   validUntil: dateString('validUntil').nullable(),
-  branchId: z.string().uuid().nullable()
+  branchId: z.string().uuid().nullable(),
+  slotTimes: slotTimesSchema.nullable()
 };
 
 /** A plan is always created as a DRAFT (incomplete values are allowed); it only becomes sellable through the explicit activate action. */
@@ -165,7 +197,8 @@ export const planCreateSchema = z
     minStartLeadDays: planFields.minStartLeadDays.optional(),
     validFrom: planFields.validFrom.optional(),
     validUntil: planFields.validUntil.optional(),
-    branchId: planFields.branchId.optional()
+    branchId: planFields.branchId.optional(),
+    slotTimes: planFields.slotTimes.optional()
   })
   .strict();
 
@@ -183,7 +216,8 @@ export const planUpdateSchema = z
     minStartLeadDays: planFields.minStartLeadDays.optional(),
     validFrom: planFields.validFrom.optional(),
     validUntil: planFields.validUntil.optional(),
-    branchId: planFields.branchId.optional()
+    branchId: planFields.branchId.optional(),
+    slotTimes: planFields.slotTimes.optional()
   })
   .strict();
 
@@ -226,6 +260,11 @@ export const listQuerySchema = z
   .strict();
 
 export const idParams = z.object({ id: z.string().uuid() });
+export const mealParams = z.object({ id: z.string().uuid(), mealId: z.string().uuid() });
+export const calendarQuerySchema = z.object({ from: dateString('from').optional(), to: dateString('to').optional() }).strict();
+export const kitchenReadQuerySchema = z.object({ branchId: z.string().uuid().optional(), from: dateString('from').optional(), to: dateString('to').optional() }).strict();
+export const batchStartSchema = z.object({ branchId: z.string().uuid(), mealDate: dateString('mealDate'), slot: z.enum(MEAL_SLOTS) }).strict();
+export const emptyBodySchema = z.object({}).strict();
 
 // ------------------------------------------------------------------------------------------------ plan completeness (ACTIVE requires everything)
 export interface PlanDraftValues {
@@ -238,6 +277,7 @@ export interface PlanDraftValues {
   minStartLeadDays: number | null;
   validFrom: Date | null;
   validUntil: Date | null;
+  slotTimes: unknown;
 }
 
 /** Problems that make a plan unsellable. Empty array = may be ACTIVE. Used by the service AND mirrored by the DB CHECK constraint. */
@@ -258,6 +298,8 @@ export function planActivationProblems(p: PlanDraftValues): string[] {
   if (p.maxPauses === null) problems.push('maxPauses must be set');
   if (p.minStartLeadDays === null) problems.push('minStartLeadDays must be set');
   if (p.validFrom && p.validUntil && !(p.validFrom.getTime() < p.validUntil.getTime())) problems.push('validUntil must be after validFrom');
+  const stProblem = slotTimesProblem(p.slotTimes, p.mealSlots);
+  if (stProblem) problems.push(stProblem);
   return problems;
 }
 
@@ -289,7 +331,13 @@ export const lockRow = {
   planShared: (tx: MessTx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_subscription_plans" WHERE "id" = ${id} FOR SHARE`,
   servicePoint: (tx: MessTx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_service_points" WHERE "id" = ${id} FOR UPDATE`,
   servicePointShared: (tx: MessTx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_service_points" WHERE "id" = ${id} FOR SHARE`,
-  subscription: (tx: MessTx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_subscriptions" WHERE "id" = ${id} FOR UPDATE`
+  subscription: (tx: MessTx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_subscriptions" WHERE "id" = ${id} FOR UPDATE`,
+  /**
+   * P10B same-day rule: the transaction-scoped lock of ONE (branch, date, slot) batch key. BOTH batch start and the first-day check of a same-day activation take it,
+   * so exactly one of them goes first: either the meal exists before the batch freezes (and is attached), or the batch exists first (and the purchase cannot activate).
+   * Held until commit. A settlement takes several keys in slot order; batch start takes exactly one and nothing else first, so no cycle is possible.
+   */
+  batchKey: (tx: MessTx, branchId: string, date: string, slot: string) => tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`pb-mess-batch|${branchId}|${date}|${slot}`}, 0))`
 };
 
 export function isUniqueViolation(err: unknown): err is Prisma.PrismaClientKnownRequestError {

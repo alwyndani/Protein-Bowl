@@ -15,6 +15,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
     "admin:bootstrap": "tsx scripts/bootstrapSuperAdmin.ts",
+    "mess:generate-meals": "tsx scripts/generateMessMeals.ts",
     "payments:reconcile": "tsx scripts/reconcilePayments.ts",
     "payments:recovery": "tsx scripts/paymentsRecovery.ts",
     "payments:mock-webhook": "tsx scripts/mockPaymentWebhook.ts"

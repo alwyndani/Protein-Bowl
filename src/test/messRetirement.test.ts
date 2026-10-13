@@ -36,7 +36,10 @@ describe('P10A web: retired mock Mess experience', () => {
       .replace(/\/\/.*$/gm, ''); // code only: the doc comment names the retired endpoints
     expect(svc).not.toMatch(/pause-meal|verify-gatepass|\/mess\/register|wallet/i);
     const ui = readFileSync(join(SRC, 'components', 'mess', 'KeralaMessSection.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    expect(ui).not.toMatch(/wallet|gate\s*pass|pause|calendar|tracking(?!-)/i); // (tracking-wider is a Tailwind class)
+    expect(ui).not.toMatch(/wallet|gate\s*pass|tracking(?!-)/i); // (tracking-wider is a Tailwind class)
+    // P10B: the meal calendar exists and is operational only: no money, no menu, no delivery
+    const cal = readFileSync(join(SRC, 'components', 'mess', 'MealCalendar.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(cal).not.toMatch(/wallet|gate\s*pass|credit|mockKeralaMessData|\bmenu\b|\bdish\b|cash|\bCOD\b/i);
   });
 
   it('the customer purchase never sends a price, tax, status, branch or payment method', () => {
@@ -44,6 +47,18 @@ describe('P10A web: retired mock Mess experience', () => {
     const purchase = svc.slice(svc.indexOf('public static async purchase'), svc.indexOf('public static async cancel'));
     expect(purchase).toContain('planId: input.planId, startDate: input.startDate');
     expect(purchase).not.toMatch(/price|tax|status|branch|paymentMethod|amount/i);
+  });
+
+  it('P10B: the Mess kitchen is a REAL production Chef tab (not dev-only), has no delivery / fulfilment / money code, and imports no mock data', () => {
+    const chef = readFileSync(join(SRC, 'components', 'erp', 'ChefDashboard.tsx'), 'utf8');
+    expect(chef).toContain("{ id: 'mess_kitchen', label: 'Kerala Mess kitchen', icon: ChefHat }"); // outside the isDev spread
+    expect(chef).toMatch(/activeTab === 'mess_kitchen' && \(/);
+    const panel = readFileSync(join(SRC, 'components', 'erp', 'kitchen', 'MessKitchenPanel.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(panel).not.toMatch(/mockKeralaMessData|mockData|wallet|refund|\bCOD\b|cash|deliveryService|DeliveryWorkspace|handover|fulfil/i);
+    const svc = readFileSync(join(SRC, 'services', 'messService.ts'), 'utf8');
+    const kitchen = svc.slice(svc.indexOf('public static async kitchenDemand'), svc.indexOf('// ----', svc.indexOf('public static async markBatchReady')));
+    expect(kitchen).toContain("body: JSON.stringify({})"); // ready: empty body
+    expect(kitchen).not.toMatch(/mealCount|status|fulfil|delivered/i);
   });
 
   it('registration offers no Mess role (the only requestable role is customer)', () => {

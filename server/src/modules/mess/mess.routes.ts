@@ -3,15 +3,16 @@ import { z } from 'zod';
 import { RoleEnum } from '@prisma/client';
 import { authenticateToken } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../middleware/error.middleware.js';
-import { messPurchaseRateLimiter, messReadRateLimiter, messWriteRateLimiter } from '../../middleware/rateLimiter.middleware.js';
+import { messPauseRateLimiter, messPurchaseRateLimiter, messReadRateLimiter, messWriteRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { validateBody, validateParams, validateQuery } from '../../middleware/validate.middleware.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AuditService } from '../audit/audit.service.js';
 import { resolveIdempotencyKey } from '../order/idempotency.js';
+import { MessMealService } from './messMeal.service.js';
 import { MessAccountService } from './messAccount.service.js';
 import { MessCancellationService } from './messCancellation.service.js';
 import { MessPurchaseService } from './messPurchase.service.js';
-import { accountWriteSchema, customerCancelSchema, idParams, purchaseBodySchema } from './messPolicy.js';
+import { accountWriteSchema, calendarQuerySchema, customerCancelSchema, emptyBodySchema, idParams, mealParams, purchaseBodySchema } from './messPolicy.js';
 
 /**
  * Kerala Mess customer API (P10A). CUSTOMER is the canonical identity; Mess entitlement = an APPROVED MessAccount.
@@ -90,6 +91,33 @@ router.post('/subscriptions', ...customer, messPurchaseRateLimiter, validateBody
     const key = resolveIdempotencyKey(req.headers['x-idempotency-key'], undefined);
     const out = await MessPurchaseService.purchase(req.user!.userId, key, req.body, AuditService.contextFromRequest(req));
     return ApiResponse.success(res, { subscription: out.subscription, replay: out.replay }, out.replay ? 'Existing purchase returned' : 'Purchase created; complete the online payment to activate it', out.replay ? 200 : 201);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/subscriptions/:id/meals', ...customer, messReadRateLimiter, validateParams(idParams), validateQuery(calendarQuerySchema), async (req, res, next) => {
+  try {
+    return ApiResponse.success(res, await MessMealService.calendar(req.user!.userId, req.params.id, req.query as never), 'Meal calendar retrieved');
+  } catch (err) {
+    next(err);
+  }
+});
+
+// P10B: pause / resume ONE meal. A paused meal is FORFEITED (not refunded, replaced or appended). Strict empty bodies: nothing can carry a status, amount or customer.
+router.post('/subscriptions/:id/meals/:mealId/pause', ...customer, messPauseRateLimiter, validateParams(mealParams), validateBody(emptyBodySchema), async (req, res, next) => {
+  try {
+    const out = await MessMealService.pause(req.user!.userId, req.params.id, req.params.mealId, AuditService.contextFromRequest(req));
+    return ApiResponse.success(res, out, out.changed ? 'Meal paused' : 'No change: this meal was already paused');
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/subscriptions/:id/meals/:mealId/resume', ...customer, messPauseRateLimiter, validateParams(mealParams), validateBody(emptyBodySchema), async (req, res, next) => {
+  try {
+    const out = await MessMealService.resume(req.user!.userId, req.params.id, req.params.mealId, AuditService.contextFromRequest(req));
+    return ApiResponse.success(res, out, out.changed ? 'Meal resumed' : 'No change: this meal was already scheduled');
   } catch (err) {
     next(err);
   }

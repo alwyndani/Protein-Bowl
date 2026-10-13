@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const h = vi.hoisted(() => ({
@@ -15,7 +15,7 @@ vi.mock('../../services/messService', () => ({
   MessService: {
     adminAccounts: vi.fn(), adminServicePoints: vi.fn(), adminPlans: vi.fn(), adminSubscriptions: vi.fn(),
     approveAccount: vi.fn(), rejectAccount: vi.fn(), createServicePoint: vi.fn(), updateServicePoint: vi.fn(),
-    createPlan: vi.fn(), updatePlan: vi.fn(), planAction: vi.fn(), adminCancel: vi.fn()
+    createPlan: vi.fn(), updatePlan: vi.fn(), planAction: vi.fn(), adminCancel: vi.fn(), kitchenDemand: vi.fn(), kitchenBatches: vi.fn(), startBatch: vi.fn(), markBatchReady: vi.fn()
   }
 }));
 
@@ -164,6 +164,73 @@ describe('Kerala Mess administration (SUPER_ADMIN)', () => {
     await confirmPassword(user);
     expect(await within(panel).findByTestId('admin-error-message')).toBeInTheDocument();
   }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
+});
+
+describe('Kerala Mess administration: slot service times (P10B)', () => {
+  it('the plan form asks for one explicit time per ENABLED slot (no defaults) and sends exactly those', async () => {
+    const user = userEvent.setup();
+    mess.createPlan.mockResolvedValue(adminPlan());
+    const panel = await openMess(user, 'Plans');
+    await user.click(await within(panel).findByRole('button', { name: 'Create plan (draft)…' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText('Lunch service time')).toBeNull(); // nothing enabled yet: nothing to time
+    await user.type(within(dialog).getByLabelText('Code'), 'TIMED');
+    await user.type(within(dialog).getByLabelText('Name'), 'Timed plan');
+    await user.type(within(dialog).getByLabelText('Price before tax (INR)'), '100');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Lunch' }));
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Dinner' }));
+    const lunch = within(dialog).getByLabelText('Lunch service time') as HTMLInputElement;
+    const dinner = within(dialog).getByLabelText('Dinner service time') as HTMLInputElement;
+    expect(lunch.value).toBe('');
+    expect(dinner.value).toBe('');
+    expect(within(dialog).queryByLabelText('Breakfast service time')).toBeNull();
+    fireEvent.change(lunch, { target: { value: '13:00' } });
+    fireEvent.change(dinner, { target: { value: '19:30' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Create draft' }));
+    await confirmPassword(user);
+    await waitFor(() => expect(mess.createPlan).toHaveBeenCalledTimes(1));
+    expect(mess.createPlan.mock.calls[0][0]).toMatchObject({ mealSlots: ['LUNCH', 'DINNER'], slotTimes: { LUNCH: '13:00', DINNER: '19:30' } });
+    expect(Object.keys(mess.createPlan.mock.calls[0][0].slotTimes ?? {})).toEqual(['LUNCH', 'DINNER']);
+  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
+
+  it('a plan card shows its configured service times, or says they are not set', async () => {
+    const user = userEvent.setup();
+    mess.adminPlans.mockResolvedValue([adminPlan({ code: 'HAS-TIMES' }), adminPlan({ id: 'plan-2', code: 'NO-TIMES', slotTimes: null })]);
+    const panel = await openMess(user, 'Plans');
+    expect(await within(panel).findByTestId('mess-plan-HAS-TIMES')).toHaveTextContent('Breakfast 08:00, Lunch 13:00');
+    expect(within(panel).getByTestId('mess-plan-NO-TIMES')).toHaveTextContent('Service times: not set');
+  });
+});
+
+describe('Kerala Mess administration: kitchen visibility is read-only (P10B)', () => {
+  const BRANCH = '11111111-1111-4111-8111-111111111111';
+  it('SUPER_ADMIN picks an explicit branch and sees demand with NO preparation controls', async () => {
+    const { demand, batch } = await import('../../test/messFixtures');
+    mess.kitchenDemand.mockResolvedValue(demand());
+    mess.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch()] });
+    const user = userEvent.setup();
+    const panel = await openMess(user, 'Mess kitchen (read-only)');
+    expect(await within(panel).findByTestId('mess-kitchen-pick-branch')).toBeInTheDocument();
+    expect(mess.kitchenDemand).not.toHaveBeenCalled();
+    await user.selectOptions(within(panel).getByLabelText('Branch'), BRANCH);
+    expect(await within(panel).findByTestId('mess-demand-2026-10-20-LUNCH')).toBeInTheDocument();
+    expect(mess.kitchenDemand).toHaveBeenCalledWith(BRANCH);
+    expect(within(panel).queryByRole('button', { name: /Start preparation|Mark ready/ })).toBeNull();
+  }, 15000);
+
+  it('the MD sees the same read-only kitchen without any step-up or action', async () => {
+    const { demand, batch } = await import('../../test/messFixtures');
+    mess.kitchenDemand.mockResolvedValue(demand());
+    mess.kitchenBatches.mockResolvedValue({ today: '2026-10-20', batches: [batch()] });
+    const user = userEvent.setup();
+    render(<MessAdmin readOnly />);
+    await user.click(screen.getByRole('tab', { name: 'Mess kitchen (read-only)' }));
+    await user.selectOptions(await screen.findByLabelText('Branch'), BRANCH);
+    await screen.findByTestId('mess-demand-2026-10-20-LUNCH');
+    expect(screen.queryByRole('button', { name: /Start preparation|Mark ready/ })).toBeNull();
+    expect(admin.stepUp).not.toHaveBeenCalled();
+    expect(mess.startBatch).not.toHaveBeenCalled();
+  });
 });
 
 describe('Kerala Mess administration: legacy accounts', () => {

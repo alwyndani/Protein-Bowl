@@ -7,6 +7,10 @@ import type {
   MessAdminServicePoint,
   MessAdminSubscription,
   MessCancelResult,
+  MessKitchenBatch,
+  MessKitchenDemand,
+  MessMealCalendar,
+  MessMealChange,
   MessPlanInput,
   MessPublicPlan,
   MessServicePointInput,
@@ -65,6 +69,34 @@ export class MessService {
       method: 'POST',
       body: JSON.stringify(trimmed ? { reasonCode, note: trimmed } : { reasonCode })
     });
+  }
+
+  // ------------------------------------------------------------------ P10B meals (customer)
+  public static async getMeals(subscriptionId: string, range: { from?: string; to?: string } = {}): Promise<MessMealCalendar> {
+    const qs = new URLSearchParams();
+    if (range.from) qs.set('from', range.from);
+    if (range.to) qs.set('to', range.to);
+    const q = qs.toString();
+    return await ApiClient.requestData<MessMealCalendar>(`/mess/subscriptions/${encodeURIComponent(subscriptionId)}/meals${q ? `?${q}` : ''}`);
+  }
+
+  /** Pause / resume ONE meal. The body is EMPTY: nothing here can carry a status, amount or customer. A paused meal is forfeited. */
+  public static async changeMeal(subscriptionId: string, mealId: string, action: 'pause' | 'resume'): Promise<MessMealChange> {
+    return await ApiClient.requestData<MessMealChange>(`/mess/subscriptions/${encodeURIComponent(subscriptionId)}/meals/${encodeURIComponent(mealId)}/${action}`, { method: 'POST', body: JSON.stringify({}) });
+  }
+
+  // ------------------------------------------------------------------ P10B kitchen (CHEF actions; SUPER_ADMIN / MD read-only with an explicit branch)
+  public static async kitchenDemand(branchId?: string): Promise<MessKitchenDemand> {
+    return await ApiClient.requestData<MessKitchenDemand>(`/mess/kitchen/demand${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`);
+  }
+  public static async kitchenBatches(branchId?: string): Promise<{ today: string; batches: MessKitchenBatch[] }> {
+    return await ApiClient.requestData(`/mess/kitchen/batches${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`);
+  }
+  public static async startBatch(input: { branchId: string; mealDate: string; slot: string }): Promise<{ changed: boolean; batch: MessKitchenBatch }> {
+    return await ApiClient.requestData('/mess/kitchen/batches', { method: 'POST', body: JSON.stringify({ branchId: input.branchId, mealDate: input.mealDate, slot: input.slot }) });
+  }
+  public static async markBatchReady(batchId: string): Promise<{ changed: boolean; batch: MessKitchenBatch }> {
+    return await ApiClient.requestData(`/mess/kitchen/batches/${encodeURIComponent(batchId)}/ready`, { method: 'POST', body: JSON.stringify({}) });
   }
 
   // ------------------------------------------------------------------ staff reads (SUPER_ADMIN + MD)

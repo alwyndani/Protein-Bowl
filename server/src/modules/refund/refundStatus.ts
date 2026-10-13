@@ -41,6 +41,8 @@ export const REFUND_TRIGGER = {
   AFTER_CANCELLATION: 'AFTER_CANCELLATION',
   /** P10A: a verified Kerala Mess payment arrived after the subscription's selected start date (never activated; refunded in full by the system). */
   MESS_START_DATE_PASSED: 'MESS_START_DATE_PASSED',
+  /** P10B: a verified Kerala Mess payment arrived when a slot of the first (same-day) entitlement date was no longer operationally possible (never activated; refunded in full by the system). */
+  MESS_START_DAY_UNAVAILABLE: 'MESS_START_DAY_UNAVAILABLE',
   EXTERNAL: 'EXTERNAL'
 } as const;
 export type RefundTrigger = (typeof REFUND_TRIGGER)[keyof typeof REFUND_TRIGGER];

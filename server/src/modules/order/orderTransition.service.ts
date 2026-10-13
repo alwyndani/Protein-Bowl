@@ -19,7 +19,7 @@ import {
 } from './orderStatus.js';
 
 export type TransitionActor =
-  | { kind: 'SYSTEM'; source: 'PAYMENT_VERIFICATION' | 'PAYMENT_EXPIRY' | 'MESS_LATE_PAYMENT' }
+  | { kind: 'SYSTEM'; source: 'PAYMENT_VERIFICATION' | 'PAYMENT_EXPIRY' | 'MESS_LATE_PAYMENT' | 'MESS_START_DAY_UNAVAILABLE' }
   /**
    * P9B: the proof-backed DISPATCHED -> DELIVERED move. Constructed ONLY by DeliveryProofService, but the transition never trusts the
    * kind: it independently requires a verified DeliveryProof row (same order, same method, verifiedAt set) inside the caller's transaction.
@@ -126,8 +126,9 @@ export class OrderTransitionService {
       throw new AppError('This order type does not support this transition yet', 409, 'INVALID_ORDER_TRANSITION');
     }
 
-    if (actor.kind === 'SYSTEM' && actor.source === 'MESS_LATE_PAYMENT') {
-      // P10A: the ONLY system cancellation of a CONFIRMED order: a Kerala Mess purchase paid after its start date, together with its full refund intent (verified below).
+    if (actor.kind === 'SYSTEM' && (actor.source === 'MESS_LATE_PAYMENT' || actor.source === 'MESS_START_DAY_UNAVAILABLE')) {
+      // P10A/P10B: the ONLY system cancellations of a CONFIRMED order: a Kerala Mess purchase paid after its start date (MESS_LATE_PAYMENT) or paid when a first-day meal could no
+      // longer be prepared (MESS_START_DAY_UNAVAILABLE), always together with its full refund intent (verified below). Never a DIRECT order.
       if (order.orderType !== MESS_ORDER_TYPE || from !== 'CONFIRMED' || to !== 'CANCELLED' || !request.refundIntentId) {
         throw new AppError('This system cancellation is not allowed', 403, 'ORDER_TRANSITION_FORBIDDEN');
       }

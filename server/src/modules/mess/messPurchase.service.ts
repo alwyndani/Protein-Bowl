@@ -8,6 +8,7 @@ import { MESS_ORDER_TYPE } from '../order/orderStatus.js';
 import { nextOrderNumber } from '../order/orderNumber.js';
 import { RefundViewService } from '../refund/refundView.service.js';
 import { toAdminSubscriptionDto, toCustomerSubscriptionDto, toPublicPlanDto } from './messDto.js';
+import { MessMealService } from './messMeal.service.js';
 import { MessPricingService } from './messPricing.service.js';
 import {
   MAX_START_AHEAD_DAYS,
@@ -25,6 +26,7 @@ import {
   isUniqueViolation,
   lockRow,
   planWithinWindow,
+  slotTimesProblem,
   purchaseBodySchema,
   termEnd
 } from './messPolicy.js';
@@ -55,7 +57,8 @@ export class MessPurchaseService {
       where: { status: PLAN_STATUS.ACTIVE, ...(branchId ? { OR: [{ branchId: null }, { branchId }] } : {}) },
       orderBy: { createdAt: 'asc' }
     });
-    return plans.filter((p) => planWithinWindow(p, today)).map((p) => toPublicPlanDto(p));
+    // a plan without valid service times cannot produce meals: it is not sold (P10B)
+    return plans.filter((p) => planWithinWindow(p, today) && slotTimesProblem(p.slotTimes, p.mealSlots) === null).map((p) => toPublicPlanDto(p));
   }
 
   // ================================================================================================ purchase
@@ -95,10 +98,15 @@ export class MessPurchaseService {
           if (plan.taxRate === null || plan.minStartLeadDays === null || plan.pauseCutoffHours === null || plan.maxPauses === null || plan.mealSlots.length === 0) {
             throw new AppError('This plan is not available', 409, 'PLAN_NOT_AVAILABLE'); // an ACTIVE plan is complete (DB CHECK); defence in depth
           }
+          if (slotTimesProblem(plan.slotTimes, plan.mealSlots) !== null) throw new AppError('This plan is not available', 409, 'PLAN_NOT_AVAILABLE'); // P10B: no service times => no meals => not sold
 
           const earliest = addDays(today, plan.minStartLeadDays);
           if (body.startDate < earliest) throw new AppError(`The earliest start date for this plan is ${earliest}`, 422, 'START_DATE_TOO_EARLY');
           if (body.startDate > addDays(today, MAX_START_AHEAD_DAYS)) throw new AppError('The start date is too far in the future', 422, 'START_DATE_TOO_LATE');
+          // P10B: a same-day start must still be fully serviceable (every first-day slot in the future, no batch started): refused BEFORE any money is asked for.
+          if (await MessMealService.firstDayProblem(tx, { startDate: body.startDate, branchId: sp.branchId, mealSlots: plan.mealSlots, slotTimes: plan.slotTimes })) {
+            throw new AppError("Today's meals can no longer be prepared for this plan. Please choose a later start date.", 409, 'MESS_START_DAY_UNAVAILABLE');
+          }
           const endDate = termEnd(body.startDate, plan.durationDays);
 
           const open = await tx.messSubscription.findMany({
@@ -124,6 +132,7 @@ export class MessPurchaseService {
             minStartLeadDays: plan.minStartLeadDays,
             pauseCutoffHours: plan.pauseCutoffHours,
             maxPauses: plan.maxPauses,
+            slotTimes: plan.slotTimes,
             pricing: { subtotal: pricing.subtotal, taxRate: pricing.taxRate, taxAmount: pricing.taxAmount, total: pricing.total },
             servicePointId: sp.id,
             branchId: sp.branchId,
@@ -171,6 +180,7 @@ export class MessPurchaseService {
               mealSlots: plan.mealSlots,
               pauseCutoffHours: plan.pauseCutoffHours,
               maxPauses: plan.maxPauses,
+              slotTimes: plan.slotTimes as Prisma.InputJsonValue,
               planSnapshot: planSnapshot as unknown as Prisma.InputJsonValue
             }
           });

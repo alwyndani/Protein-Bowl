@@ -44,6 +44,7 @@ export interface MessPublicPlan {
   mealSlots: MealSlot[];
   mealsIncluded: number;
   minStartLeadDays: number;
+  slotTimes?: SlotTimes | null;
   validFrom: string | null;
   validUntil: string | null;
   price: MessPlanPrice;
@@ -119,6 +120,7 @@ export interface MessAdminPlan {
   pauseCutoffHours: number | null;
   maxPauses: number | null;
   minStartLeadDays: number | null;
+  slotTimes: SlotTimes | null;
   validFrom: string | null;
   validUntil: string | null;
   branch: { id: string; code: string; name: string } | null;
@@ -162,4 +164,74 @@ export interface MessPlanInput {
   validFrom?: string | null;
   validUntil?: string | null;
   branchId?: string | null;
+  slotTimes?: SlotTimes | null;
 }
+
+// ---------------------------------------------------------------------------------------------------- P10B: meals, calendar, kitchen
+export type MessMealStatus = 'SCHEDULED' | 'PAUSED' | 'CANCELLED' | 'FULFILLED';
+export type MessKitchenState = 'NOT_STARTED' | 'IN_PREPARATION' | 'READY';
+export type MealUnavailableReason = 'SUBSCRIPTION_NOT_ACTIVE' | 'MEAL_FROZEN' | 'PAUSE_CUTOFF_PASSED' | 'PAUSE_LIMIT_REACHED' | 'NOT_SCHEDULED' | 'NOT_PAUSED' | 'MEAL_CANCELLED';
+
+export interface MessCalendarMeal {
+  id: string;
+  date: string;
+  slot: MealSlot;
+  serviceAt: string;
+  status: MessMealStatus;
+  kitchenState: MessKitchenState;
+  canPause: boolean;
+  canResume: boolean;
+  reason: MealUnavailableReason | null;
+  forfeitIfPaused: boolean;
+}
+
+export interface MessMealCalendar {
+  subscription: { status: string; pausesUsed: number; maxPauses: number | null; pauseCutoffHours: number | null; mealsReady: boolean };
+  window?: { from: string; to: string };
+  meals: MessCalendarMeal[];
+}
+
+export interface MessMealChange {
+  changed: boolean;
+  mealId: string;
+  status: string;
+  pausesUsed: number;
+  maxPauses: number | null;
+}
+
+export interface MessServicePointCount {
+  servicePoint: { id: string; name: string; gateLabel: string | null };
+  mealCount: number;
+}
+
+export interface MessKitchenDemandGroup {
+  branch: { id: string; code: string; name: string };
+  mealDate: string;
+  slot: MealSlot;
+  batchStatus: 'PREPARING' | 'READY' | null;
+  canStart: boolean;
+  total: number;
+  servicePoints: MessServicePointCount[];
+}
+
+export interface MessKitchenDemand {
+  today: string;
+  from: string;
+  to: string;
+  branchIds: string[];
+  groups: MessKitchenDemandGroup[];
+}
+
+export interface MessKitchenBatch {
+  id: string;
+  branch: { id: string; code: string; name: string };
+  mealDate: string;
+  slot: MealSlot;
+  status: 'PREPARING' | 'READY';
+  mealCount: number;
+  startedAt: string;
+  readyAt: string | null;
+  servicePoints: MessServicePointCount[];
+}
+
+export type SlotTimes = Partial<Record<MealSlot, string>>;

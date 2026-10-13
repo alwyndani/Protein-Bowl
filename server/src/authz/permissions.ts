@@ -25,7 +25,9 @@ export type Permission =
   | 'refunds:read'
   | 'refunds:write'
   | 'mess:read'
-  | 'mess:admin';
+  | 'mess:admin'
+  | 'mess:kitchen:read'
+  | 'mess:kitchen:write';
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
@@ -39,10 +41,12 @@ export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permis
     // Refunds / financial cancellation (P7C): SUPER_ADMIN only for mutation; MD read-only
     'refunds:read', 'refunds:write',
     // Kerala Mess (P10A): SUPER_ADMIN administers service points, plans, account approvals and exceptional cancellation; MD reads only
-    'mess:read', 'mess:admin'
+    'mess:read', 'mess:admin',
+    // P10B: read-only visibility of the Mess kitchen (explicit branch); preparation transitions belong to CHEF only
+    'mess:kitchen:read'
   ],
-  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read', 'mess:read'],
-  [RoleEnum.CHEF]: ['kds:read', 'kds:write'],
+  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read', 'mess:read', 'mess:kitchen:read'],
+  [RoleEnum.CHEF]: ['kds:read', 'kds:write', 'mess:kitchen:read', 'mess:kitchen:write'],
   [RoleEnum.PROCUREMENT]: ['procurement:read', 'procurement:write'],
   [RoleEnum.POS]: ['pos:read', 'pos:write'],
   [RoleEnum.DELIVERY]: ['delivery:read', 'delivery:write']

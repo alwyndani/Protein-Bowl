@@ -120,7 +120,7 @@ describe('Kerala Mess customer screen (real backend data, no mock behaviour)', (
     expect(screen.getByTestId('mess-sub-status')).toHaveTextContent('Awaiting payment');
   });
 
-  it('an ACTIVE subscription is shown from the server state only; no meal, pause, tracking, gate-pass or wallet UI exists', async () => {
+  it('an ACTIVE subscription is shown from the server state only; the meal calendar is the only meal UI and no tracking, gate-pass or wallet UI exists', async () => {
     mess.getAccount.mockResolvedValue(account());
     mess.getPlans.mockResolvedValue([publicPlan()]);
     mess.getSubscriptions.mockResolvedValue([subscription({ status: 'ACTIVE', payment: { state: 'PAID', canStartPayment: false }, activatedAt: '2026-10-13T00:00:00.000Z', cancellation: { allowed: false } })]);
@@ -128,8 +128,9 @@ describe('Kerala Mess customer screen (real backend data, no mock behaviour)', (
     expect(await screen.findByTestId('mess-sub-active-note')).toBeInTheDocument();
     expect(screen.queryByTestId('payment-panel-stub')).toBeNull();
     const text = document.body.textContent ?? '';
-    for (const forbidden of [/wallet/i, /gate\s*pass/i, /pause/i, /tracking/i, /QR/, /handover/i, /refund of ₹/i, /today'?s meal/i]) expect(text).not.toMatch(forbidden);
-    expect(screen.getByTestId('mess-checkpoint-note')).toHaveTextContent('Meal scheduling, pausing and daily delivery are not available yet');
+    for (const forbidden of [/wallet/i, /gate\s*pass/i, /tracking/i, /QR/, /handover/i, /refund of ₹/i, /today'?s meal/i, /credit/i]) expect(text).not.toMatch(forbidden);
+    expect(screen.getByTestId('mess-checkpoint-note')).toHaveTextContent('a paused meal is not refunded or replaced');
+    expect(screen.getByTestId('meal-calendar-toggle')).toBeInTheDocument();
     expect(screen.queryByTestId('mess-cancel-open')).toBeNull();
   });
 

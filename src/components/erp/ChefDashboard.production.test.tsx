@@ -26,17 +26,18 @@ afterEach(() => vi.unstubAllEnvs());
 describe('Chef workspace in PRODUCTION', () => {
   beforeEach(() => vi.stubEnv('DEV', false));
 
-  it('opens on the real Kitchen Queue and offers only Kitchen Queue + Recipes: no mock tab, no demo figure', async () => {
+  it('opens on the real Kitchen Queue and offers only Kitchen Queue + the real Kerala Mess kitchen + Recipes: no mock tab, no demo figure', async () => {
     render(<ChefDashboard orders={[]} onOpenMenuModal={vi.fn()} />);
     expect(await screen.findByTestId('kitchen-queue')).toBeInTheDocument();
     expect(getQueue).toHaveBeenCalled();
     const names = tabs();
-    expect(names).toHaveLength(2);
+    expect(names).toHaveLength(3);
     expect(names[0]).toBe('Kitchen Queue');
-    expect(names[1]).toMatch(/Recipe Database/);
+    expect(names[1]).toBe('Kerala Mess kitchen'); // P10B: the REAL Mess kitchen (backend data), not the mock batches tab
+    expect(names[2]).toMatch(/Recipe Database/);
     expect(screen.queryByText(/Demo/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Today's Batches/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Daily Production Sheet|Order Dispatch|Kerala Mess/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Daily Production Sheet|Order Dispatch|Kerala Mess & Mass Batches/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Kitchen Queue' })).toHaveAttribute('aria-current', 'page');
   });
 
@@ -61,7 +62,7 @@ describe('Chef workspace in DEVELOPMENT', () => {
     expect(await screen.findByTestId('kitchen-queue')).toBeInTheDocument();
     const names = tabs();
     expect(names[0]).toBe('Kitchen Queue');
-    const mock = names.filter((n) => /Daily Production Sheet|Kerala Mess|Order Dispatch/.test(n));
+    const mock = names.filter((n) => /Daily Production Sheet|Kerala Mess & Mass Batches|Order Dispatch/.test(n));
     expect(mock).toHaveLength(3);
     for (const n of mock) expect(n).toMatch(/^Demo \(mock data\)/);
   });

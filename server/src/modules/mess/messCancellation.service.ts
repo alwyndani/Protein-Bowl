@@ -5,14 +5,14 @@ import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext } from '../audit/audit.service.js';
 import { CancellationService } from '../refund/cancellation.service.js';
 import { RefundViewService } from '../refund/refundView.service.js';
-import { MessTx, SUBSCRIPTION_STATUS, adminCancelSchema, businessDate, customerCancelSchema, dateToString, lockRow } from './messPolicy.js';
+import { FULFILLED_MEAL_STATUSES, MessTx, SUBSCRIPTION_STATUS, adminCancelSchema, businessDate, customerCancelSchema, dateToString, lockRow } from './messPolicy.js';
 
 /**
  * P10B extension point: the number of meals already FULFILLED for a subscription. P10A generates no meals, so it is always 0, but the
  * cancellation rule "no fulfilled meal" is already evaluated here (under the subscription lock) so P10B only has to make this real.
  */
 export async function fulfilledMealCount(tx: MessTx, subscriptionId: string): Promise<number> {
-  return await tx.messDailyOrder.count({ where: { messSubscriptionId: subscriptionId, status: 'CONSUMED' } });
+  return await tx.messMeal.count({ where: { messSubscriptionId: subscriptionId, status: { in: [...FULFILLED_MEAL_STATUSES] } } });
 }
 
 type Row = { status: string; startDate: Date };
@@ -58,11 +58,15 @@ export class MessCancellationService {
           if (sub.status === SUBSCRIPTION_STATUS.CANCELLED) return 'ALREADY_CANCELLED' as const;
           if (sub.status === SUBSCRIPTION_STATUS.PENDING_PAYMENT) return 'OK' as const;
           if (sub.status !== SUBSCRIPTION_STATUS.ACTIVE) throw new AppError('This subscription can no longer be cancelled', 409, 'MESS_CANCELLATION_NOT_ALLOWED');
+          // P10B: lock every meal of this subscription (lock order subscription -> meals), so a kitchen batch attachment cannot slip in between the check and the cancellation
+          await tx.$queryRaw`SELECT "id" FROM "mess_daily_orders" WHERE "messSubscriptionId" = ${subscriptionId} ORDER BY "id" FOR UPDATE`;
+          if ((await tx.messMeal.count({ where: { messSubscriptionId: subscriptionId, batchId: { not: null } } })) > 0) throw new AppError('The kitchen has already started preparing meals for this subscription, so it can no longer be cancelled', 409, 'MESS_CANCELLATION_NOT_ALLOWED');
           if ((await fulfilledMealCount(tx, subscriptionId)) > 0) throw new AppError('Meals have already been served, so this subscription can no longer be cancelled', 409, 'MESS_CANCELLATION_NOT_ALLOWED');
           if (cmd.byCustomer && dateToString(sub.startDate) <= businessDate()) throw new AppError('This subscription has already started and can no longer be cancelled', 409, 'MESS_SUBSCRIPTION_STARTED');
           return 'OK' as const;
         },
         finish: async (tx) => {
+          await tx.messMeal.updateMany({ where: { messSubscriptionId: subscriptionId, status: { in: ['SCHEDULED', 'PAUSED'] }, batchId: null }, data: { status: 'CANCELLED' } });
           await tx.messSubscription.updateMany({
             where: { id: subscriptionId, status: { in: [SUBSCRIPTION_STATUS.PENDING_PAYMENT, SUBSCRIPTION_STATUS.ACTIVE] } },
             data: { status: SUBSCRIPTION_STATUS.CANCELLED, cancelledAt: new Date(), cancellationReasonCode: cmd.reasonCode }

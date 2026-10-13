@@ -8,14 +8,16 @@ import { useStepUp } from './StepUp';
 import { useAdminAction } from './useAdminAction';
 import { describeAdminError } from './adminErrors';
 import type { AdminErrorInfo } from './adminErrors';
+import { MessKitchenPanel } from '../erp/kitchen/MessKitchenPanel';
 import { Chip, EmptyState, ErrorNotice, Field, Modal, Spinner, formatDate, inputClass, primaryButton, secondaryButton } from './adminUi';
 
-type Tab = 'accounts' | 'servicePoints' | 'plans' | 'subscriptions';
+type Tab = 'accounts' | 'servicePoints' | 'plans' | 'subscriptions' | 'kitchen';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'accounts', label: 'Account approvals' },
   { id: 'servicePoints', label: 'Service points' },
   { id: 'plans', label: 'Plans' },
-  { id: 'subscriptions', label: 'Subscriptions' }
+  { id: 'subscriptions', label: 'Subscriptions' },
+  { id: 'kitchen', label: 'Mess kitchen (read-only)' }
 ];
 const SLOTS: MealSlot[] = ['BREAKFAST', 'LUNCH', 'DINNER'];
 const REJECT_REASONS = ['INCOMPLETE_DETAILS', 'NOT_ELIGIBLE', 'SERVICE_POINT_MISMATCH', 'OTHER'];
@@ -70,6 +72,7 @@ export const MessAdmin: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }
       {tab === 'servicePoints' && <ServicePointsTab readOnly={readOnly} />}
       {tab === 'plans' && <PlansTab readOnly={readOnly} />}
       {tab === 'subscriptions' && <SubscriptionsTab readOnly={readOnly} />}
+      {tab === 'kitchen' && <KitchenTab />}
     </section>
   );
 };
@@ -270,7 +273,7 @@ const PlansTab: React.FC<{ readOnly: boolean }> = ({ readOnly }) => {
                   {p.durationDays} days · {p.mealSlots.length ? p.mealSlots.map(pretty).join(' + ') : 'no meal slots'} · {p.basePrice === null ? 'no price' : formatInr(p.basePrice)} + {p.taxRate === null ? 'no tax rate set' : `${(p.taxRate * 100).toFixed(2)}% tax`}
                 </p>
                 <p className="text-[11px] text-stone-500">
-                  Earliest start: {p.minStartLeadDays === null ? 'not set' : `${p.minStartLeadDays} day(s)`} · Branch: {p.branch?.name ?? 'all branches'}
+                  Service times: {p.slotTimes && Object.keys(p.slotTimes).length ? SLOTS.filter((x) => p.slotTimes?.[x]).map((x) => `${pretty(x)} ${p.slotTimes![x]}`).join(', ') : 'not set'} · Earliest start: {p.minStartLeadDays === null ? 'not set' : `${p.minStartLeadDays} day(s)`} · Branch: {p.branch?.name ?? 'all branches'}
                   {p.validFrom || p.validUntil ? ` · Valid ${p.validFrom ?? '…'} to ${p.validUntil ?? '…'}` : ''}
                 </p>
               </div>
@@ -330,6 +333,7 @@ const PlanDialog: React.FC<{ plan: MessAdminPlan | null; onClose: () => void; on
     branchId: plan?.branch?.id ?? ''
   });
   const [slots, setSlots] = useState<MealSlot[]>(plan?.mealSlots ?? []);
+  const [times, setTimes] = useState<Record<string, string>>({ BREAKFAST: plan?.slotTimes?.BREAKFAST ?? '', LUNCH: plan?.slotTimes?.LUNCH ?? '', DINNER: plan?.slotTimes?.DINNER ?? '' });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
   const int = (v: string) => (v.trim() === '' ? null : Number(v));
   const toggle = (s: MealSlot) => setSlots((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
@@ -348,7 +352,9 @@ const PlanDialog: React.FC<{ plan: MessAdminPlan | null; onClose: () => void; on
       minStartLeadDays: int(f.minStartLeadDays),
       validFrom: f.validFrom || null,
       validUntil: f.validUntil || null,
-      branchId: f.branchId || null
+      branchId: f.branchId || null,
+      // exactly one explicit HH:mm per ENABLED slot, never a default (an incomplete draft may carry none)
+      slotTimes: SLOTS.filter((x) => slots.includes(x) && times[x]).length ? (Object.fromEntries(SLOTS.filter((x) => slots.includes(x) && times[x]).map((x) => [x, times[x]])) as Record<string, string>) : null
     };
     const out = await run(() => withStepUp((proof) => (plan ? MessService.updatePlan(plan.id, { ...body, expectedVersion: plan.version }, proof) : MessService.createPlan({ ...body, code: f.code }, proof))));
     if (out.ok) onDone();
@@ -387,6 +393,19 @@ const PlanDialog: React.FC<{ plan: MessAdminPlan | null; onClose: () => void; on
             ))}
           </div>
         </fieldset>
+        <fieldset className="space-y-1" data-testid="slot-times">
+          <legend className="text-[11px] font-bold uppercase tracking-wider text-stone-400">Service time per enabled slot (Asia/Kolkata, 24-hour)</legend>
+          <div className="flex flex-wrap gap-3">
+            {SLOTS.filter((x) => slots.includes(x)).map((x) => (
+              <label key={x} className="flex items-center gap-1.5 text-xs">
+                {pretty(x)}
+                <input type="time" aria-label={`${pretty(x)} service time`} value={times[x]} onChange={(e) => setTimes((cur) => ({ ...cur, [x]: e.target.value }))} className={inputClass} style={{ width: '7.5rem' }} />
+              </label>
+            ))}
+            {slots.length === 0 && <span className="text-[11px] text-stone-500">Enable a meal slot first.</span>}
+          </div>
+          <p className="text-[11px] text-stone-500">Required to activate a plan. There are no default times: they decide when each meal is served and when pausing closes.</p>
+        </fieldset>
         <Field label="Description" htmlFor="pl-desc"><textarea id="pl-desc" value={f.description} onChange={set('description')} maxLength={500} rows={2} className={inputClass} /></Field>
         <ErrorNotice error={error} onDismiss={clearError} />
         <div className="flex justify-end gap-2">
@@ -395,6 +414,28 @@ const PlanDialog: React.FC<{ plan: MessAdminPlan | null; onClose: () => void; on
         </div>
       </form>
     </Modal>
+  );
+};
+
+// ------------------------------------------------------------------------------------------------ kitchen (read-only for SUPER_ADMIN and MD)
+const KitchenTab: React.FC = () => {
+  const { data } = useList(() => MessService.adminServicePoints());
+  const [branchId, setBranchId] = useState('');
+  const branches: Array<{ id: string; code: string; name: string }> = [...new Map<string, { id: string; code: string; name: string }>((data ?? []).map((sp) => [sp.branch.id, sp.branch] as const)).values()];
+  return (
+    <div className="space-y-3">
+      <Field label="Branch" htmlFor="mess-kitchen-branch" hint="Preparation is done by the branch's Chef; this view is read-only.">
+        <select id="mess-kitchen-branch" value={branchId} onChange={(e) => setBranchId(e.target.value)} className={inputClass}>
+          <option value="">Select a branch…</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name} ({b.code})
+            </option>
+          ))}
+        </select>
+      </Field>
+      <MessKitchenPanel readOnly branchId={branchId || undefined} />
+    </div>
   );
 };
 

@@ -54,6 +54,9 @@ model User {
   deliveryOverrides   DeliveryProof[]      @relation("DeliveryProofOverrideBy")
   deliveryAttemptsResolved DeliveryAttempt[] @relation("DeliveryAttemptResolvedBy")
   messAccountsReviewed MessAccount[]        @relation("MessAccountReviewedBy")
+  messMealBatchesStarted MessMealBatch[]    @relation("MessMealBatchStartedBy")
+  messMealBatchesReadied MessMealBatch[]    @relation("MessMealBatchReadiedBy")
+  messMealEvents       MessMealEvent[]
 
   @@index([email])
   @@index([phone])
@@ -131,6 +134,8 @@ model KitchenBranch {
   employeeAssignments EmployeeBranchAssignment[]
   deliveryAttempts    DeliveryAttempt[]
   messServicePoints   MessServicePoint[]
+  messMeals           MessMeal[]
+  messMealBatches     MessMealBatch[]
   messPlans           MessSubscriptionPlan[]
   messSubscriptions   MessSubscription[]
 
@@ -939,6 +944,7 @@ model MessServicePoint {
   branch        KitchenBranch      @relation(fields: [branchId], references: [id], onDelete: Restrict)
   accounts      MessAccount[]
   subscriptions MessSubscription[]
+  meals         MessMeal[]
 
   @@index([branchId, status])
   @@map("mess_service_points")
@@ -964,6 +970,7 @@ model MessSubscriptionPlan {
   pauseCutoffHours  Int?               // P10B policy, snapshotted at purchase
   maxPauses         Int?               // P10B policy, snapshotted at purchase
   minStartLeadDays  Int?               // explicit; >= 0
+  slotTimes         Json?              // P10B: { SLOT: "HH:mm" } exactly one per enabled slot; required to ACTIVATE (service-level), snapshotted at purchase
   version           Int                @default(1)
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @default(now()) @updatedAt
@@ -994,6 +1001,10 @@ model MessSubscription {
   pauseCutoffHours    Int?
   maxPauses           Int?
   planSnapshot        Json?
+  /// P10B: slot -> "HH:mm" service times (Asia/Kolkata), snapshotted from the plan at purchase. NULL only for P10A-era subscriptions (backfilled once by the CLI).
+  slotTimes           Json?
+  /// P10B: set only after the COMPLETE meal entitlement exists.
+  mealsGeneratedAt    DateTime?
   activatedAt         DateTime?
   cancelledAt         DateTime?
   cancellationReasonCode String?
@@ -1005,7 +1016,8 @@ model MessSubscription {
   purchaseOrder       Order?               @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
   servicePoint        MessServicePoint?    @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
   branch              KitchenBranch?       @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  dailyOrders         MessDailyOrder[]
+  meals               MessMeal[]
+  mealEvents          MessMealEvent[]
   pauseRequests       MealPauseRequest[]
 
   @@index([messAccountId, status])
@@ -1013,19 +1025,77 @@ model MessSubscription {
   @@map("mess_subscriptions")
 }
 
-model MessDailyOrder {
+/// P10B: one scheduled Kerala Mess meal ENTITLEMENT (NOT a commerce Order, Payment, KOT or delivery assignment). The physical table keeps its legacy name.
+/// Identity = subscription + meal date + slot. Statuses: SCHEDULED | PAUSED (forfeited) | CANCELLED | FULFILLED (P10C only); legacy CONSUMED/SKIPPED stay readable.
+model MessMeal {
   id                 String           @id @default(uuid())
   messSubscriptionId String
-  date               DateTime         @db.Date
-  slot               String           // BREAKFAST, LUNCH, DINNER
-  status             String           @default("SCHEDULED") // SCHEDULED, PAUSED, CONSUMED, SKIPPED
-  gatePassCode       String?
-  consumedAt         DateTime?
+  mealDate           DateTime         @map("date") @db.Date
+  slot               String           // BREAKFAST | LUNCH | DINNER
+  status             String           @default("SCHEDULED")
+  gatePassCode       String?          // LEGACY, unused
+  consumedAt         DateTime?        // LEGACY, unused until P10C
+  branchId           String
+  servicePointId     String
+  serviceAt          DateTime         // the service INSTANT (date + slot time in Asia/Kolkata)
+  batchId            String?          // frozen kitchen membership
+  pausedAt           DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @default(now()) @updatedAt
 
   messSubscription   MessSubscription @relation(fields: [messSubscriptionId], references: [id], onDelete: Cascade)
+  branch             KitchenBranch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  servicePoint       MessServicePoint @relation(fields: [servicePointId], references: [id], onDelete: Restrict)
+  batch              MessMealBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  events             MessMealEvent[]
 
-  @@unique([messSubscriptionId, date, slot])
+  @@unique([messSubscriptionId, mealDate, slot])
+  @@index([branchId, mealDate, slot, status])
+  @@index([batchId])
   @@map("mess_daily_orders")
+}
+
+/// P10B: the aggregate kitchen preparation batch for ONE branch + meal date + slot. Membership is the set of MessMeal rows with batchId = id (frozen at start).
+model MessMealBatch {
+  id              String        @id @default(uuid())
+  branchId        String
+  mealDate        DateTime      @db.Date
+  slot            String
+  status          String        @default("PREPARING") // PREPARING | READY
+  mealCount       Int
+  startedAt       DateTime      @default(now())
+  startedByUserId String
+  readyAt         DateTime?
+  readyByUserId   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
+
+  branch          KitchenBranch @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  startedBy       User          @relation("MessMealBatchStartedBy", fields: [startedByUserId], references: [id], onDelete: Restrict)
+  readiedBy       User?         @relation("MessMealBatchReadiedBy", fields: [readyByUserId], references: [id], onDelete: Restrict)
+  meals           MessMeal[]
+
+  @@unique([branchId, mealDate, slot])
+  @@map("mess_meal_batches")
+}
+
+/// P10B: APPEND-ONLY evidence of every successful PAUSE / RESUME (written only by MessMealService; never updated or deleted).
+model MessMealEvent {
+  id                 String           @id @default(uuid())
+  messSubscriptionId String
+  mealId             String
+  action             String           // PAUSE | RESUME
+  actorUserId        String
+  pausesUsedAfter    Int
+  createdAt          DateTime         @default(now())
+
+  messSubscription   MessSubscription @relation(fields: [messSubscriptionId], references: [id], onDelete: Restrict)
+  meal               MessMeal         @relation(fields: [mealId], references: [id], onDelete: Restrict)
+  actor              User             @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([mealId])
+  @@index([messSubscriptionId])
+  @@map("mess_meal_events")
 }
 
 model MealPauseRequest {

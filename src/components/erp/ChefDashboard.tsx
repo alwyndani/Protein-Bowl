@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { KitchenQueue } from './kitchen/KitchenQueue';
+import { MessKitchenPanel } from './kitchen/MessKitchenPanel';
 
 interface IndividualCustomerOrderItem {
   id: string;
@@ -80,7 +81,7 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
 }) => {
   // P8: the production workspace is the real Kitchen Queue (+ Recipes). The remaining tabs run on MOCK data: they exist for development only.
   const isDev = import.meta.env.DEV;
-  const [activeTab, setActiveTab] = useState<'kitchen' | 'production' | 'recipes' | 'labels' | 'kerala_mess'>('kitchen');
+  const [activeTab, setActiveTab] = useState<'kitchen' | 'mess_kitchen' | 'production' | 'recipes' | 'labels' | 'kerala_mess'>('kitchen');
   const [batches, setBatches] = useState<ProductionBatch[]>(INITIAL_PRODUCTION_BATCHES);
   const [messBatches, setMessBatches] = useState<MessKitchenBatchSummary[]>(INITIAL_MESS_KITCHEN_BATCHES);
   const [selectedMessSlotFilter, setSelectedMessSlotFilter] = useState<'all' | 'breakfast' | 'lunch' | 'dinner'>('all');
@@ -648,6 +649,7 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
       <div className="flex gap-2 border-b border-stone-200 pb-2 overflow-x-auto scrollbar-none">
         {[
           { id: 'kitchen', label: 'Kitchen Queue', icon: ChefHat },
+          { id: 'mess_kitchen', label: 'Kerala Mess kitchen', icon: ChefHat },
           { id: 'recipes', label: `📖 Recipe Database & Versioning (${recipes.length})`, icon: Utensils },
           // MOCK data below: visible in development only, clearly labelled, never presented to production CHEF users
           ...(isDev
@@ -678,6 +680,13 @@ export const ChefDashboard: React.FC<ChefDashboardProps> = ({
 
       {/* P8: the real, backend-derived kitchen queue (production default) */}
       {activeTab === 'kitchen' && <KitchenQueue onSessionExpired={onSessionExpired} />}
+
+      {/* P10B: the real Kerala Mess demand + PREPARING/READY batches (production) */}
+      {activeTab === 'mess_kitchen' && (
+        <div className="bg-stone-950 rounded-3xl p-4 sm:p-6">
+          <MessKitchenPanel onSessionExpired={onSessionExpired} />
+        </div>
+      )}
 
       {/* TAB 1: Auto-Generated Production Sheet (MOCK, development only) */}
       {isDev && activeTab === 'production' && (

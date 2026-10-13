@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -32,6 +32,21 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
   let planVersion = 0;
   const today = businessDate();
   const tomorrow = addDays(today, 1);
+  /**
+   * P10B same-day rule: a start date of TODAY needs every first-day slot to still be in the future, so a test that buys/pays for today must not depend on the wall clock.
+   * Date alone is pinned (timers stay real) to 06:00 IST of the business day when the real time is already later (tokens carry no "not before", so an earlier clock is harmless).
+   */
+  const morning = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const at = new Date(`${today}T06:00:00+05:30`);
+    if (Date.now() < at.getTime()) return await fn();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(at);
+    try {
+      return await fn();
+    } finally {
+      vi.useRealTimers();
+    }
+  };
   const key = () => `p10a-${ts}-${++seq}-${randomUUID().slice(0, 8)}`;
 
   async function mkUser(label: string, roles: RoleEnum[]): Promise<Who> {
@@ -59,6 +74,9 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
   };
   const admin = (method: 'post' | 'put' | 'patch', path: string, body: unknown = {}, s: string | null = step) => send(method, `/api/v1/admin${path}`, who.admin.token, body, { step: s });
 
+  const SLOT_CLOCK: Record<string, string> = { BREAKFAST: '08:00', LUNCH: '13:00', DINNER: '19:30' };
+  /** P10B: a plan needs explicit service times for exactly its enabled slots (test fixture values, not policy). */
+  const slotTimesFor = (slots: unknown): Record<string, string> => Object.fromEntries(((Array.isArray(slots) ? slots : []) as string[]).filter((x) => SLOT_CLOCK[x]).map((x) => [x, SLOT_CLOCK[x]]));
   const planBody = (over: Record<string, unknown> = {}) => ({
     code: `P10A-${ts}-${++seq}`,
     name: 'Test Monthly',
@@ -69,6 +87,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
     pauseCutoffHours: 12,
     maxPauses: 4,
     minStartLeadDays: 1,
+    slotTimes: slotTimesFor('mealSlots' in over ? over.mealSlots : ['BREAKFAST', 'LUNCH']),
     ...over
   });
   async function mkActivePlan(over: Record<string, unknown> = {}) {
@@ -397,7 +416,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
     });
 
     it('24. activation refuses an incomplete plan: no tax rate, no slots, no pause policy, no lead days, zero price', async () => {
-      const cases: Array<Record<string, unknown>> = [{ taxRate: undefined }, { mealSlots: [] }, { pauseCutoffHours: undefined }, { maxPauses: undefined }, { minStartLeadDays: undefined }, { basePrice: '0' }];
+      const cases: Array<Record<string, unknown>> = [{ taxRate: undefined }, { slotTimes: undefined }, { slotTimes: { LUNCH: '13:00' } }, { mealSlots: [] }, { pauseCutoffHours: undefined }, { maxPauses: undefined }, { minStartLeadDays: undefined }, { basePrice: '0' }];
       for (const over of cases) {
         const c = await admin('post', '/mess/plans', planBody(over));
         expect(c.status, JSON.stringify(over)).toBe(201);
@@ -409,7 +428,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
 
     it('25. validation: duplicate slots, unknown slot, bad tax rate, negative lead, bad dates, unknown keys are all refused', async () => {
       const bad: Array<Record<string, unknown>> = [
-        { mealSlots: ['LUNCH', 'LUNCH'] }, { mealSlots: ['SNACK'] }, { taxRate: '1.5' }, { taxRate: '-0.1' }, { taxRate: 'abc' }, { minStartLeadDays: -1 },
+        { slotTimes: { BREAKFAST: '08:00', LUNCH: '1pm' } }, { slotTimes: { BREAKFAST: '25:00' } }, { slotTimes: { SNACK: '10:00' } }, { mealSlots: ['LUNCH', 'LUNCH'] }, { mealSlots: ['SNACK'] }, { taxRate: '1.5' }, { taxRate: '-0.1' }, { taxRate: 'abc' }, { minStartLeadDays: -1 },
         { pauseCutoffHours: -2 }, { maxPauses: -1 }, { durationDays: 0 }, { basePrice: '-5' }, { basePrice: '10.999' }, { validFrom: '2026-13-40' }, { status: 'ACTIVE' }, { mealsPerDay: 9 }
       ];
       for (const over of bad) expect((await admin('post', '/mess/plans', planBody(over))).status, JSON.stringify(over)).toBe(422);
@@ -600,7 +619,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       const zero = await mkActivePlan({ minStartLeadDays: 0, code: `P10A-L0-${ts}` });
       const three = await mkActivePlan({ minStartLeadDays: 3, code: `P10A-L3-${ts}` });
       expect((await buy('custD', zero.id, addDays(today, -1))).status).toBe(422);
-      const sameDay = await buy('custD', zero.id, today);
+      const sameDay = await morning(() => buy('custD', zero.id, today));
       expect(sameDay.status, JSON.stringify(sameDay.body)).toBe(201);
       await send('post', `/api/v1/mess/subscriptions/${sameDay.body.data.subscription.id}/cancel`, who.custD.token, { reasonCode: 'CHANGED_MIND' });
       for (const d of [today, addDays(today, 1), addDays(today, 2)]) {
@@ -634,7 +653,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       const res = await buy('custD', p.id, tomorrow);
       const sub = res.body.data.subscription;
       const before = await prisma.order.findUniqueOrThrow({ where: { id: sub.purchaseOrder.id } });
-      const edit = await admin('patch', `/mess/plans/${p.id}`, { expectedVersion: p.version, basePrice: '999.00', taxRate: '0.2800', mealSlots: ['DINNER'] });
+      const edit = await admin('patch', `/mess/plans/${p.id}`, { expectedVersion: p.version, basePrice: '999.00', taxRate: '0.2800', mealSlots: ['DINNER'], slotTimes: { DINNER: '19:00' } });
       expect(edit.status, JSON.stringify(edit.body)).toBe(200);
       await admin('post', `/mess/plans/${p.id}/archive`, { expectedVersion: edit.body.data.plan.version });
       const after = await prisma.order.findUniqueOrThrow({ where: { id: sub.purchaseOrder.id } });
@@ -763,7 +782,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       expect(sub.activatedAt).toBeTruthy();
       expect(await prisma.order.findUniqueOrThrow({ where: { id: sA.purchaseOrder.id } })).toMatchObject({ status: 'CONFIRMED', paymentStatus: 'PAID' });
       expect((await audits('MESS_SUBSCRIPTION_ACTIVATED', sA.id)).length).toBe(1);
-      expect(await prisma.messDailyOrder.count({ where: { messSubscriptionId: sA.id } })).toBe(0); // no meals generated (P10B)
+      expect(await prisma.messMeal.count({ where: { messSubscriptionId: sA.id } })).toBe(60); // P10B: the COMPLETE entitlement exists the moment it activates (30 days x 2 slots)
       expect(await prisma.mealPauseRequest.count({ where: { messSubscriptionId: sA.id } })).toBe(0);
       expect(await prisma.walletTransaction.count()).toBe(walletBefore);
       const read = await get(`/api/v1/mess/subscriptions/${sA.id}`, who.custA.token);
@@ -912,8 +931,11 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
 
     it('63. a STARTED subscription cannot be cancelled by the customer (409); no refund, nothing changes', async () => {
       const zero = await mkActivePlan({ minStartLeadDays: 0, code: `P10A-START-${ts}` });
-      const sub = await openFor('custD', today, zero.id);
-      await pay('custD', sub);
+      const sub = await morning(async () => {
+        const x = await openFor('custD', today, zero.id);
+        await pay('custD', x);
+        return x;
+      });
       const c = await cancelAs('custD', sub.id);
       expect(c.status).toBe(409);
       expect(c.body.error).toBe('MESS_SUBSCRIPTION_STARTED');
@@ -948,13 +970,14 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
 
     it('66. SUPER_ADMIN exception: a started subscription with NO fulfilled meal is cancelled with a FULL refund; with a fulfilled meal it is refused', async () => {
       const sub = (globalThis as Record<string, unknown>).__startedSub as { id: string; purchaseOrder: { id: string } };
-      await prisma.messDailyOrder.create({ data: { messSubscriptionId: sub.id, date: new Date(`${today}T00:00:00.000Z`), slot: 'LUNCH', status: 'CONSUMED', consumedAt: new Date() } });
+      const lunch = await prisma.messMeal.findFirstOrThrow({ where: { messSubscriptionId: sub.id, mealDate: new Date(`${today}T00:00:00.000Z`), slot: 'LUNCH' } });
+      await prisma.messMeal.update({ where: { id: lunch.id }, data: { status: 'FULFILLED', consumedAt: new Date() } }); // simulates P10C fulfilment
       const refused = await adminCancel(sub.id);
       expect(refused.status).toBe(409);
       expect(refused.body.error).toBe('MESS_CANCELLATION_NOT_ALLOWED');
       expect((await subRow(sub.id)).status).toBe('ACTIVE');
       expect(await prisma.refund.count({ where: { orderId: sub.purchaseOrder.id } })).toBe(0);
-      await prisma.messDailyOrder.deleteMany({ where: { messSubscriptionId: sub.id } });
+      await prisma.messMeal.update({ where: { id: lunch.id }, data: { status: 'SCHEDULED', consumedAt: null } });
       const ok = await adminCancel(sub.id);
       expect(ok.status, JSON.stringify(ok.body)).toBe(200);
       const refunds = await prisma.refund.findMany({ where: { orderId: sub.purchaseOrder.id } });
@@ -1239,7 +1262,7 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       expect(sub.activatedAt).toBeNull();
       expect(sub.cancellationReasonCode).toBe('START_DATE_PASSED');
       expect(dateToString(sub.startDate)).toBe(yesterday); // dates are never shifted
-      expect(await prisma.messDailyOrder.count({ where: { messSubscriptionId: c.sub.id } })).toBe(0);
+      expect(await prisma.messMeal.count({ where: { messSubscriptionId: c.sub.id } })).toBe(0);
       const ledger = await prisma.providerPayment.findMany({ where: { providerPaymentId: pi.providerPaymentId } });
       expect(ledger).toHaveLength(1);
       expect(ledger[0].reconciliationStatus).toBe('APPLIED');
@@ -1277,9 +1300,9 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       expect(await prisma.refund.count({ where: { orderId: c.sub.purchaseOrder.id } })).toBe(0);
       const zero = await mkActivePlan({ minStartLeadDays: 0, code: `P10A-K0-${ts}` });
       await prisma.messSubscription.updateMany({ where: { messAccount: { customerProfileId: who.custB.profileId! }, status: { in: ['PENDING_PAYMENT', 'ACTIVE'] } }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
-      const r = await buy('custB', zero.id, today);
+      const r = await morning(() => buy('custB', zero.id, today));
       expect(r.status, JSON.stringify(r.body)).toBe(201);
-      await pay('custB', r.body.data.subscription);
+      await morning(() => pay('custB', r.body.data.subscription));
       expect((await subRow(r.body.data.subscription.id)).status).toBe('ACTIVE');
     });
 
