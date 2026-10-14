@@ -45,10 +45,14 @@ export class ApiClient {
   /** Returns the envelope's `data`. Throws ApiError for every failure. */
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const auth = options.auth !== false;
+    const used = auth ? this.opts.getAccessToken() : null;
     try {
-      return await this.send<T>(path, options, auth ? this.opts.getAccessToken() : null);
+      return await this.send<T>(path, options, used);
     } catch (err) {
       if (!(err instanceof ApiError) || !auth || err.kind !== 'http' || err.status !== 401) throw err;
+      // A 401 for a token that a concurrent refresh has ALREADY replaced: retry once with the current token, no second refresh.
+      const current = this.opts.getAccessToken();
+      if (current && current !== used) return await this.send<T>(path, options, current);
       let fresh: string;
       try {
         fresh = await this.opts.refreshSession();

@@ -43,7 +43,8 @@ describe('P11A static guards (production mobile source)', () => {
   });
 
   it('no staff workspace, role switcher or staff role names in the customer app', () => {
-    expect(offenders(/SUPER_ADMIN|NUTRITIONIST|\bCHEF\b|PROCUREMENT|\bDELIVERY\b|BAKERY_FMCG|TEPACHE|SWIGGY|MESS_CUSTOMER|role\s*switch/i)).toEqual([]);
+    expect(offenders(/SUPER_ADMIN|NUTRITIONIST|\bCHEF\b|PROCUREMENT|\bDELIVERY\b|BAKERY_FMCG|TEPACHE|SWIGGY|MESS_CUSTOMER/)).toEqual([]);
+    expect(offenders(/role\s*switch/i)).toEqual([]);
     expect(offenders(/staff\s*(login|workspace|dashboard)|admin\s*(login|panel)/i)).toEqual([]);
   });
 
@@ -89,11 +90,42 @@ describe('P11A static guards (production mobile source)', () => {
     expect(offenders(/Linking\.|expo-linking|scheme\s*:/)).toEqual([]);
   });
 
-  it('later-subphase features are NOT present: payments, commerce, Mess, diet / health, screen capture', () => {
-    expect(offenders(/razorpay|RazorpayCheckout|payment-attempts|checkout\/preview/i)).toEqual([]);
-    expect(offenders(/\/cart\b|\/orders\b|\/products\b|\/mess\b|\/diets\b|handover-code|delivery-code/i)).toEqual([]);
+  it('P11B boundary: the commerce API is EXACTLY the approved endpoint set - no payment, verify, cancel, refund, delivery-code, Mess, diet or health request', () => {
+    expect(offenders(/razorpay|RazorpayCheckout|payment-attempts|\/verify\b|\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
     expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i)).toEqual([]);
     expect(offenders(/expo-screen-capture/)).toEqual([]);
+    const api = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/api.ts')!.s;
+    const paths = [...api.matchAll(/request\(\s*[`'"]([^`'"?$]*)/g)].map((m) => m[1]).sort();
+    expect(paths).toEqual(
+      ['/cart', '/cart', '/cart/items', '/cart/items/', '/cart/items/', '/checkout/preview', '/customers/me/addresses', '/customers/me/addresses', '/customers/me/addresses/', '/customers/me/addresses/', '/orders', '/orders/', '/orders/my-orders', '/products', '/products/', '/products/categories'].sort()
+    );
+  });
+
+  it('no payment-method concept: the order request never carries paymentMethod and there is no selector (ONLINE by omission)', () => {
+    expect(offenders(/paymentMethod/)).toEqual([]);
+  });
+
+  it('allow-listed product fields only: nothing renders rating, review count, stock, SKU, recipe id or tax rate; no weak randomness for the idempotency key', () => {
+    expect(offenders(/stockQuantity|reviewsCount|recipeId|taxRate|isPublished|isFMCG|isTepache|\brating\b|\bsku\b/i)).toEqual([]);
+    expect(offenders(/Math\.random/)).toEqual([]);
+    const key = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/idempotencyKey.ts')!.s;
+    expect(key).toMatch(/Crypto\.randomUUID\(\)/);
+    expect(key).not.toMatch(/Math\.|Date\.|counter|expo-modules-core/);
+    expect(key).not.toMatch(/Date\.now/);
+  });
+
+  it('the secure UUID source is the declared, Expo-supported expo-crypto (used by exactly ONE file); production code never imports expo-modules-core and never declares it', () => {
+    expect(offenders(/expo-modules-core/)).toEqual([]);
+    expect(offenders(/from 'expo-crypto'/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/commerce/idempotencyKey.ts']);
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    expect(pkg.dependencies['expo-crypto']).toMatch(/^~14\.0\./); // the Expo SDK 52 catalogue version
+    expect(Object.keys(pkg.dependencies)).not.toContain('expo-modules-core');
+  });
+
+  it('commerce data is never persisted: no storage API outside the session wrapper, and the order email / phone of the address snapshot is not modelled', () => {
+    expect(offenders(/AsyncStorage|setItem|SecureStore/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/auth/secureSession.ts']);
+    const types = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/types.ts')!.s;
+    expect(types).not.toMatch(/email|phone/i);
   });
 
   it('package.json: no payment SDK, no dev-client, no screen-capture, no weak storage dependency; test tooling is dev-only', () => {

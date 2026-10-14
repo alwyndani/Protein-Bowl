@@ -8,7 +8,7 @@ import { SecureStorageError } from '../auth/secureSession';
  */
 export type AuthContext = 'signIn' | 'register' | 'generic';
 
-export function messageForError(error: unknown, context: AuthContext = 'generic'): string {
+export function messageForError(error: unknown, context: AuthContext = 'generic', extra: { phoneProvided?: boolean } = {}): string {
   if (error instanceof SecureStorageError) {
     return 'This device cannot store your sign-in securely, so you cannot sign in here. Please check your device security settings.';
   }
@@ -45,6 +45,7 @@ export function messageForError(error: unknown, context: AuthContext = 'generic'
     case 429:
       return 'Too many attempts. Please wait a little and try again.';
     default:
+      if (error.status >= 500 && context === 'register' && extra.phoneProvided) return 'We could not create your account. If the phone number is already registered, try again without it.';
       return error.status >= 500 ? 'Our service is having trouble right now. Please try again shortly.' : 'Something went wrong. Please try again.';
   }
 }

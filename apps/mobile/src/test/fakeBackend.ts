@@ -20,15 +20,15 @@ export interface LoggedRequest {
   credentials?: string;
 }
 
-type Fault = 'timeout' | 'network' | number | 'hang';
+type Fault = 'timeout' | 'network' | number | 'hang' | { status: number; code: string };
 
 export class FakeBackend {
   users = new Map<string, FakeUser>();
   refreshTokens = new Map<string, { userId: string; revoked: boolean }>();
   accessTokens = new Map<string, string>(); // access token -> userId
   log: LoggedRequest[] = [];
-  private counter = 0;
-  private faults = new Map<string, Fault[]>();
+  protected counter = 0;
+  protected faults = new Map<string, Fault[]>();
   /** Force the protected probe to answer 401 even for a valid token. */
   alwaysUnauthorized = false;
   /** Resolve hook letting a test hold a response (for ordering / concurrency). */
@@ -38,6 +38,16 @@ export class FakeBackend {
     const user: FakeUser = { id: `u${++this.counter}`, password: 'Password-123', roles: ['CUSTOMER'], fullName: 'Test Customer', status: 'ACTIVE', ...partial };
     this.users.set(user.email, user);
     return user;
+  }
+
+  protected gates = new Map<string, Array<Promise<void>>>();
+
+  /** The NEXT request to `path` is received now but only PROCESSED (token checked, answered) when the returned function is called. */
+  gateNext(path: string): () => void {
+    let release!: () => void;
+    const p = new Promise<void>((r) => (release = r));
+    this.gates.set(path, [...(this.gates.get(path) ?? []), p]);
+    return release;
   }
 
   failNext(path: string, ...faults: Fault[]) {
@@ -61,11 +71,11 @@ export class FakeBackend {
     return { accessToken: access, refreshToken: refresh, refreshTokenExpiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString() };
   }
 
-  private userView(u: FakeUser) {
+  protected userView(u: FakeUser) {
     return { id: u.id, email: u.email, roles: u.roles, status: u.status, customerProfile: { fullName: u.fullName } };
   }
 
-  private respond(status: number, body: unknown, headers: Record<string, string> = {}) {
+  protected respond(status: number, body: unknown, headers: Record<string, string> = {}) {
     const text = typeof body === 'string' ? body : JSON.stringify(body);
     return {
       ok: status >= 200 && status < 300,
@@ -75,7 +85,7 @@ export class FakeBackend {
     } as unknown as Response;
   }
 
-  private err(status: number, error: string, message = 'server message that must never be shown') {
+  protected err(status: number, error: string, message = 'server message that must never be shown') {
     return this.respond(status, { success: false, error, message });
   }
 
@@ -95,20 +105,23 @@ export class FakeBackend {
     if (fault === 'hang') return waitAbort();
     if (fault === 'timeout') return waitAbort();
     if (fault === 'network') return Promise.reject(new TypeError('Network request failed'));
+    if (fault && typeof fault === 'object') return Promise.resolve(this.err(fault.status, fault.code));
     if (typeof fault === 'number') return Promise.resolve(fault >= 500 ? this.respond(fault, '<html>bad gateway</html>') : this.err(fault, 'FAULT'));
 
     const run = () => this.route(path, headers, body);
+    const gate = this.gates.get(path)?.shift();
+    if (gate) return gate.then(run); // processed only when released (deterministic ordering, no timers)
     return this.delayMs > 0 ? new Promise((r) => setTimeout(() => r(run()), this.delayMs)) : Promise.resolve(run());
   };
 
-  private bearer(headers: Record<string, string>): FakeUser | null {
+  protected bearer(headers: Record<string, string>): FakeUser | null {
     const h = headers.Authorization;
     if (!h?.startsWith('Bearer ')) return null;
     const id = this.accessTokens.get(h.slice(7));
     return id ? [...this.users.values()].find((u) => u.id === id) ?? null : null;
   }
 
-  private route(path: string, headers: Record<string, string>, body: any): Response {
+  protected route(path: string, headers: Record<string, string>, body: any): Response {
     switch (path) {
       case '/auth/mobile/login': {
         const u = this.users.get(body.email);

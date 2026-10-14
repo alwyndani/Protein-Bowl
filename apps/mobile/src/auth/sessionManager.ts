@@ -180,10 +180,10 @@ export class SessionManager {
     await this.establish(data);
   }
 
-  async register(input: { email: string; password: string; fullName: string }): Promise<void> {
+  async register(input: { email: string; password: string; fullName: string; phone?: string }): Promise<void> {
     const data = await this.api.request<unknown>('/auth/mobile/register', {
       method: 'POST',
-      body: { email: input.email, password: input.password, fullName: input.fullName },
+      body: { email: input.email, password: input.password, fullName: input.fullName, ...(input.phone ? { phone: input.phone } : {}) },
       auth: false
     });
     await this.establish(data);

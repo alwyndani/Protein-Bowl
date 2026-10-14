@@ -125,20 +125,25 @@ describe('Phase 4B — Product Commerce, Cart & Order Foundation Tests', () => {
       },
     });
 
-    // Fetch sample published & variant products
+    // Fetch sample published & variant products. DETERMINISTIC selection: the OLDEST matching row, i.e. a seeded catalog product. An unordered
+    // findFirst could return a published fixture left in the shared test DB by another suite (for example the P7A 'big' product, whose cart add
+    // is correctly refused with 422 ORDER_TOTAL_TOO_LARGE), which made this suite fail intermittently depending on heap order.
     publishedProduct = await prisma.product.findFirst({
       where: { isPublished: true, isActive: true, isTepache: false },
       include: { variants: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
     tepacheProduct = await prisma.product.findFirst({
       where: { isTepache: true },
       include: { variants: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
 
     variantProduct = await prisma.product.findFirst({
       where: { isPublished: true, isActive: true, variants: { some: { isActive: true } } },
       include: { variants: { where: { isActive: true } } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     variantItem = variantProduct.variants[0];
   });

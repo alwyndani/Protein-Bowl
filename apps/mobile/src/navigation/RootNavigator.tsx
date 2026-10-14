@@ -1,14 +1,13 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthProvider';
-import { AccountScreen } from '../screens/AccountScreen';
 import { RegisterScreen, SignInScreen, WelcomeScreen } from '../screens/AuthScreens';
 import { SessionRecoveryScreen, SessionRestoringScreen } from '../screens/SessionScreens';
 import { colors } from '../ui/components';
-import type { AuthStackParamList, CustomerStackParamList } from './types';
+import { MainTabs } from './MainTabs';
+import type { AuthStackParamList } from './types';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
-const CustomerStack = createNativeStackNavigator<CustomerStackParamList>();
 
 const screenOptions = { headerStyle: { backgroundColor: colors.bg }, headerTintColor: colors.text, contentStyle: { backgroundColor: colors.bg } };
 
@@ -25,11 +24,7 @@ export function RootNavigator() {
     case 'recovery':
       return <SessionRecoveryScreen />;
     case 'signedIn':
-      return (
-        <CustomerStack.Navigator screenOptions={screenOptions}>
-          <CustomerStack.Screen name="Account" component={AccountScreen} />
-        </CustomerStack.Navigator>
-      );
+      return <MainTabs />;
     default:
       return (
         <AuthStack.Navigator screenOptions={screenOptions} initialRouteName="Welcome">

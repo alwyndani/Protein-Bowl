@@ -41,6 +41,12 @@ async function seedSignedInDevice(backend: FakeBackend, email = 'a@b.test') {
 
 const button = (name: string) => screen.getByRole('button', { name });
 
+/** The signed-in shell opens on the Menu tab (P11B); the Account tab holds the identity + sign-out used by these tests. */
+async function accountText(text: string) {
+  fireEvent.press(await screen.findByLabelText('Account tab'));
+  return screen.findByText(text);
+}
+
 describe('P11A auth UI and navigation guards', () => {
   it('signed out: Welcome is shown, the authenticated shell does not exist', async () => {
     const backend = new FakeBackend();
@@ -59,7 +65,7 @@ describe('P11A auth UI and navigation guards', () => {
     mount(backend);
     expect(screen.getByLabelText('Restoring your session')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
-    expect(await screen.findByText('a@b.test')).toBeTruthy();
+    expect(await accountText('a@b.test')).toBeTruthy();
     expect(button('Sign out')).toBeTruthy();
   });
 
@@ -76,7 +82,7 @@ describe('P11A auth UI and navigation guards', () => {
     fireEvent.changeText(screen.getByLabelText('Email'), 'a@b.test');
     fireEvent.changeText(screen.getByLabelText('Password'), 'Password-123');
     fireEvent.press(button('Sign in'));
-    expect(await screen.findByText('Asha Rao')).toBeTruthy();
+    expect(await accountText('Asha Rao')).toBeTruthy();
     expect(screen.getByText('a@b.test')).toBeTruthy();
     expect(backend.count('/auth/mobile/login')).toBe(1);
   });
@@ -94,7 +100,7 @@ describe('P11A auth UI and navigation guards', () => {
     fireEvent.press(submit);
     fireEvent.press(submit);
     expect(button('Sign in').props.accessibilityState).toMatchObject({ disabled: true, busy: true });
-    await screen.findByText('a@b.test');
+    await accountText('a@b.test');
     expect(backend.count('/auth/mobile/login')).toBe(1);
   });
 
@@ -151,7 +157,7 @@ describe('P11A auth UI and navigation guards', () => {
     fireEvent.changeText(screen.getByLabelText('Email'), 'new@b.test');
     fireEvent.changeText(screen.getByLabelText('Password'), 'Password-123');
     fireEvent.press(button('Create account'));
-    expect(await screen.findByText('New Person')).toBeTruthy();
+    expect(await accountText('New Person')).toBeTruthy();
     expect(backend.log.find((r) => r.path === '/auth/mobile/register')!.body).toEqual({ email: 'new@b.test', password: 'Password-123', fullName: 'New Person' });
     expect(JSON.parse(store.get(SESSION_KEY)!).refreshToken).toBeTruthy();
   });
@@ -188,7 +194,7 @@ describe('P11A auth UI and navigation guards', () => {
     await new Promise((r) => setTimeout(r, 150));
     expect(backend.count('/auth/mobile/refresh')).toBe(1);
     fireEvent.press(button('Try again'));
-    expect(await screen.findByText('a@b.test')).toBeTruthy();
+    expect(await accountText('a@b.test')).toBeTruthy();
     expect(backend.count('/auth/mobile/refresh')).toBe(2);
   });
 
@@ -207,7 +213,7 @@ describe('P11A auth UI and navigation guards', () => {
     const backend = new FakeBackend();
     await seedSignedInDevice(backend);
     const { cleared } = mount(backend);
-    await screen.findByText('a@b.test');
+    await accountText('a@b.test');
     backend.delayMs = 30;
     fireEvent.press(button('Sign out'));
     fireEvent.press(button('Sign out'));
@@ -222,7 +228,7 @@ describe('P11A auth UI and navigation guards', () => {
     const backend = new FakeBackend();
     await seedSignedInDevice(backend);
     mount(backend);
-    await screen.findByText('a@b.test');
+    await accountText('a@b.test');
     backend.failNext('/auth/mobile/logout', 'network');
     fireEvent.press(button('Sign out'));
     expect(await screen.findByText(/could not confirm the sign-out/)).toBeTruthy();

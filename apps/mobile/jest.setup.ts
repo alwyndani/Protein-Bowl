@@ -16,3 +16,7 @@ jest.mock('expo-constants', () => ({ __esModule: true, default: { expoConfig: { 
 beforeEach(() => mockStore.clear());
 
 jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default);
+
+// expo-crypto's randomUUID() is backed by a NATIVE CSPRNG at runtime; under jest there is no native module, so Node's crypto stands in.
+const mockNodeCrypto = require('crypto');
+jest.mock('expo-crypto', () => ({ randomUUID: jest.fn(() => mockNodeCrypto.randomUUID()) }));

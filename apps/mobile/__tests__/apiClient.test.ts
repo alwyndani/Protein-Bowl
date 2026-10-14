@@ -96,6 +96,21 @@ describe('P11A typed API client', () => {
     expect((f.mock.calls[1] as any)[1].headers.Authorization).toBe('Bearer new-token');
   });
 
+  it('a late 401 for a token a concurrent refresh already replaced retries ONCE with the current token and does not refresh again', async () => {
+    let token = 'old';
+    const f = jest
+      .fn()
+      .mockImplementationOnce(async () => {
+        token = 'new'; // the refresh finished while this request was still in flight
+        return res(401, JSON.stringify({ success: false, error: 'INVALID_TOKEN' }));
+      })
+      .mockResolvedValueOnce(res(200, JSON.stringify({ success: true, data: 'ok' })));
+    const refresh = jest.fn(async () => 'never');
+    expect(await client(f, { getAccessToken: () => token, refreshSession: refresh }).request('/x')).toBe('ok');
+    expect(refresh).not.toHaveBeenCalled();
+    expect((f.mock.calls[1] as any)[1].headers.Authorization).toBe('Bearer new');
+  });
+
   it('403 / 404 / 409 are NOT refresh triggers', async () => {
     for (const s of [403, 404, 409]) {
       const refresh = jest.fn(async () => 't');

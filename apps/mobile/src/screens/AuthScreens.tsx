@@ -99,12 +99,14 @@ export function RegisterScreen({ navigation }: RegisterProps) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [phone, setPhone] = useState('');
   const [errors, setErrors] = useState<{ fullName?: string | null; email?: string | null; password?: string | null }>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
+  const phoneRef = useRef<TextInput>(null);
 
   async function submit() {
     if (submitting.current) return;
@@ -115,9 +117,10 @@ export function RegisterScreen({ navigation }: RegisterProps) {
     submitting.current = true;
     setBusy(true);
     try {
-      await manager.register({ fullName: fullName.trim(), email: email.trim(), password });
+      const trimmedPhone = phone.trim();
+      await manager.register({ fullName: fullName.trim(), email: email.trim(), password, ...(trimmedPhone ? { phone: trimmedPhone } : {}) });
     } catch (e) {
-      setFormError(messageForError(e, 'register'));
+      setFormError(messageForError(e, 'register', { phoneProvided: phone.trim().length > 0 }));
       setBusy(false);
       submitting.current = false;
     }
@@ -165,6 +168,19 @@ export function RegisterScreen({ navigation }: RegisterProps) {
         autoCorrect={false}
         autoComplete="new-password"
         textContentType="newPassword"
+        returnKeyType="next"
+        onSubmitEditing={() => phoneRef.current?.focus()}
+        editable={!busy}
+      />
+      <TextField
+        ref={phoneRef}
+        label="Phone number (optional)"
+        value={phone}
+        onChangeText={setPhone}
+        keyboardType="phone-pad"
+        autoComplete="tel"
+        textContentType="telephoneNumber"
+        maxLength={20}
         returnKeyType="go"
         onSubmitEditing={submit}
         editable={!busy}
