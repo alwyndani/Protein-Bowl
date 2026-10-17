@@ -1,4 +1,4 @@
-import { isRazorpayNativeAvailable, openNativeCheckout } from './razorpayNative';
+import { isNativeCheckoutOpen, isRazorpayNativeAvailable, onNativeCheckoutSettled, openNativeCheckout } from './razorpayNative';
 
 /**
  * Production Razorpay bridge: opens the native checkout and reduces its callback to a MINIMAL, typed result. It holds no payment state,
@@ -39,7 +39,7 @@ export type CheckoutResult =
 const PROVIDER_ID = /^[A-Za-z0-9_]{1,64}$/; // the same shape the backend verify endpoint accepts
 const SIGNATURE = /^[A-Fa-f0-9]{64}$/;
 
-export { isRazorpayNativeAvailable };
+export { isRazorpayNativeAvailable, isNativeCheckoutOpen, onNativeCheckoutSettled };
 
 function toEvidence(payload: unknown, requestedOrderId: string): CheckoutResult {
   const r = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;

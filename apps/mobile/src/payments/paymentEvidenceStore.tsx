@@ -9,7 +9,8 @@ import type { PaymentEvidence } from './paymentTypes';
  * explicitly. Evidence proves nothing by itself: only the backend verify endpoint can.
  */
 export class PaymentEvidenceStore {
-  private readonly entries = new Map<string, PaymentEvidence>();
+  private readonly entries = new Map<string, { orderId: string; attemptId: string; evidence: PaymentEvidence }>();
+  private generation = 0;
 
   private static key(orderId: string, attemptId: string): string {
     return JSON.stringify([orderId, attemptId]);
@@ -17,22 +18,41 @@ export class PaymentEvidenceStore {
 
   /** Keeps a private frozen copy, so later mutation of the caller's object cannot change what will be sent. */
   setEvidence(orderId: string, attemptId: string, evidence: PaymentEvidence): void {
-    this.entries.set(
-      PaymentEvidenceStore.key(orderId, attemptId),
-      Object.freeze({ providerOrderId: evidence.providerOrderId, providerPaymentId: evidence.providerPaymentId, signature: evidence.signature })
-    );
+    const key = PaymentEvidenceStore.key(orderId, attemptId);
+    this.entries.delete(key); // re-insert so the most recent attempt of an order is the last one
+    this.entries.set(key, {
+      orderId,
+      attemptId,
+      evidence: Object.freeze({ providerOrderId: evidence.providerOrderId, providerPaymentId: evidence.providerPaymentId, signature: evidence.signature })
+    });
   }
 
   getEvidence(orderId: string, attemptId: string): PaymentEvidence | null {
-    return this.entries.get(PaymentEvidenceStore.key(orderId, attemptId)) ?? null;
+    return this.entries.get(PaymentEvidenceStore.key(orderId, attemptId))?.evidence ?? null;
   }
 
   clearEvidence(orderId: string, attemptId: string): void {
     this.entries.delete(PaymentEvidenceStore.key(orderId, attemptId));
   }
 
+  /**
+   * Same-process recovery: the most recent evidence held for THIS order together with the attempt it belongs to, so a newly created
+   * controller (screen recreated while the JS process lives) can verify it again. Another order's evidence is never returned.
+   */
+  findForOrder(orderId: string): { attemptId: string; evidence: PaymentEvidence } | null {
+    let found: { attemptId: string; evidence: PaymentEvidence } | null = null;
+    for (const e of this.entries.values()) if (e.orderId === orderId) found = { attemptId: e.attemptId, evidence: e.evidence };
+    return found;
+  }
+
+  /** Changes whenever everything is cleared, so a result that was still in flight across a sign-out can tell it must not be stored. */
+  epoch(): number {
+    return this.generation;
+  }
+
   /** The end of the session. */
   clearAllEvidence(): void {
+    this.generation += 1;
     this.entries.clear();
   }
 }

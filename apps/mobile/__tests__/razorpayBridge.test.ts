@@ -7,7 +7,7 @@ import { NativeModules } from 'react-native';
 const mockOpen = jest.fn();
 jest.mock('react-native-razorpay', () => ({ __esModule: true, default: { open: (...a: unknown[]) => mockOpen(...a) } }));
 
-import { isRazorpayNativeAvailable, openCheckout, CheckoutOptions } from '../src/payments/razorpayBridge';
+import { isRazorpayNativeAvailable, isNativeCheckoutOpen, onNativeCheckoutSettled, openCheckout, CheckoutOptions } from '../src/payments/razorpayBridge';
 
 const OPTIONS: CheckoutOptions = { key: 'public_key_id', order_id: 'order_ABC123', amount: 33900, currency: 'INR', name: 'Protein Bowl' };
 const GOOD = { razorpay_payment_id: 'pay_ABC123', razorpay_order_id: 'order_ABC123', razorpay_signature: 'a'.repeat(64) };
@@ -135,5 +135,48 @@ describe('one native checkout at a time', () => {
     finish(GOOD);
     const kinds = (await Promise.all(all)).map((r) => r.kind).sort();
     expect(kinds).toEqual(['ALREADY_OPEN', 'ALREADY_OPEN', 'ALREADY_OPEN', 'EVIDENCE']);
+  });
+});
+
+describe('the native lock: a promise that never settles fails closed (only settling releases it)', () => {
+  afterEach(() => jest.useRealTimers());
+
+  it('stays locked, whatever time passes and however many callers (or "screens") try, and never reaches the module again', async () => {
+    jest.useFakeTimers();
+    let finish!: (v: unknown) => void;
+    mockOpen.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    const stuck = openCheckout(OPTIONS);
+    expect(isNativeCheckoutOpen()).toBe(true);
+    await jest.advanceTimersByTimeAsync(24 * 3_600_000);
+    expect(isNativeCheckoutOpen()).toBe(true); // no timer releases it
+    for (let i = 0; i < 3; i++) await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'ALREADY_OPEN' });
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+    // only the native promise settling releases it
+    finish(GOOD);
+    expect((await stuck).kind).toBe('EVIDENCE');
+    expect(isNativeCheckoutOpen()).toBe(false);
+    mockOpen.mockResolvedValue(GOOD);
+    expect((await openCheckout(OPTIONS)).kind).toBe('EVIDENCE');
+  });
+
+  it('notifies settle listeners exactly when the lock is released (also after a rejection), and a throwing listener cannot break the checkout', async () => {
+    const seen: boolean[] = [];
+    const off = onNativeCheckoutSettled(() => seen.push(isNativeCheckoutOpen()));
+    const off2 = onNativeCheckoutSettled(() => {
+      throw new Error('listener bug');
+    });
+    mockOpen.mockRejectedValueOnce({ code: 0 });
+    await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'NOT_COMPLETED' });
+    expect(seen).toEqual([false]); // already released when listeners run
+    off();
+    off2();
+    mockOpen.mockResolvedValue(GOOD);
+    await openCheckout(OPTIONS);
+    expect(seen).toEqual([false]);
+  });
+
+  it('the lock lives in the native layer and has no timer-based release', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'payments', 'razorpayNative.ts'), 'utf8') as string;
+    expect(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')).not.toMatch(/setTimeout|setInterval|Promise\.race|AbortController/);
   });
 });

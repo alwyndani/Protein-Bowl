@@ -30,6 +30,7 @@ export type NativeSettled =
 type RazorpayModule = { open: (options: NativeOpenOptions) => Promise<unknown> };
 
 let inFlight = false;
+const settledListeners = new Set<() => void>();
 
 /** True only in a build that actually contains the native module (a development / production build, never Expo Go). */
 export function isRazorpayNativeAvailable(): boolean {
@@ -53,6 +54,21 @@ function loadModule(): RazorpayModule | null {
 }
 
 /**
+ * Whether a native checkout is currently unsettled. The lock is released ONLY when the native promise settles (resolve or reject): not by
+ * navigation, not by a screen or controller being disposed, and not by any timer. If the promise never settles it stays set until the
+ * process restarts, which is the only financially safe behaviour (a second checkout could create a second charge).
+ */
+export function isNativeCheckoutOpen(): boolean {
+  return inFlight;
+}
+
+/** Notified (once per checkout) when the native promise settles and the lock is released. Returns an unsubscribe function. */
+export function onNativeCheckoutSettled(listener: () => void): () => void {
+  settledListeners.add(listener);
+  return () => settledListeners.delete(listener);
+}
+
+/**
  * Opens the native checkout. At most ONE checkout exists at a time: a second caller gets IN_PROGRESS and never reaches the module. This is
  * UX protection only; the backend stays the financial authority. Never throws.
  */
@@ -67,5 +83,12 @@ export async function openNativeCheckout(options: NativeOpenOptions): Promise<Na
     return { kind: 'REJECTED', payload: e };
   } finally {
     inFlight = false;
+    settledListeners.forEach((l) => {
+      try {
+        l();
+      } catch {
+        /* a listener must never break the checkout path */
+      }
+    });
   }
 }

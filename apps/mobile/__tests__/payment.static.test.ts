@@ -37,8 +37,11 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
       'src/payments/paymentEvidenceStore.tsx',
       'src/payments/paymentTypes.ts',
       'src/payments/razorpayBridge.ts',
+      'src/payments/paymentFlowController.ts',
+      'src/payments/paymentFlowMachine.ts',
+      'src/payments/paymentPresentation.ts',
       'src/payments/razorpayNative.ts'
-    ]);
+    ].sort());
   });
 
   it('diagnostic tooling cannot enter production: only the dev harness imports the dev module, and no production file names the diagnostic functions', () => {
@@ -94,8 +97,56 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
     for (const f of payments) expect(f.s).not.toMatch(/paymentMethod|payment_method|wallet|\bupi\b|\bcod\b/i);
   });
 
-  it('no payment UI exists yet: no payment panel, flow hook, Pay button or polling in source', () => {
-    expect(offenders(/PaymentPanel|usePaymentFlow|Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
+  it('no payment UI exists yet: no payment panel, Pay button or screen consumer; the orchestration hook is imported by nothing', () => {
+    expect(offenders(/PaymentPanel|Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
+    expect(offenders(/usePaymentFlow/)).toEqual(['src/commerce/usePaymentFlow.ts']);
+    expect(offenders(/paymentFlowController|paymentPresentation|paymentFlowMachine/).filter((p) => p.startsWith('src/screens/') || p.startsWith('src/navigation/'))).toEqual([]);
     for (const f of payments) expect(f.s).not.toMatch(/setInterval|refetchInterval/);
+  });
+
+  it('step 4: payment never starts by itself, and no timer or lifecycle event can start, verify or re-open anything', () => {
+    const ctl = named('src/payments/paymentFlowController.ts');
+    // each financial call has exactly ONE call site, and startPayment() is never called inside the controller
+    expect(ctl.match(/\.createAttempt\(/g)).toHaveLength(1);
+    expect(ctl.match(/\.verifyPayment\(/g)).toHaveLength(1);
+    expect(ctl.match(/\.openCheckout\(/g)).toHaveLength(1);
+    expect(ctl).not.toMatch(/this\.startPayment\(|void startPayment|\.retryVerification\(\)/);
+    // every timer callback only reconciles (GET-only) or fires the watchdog event
+    const timerBodies = [...ctl.matchAll(/setTimeout\(\(\) => \{([\s\S]*?)\}, (?:delay|ms)\)/g)].map((m) => m[1]);
+    expect(timerBodies).toHaveLength(2);
+    for (const body of timerBodies) expect(body).not.toMatch(/createAttempt|verifyPayment|openCheckout|startPayment|IDLE|OBSERVED|setEvidence/);
+    // the app-state handler only reconciles or arms/clears timers
+    const handler = ctl.slice(ctl.indexOf('private onAppState'));
+    expect(handler).not.toMatch(/createAttempt|verifyPayment|openCheckout|startPayment/);
+    // the hook never calls an action on mount/effects
+    const hook = named('src/commerce/usePaymentFlow.ts');
+    expect(hook).not.toMatch(/startPayment\(|retryVerification\(|checkPaymentStatus\(/);
+  });
+
+  it('step 4: the flow states and machine have no failed / retry-safe / not-started conclusion, and nothing is derived from elapsed time', () => {
+    const machine = named('src/payments/paymentFlowMachine.ts');
+    expect(machine).not.toMatch(/\bFAILED\b|RETRY_SAFE|SAFE_TO_RETRY|NOT_STARTED/);
+    for (const f of payments) expect(f.s).not.toMatch(/Date\.now|new Date\(|performance\.now/);
+  });
+
+  it('step 4: evidence handling stays in the store: the controller never logs, persists or caches it, and uses no Query cache', () => {
+    const ctl = named('src/payments/paymentFlowController.ts');
+    expect(ctl).not.toMatch(/console\.|JSON\.stringify|setQueryData|queryClient|AsyncStorage|SecureStore/);
+    expect(offenders(/setEvidence\(/)).toEqual(['src/payments/paymentEvidenceStore.tsx', 'src/payments/paymentFlowController.ts']);
+  });
+
+  it('step 4 hardening: the native lock has no timer-based release and evidence recovery never creates or opens anything', () => {
+    expect(named('src/payments/razorpayNative.ts')).not.toMatch(/setTimeout|setInterval|Promise\.race/);
+    const ctl = named('src/payments/paymentFlowController.ts');
+    const adopt = ctl.slice(ctl.indexOf('private adoptStoredEvidence'), ctl.indexOf('private markCheckoutPending'));
+    expect(adopt).not.toMatch(/createAttempt|openCheckout|verifyPayment|fetchOrder|setEvidence/);
+    // the evidence store is the only place that knows the lookup; no persistence API
+    expect(named('src/payments/paymentEvidenceStore.tsx')).not.toMatch(/AsyncStorage|SecureStore|setItem|JSON\.parse|localStorage/);
+  });
+
+  it('step 4: the hook uses the shared order query cache only (no second order cache) and AppState from react-native', () => {
+    const hook = named('src/commerce/usePaymentFlow.ts');
+    expect(hook).toMatch(/qk\.order\(orderId\)/);
+    expect(hook).not.toMatch(/useState|createContext|AsyncStorage|SecureStore|persist/);
   });
 });

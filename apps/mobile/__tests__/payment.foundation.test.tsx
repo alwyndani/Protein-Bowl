@@ -184,6 +184,24 @@ describe('PaymentEvidenceStore (memory only)', () => {
     expect(Object.isFrozen(got)).toBe(true);
   });
 
+  it('findForOrder returns the most recent attempt of THAT order only; epoch changes on clearAll', () => {
+    const s = new PaymentEvidenceStore();
+    expect(s.findForOrder('o1')).toBeNull();
+    s.setEvidence('o1', 'a1', EVIDENCE);
+    s.setEvidence('o2', 'a9', { ...EVIDENCE, providerPaymentId: 'pay_OTHER' });
+    const newer = { ...EVIDENCE, providerPaymentId: 'pay_NEWER' };
+    s.setEvidence('o1', 'a2', newer);
+    expect(s.findForOrder('o1')).toEqual({ attemptId: 'a2', evidence: newer });
+    expect(s.findForOrder('o2')?.attemptId).toBe('a9');
+    expect(s.findForOrder('o3')).toBeNull();
+    s.clearEvidence('o1', 'a2');
+    expect(s.findForOrder('o1')?.attemptId).toBe('a1');
+    const before = s.epoch();
+    s.clearAllEvidence();
+    expect(s.epoch()).toBe(before + 1);
+    expect(s.findForOrder('o1')).toBeNull();
+  });
+
   it('is available through its provider, and a missing provider fails loudly', () => {
     const s = new PaymentEvidenceStore();
     const Probe = () => <Text>{usePaymentEvidenceStore() === s ? 'same-store' : 'other'}</Text>;

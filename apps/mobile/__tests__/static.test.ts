@@ -189,8 +189,8 @@ describe('P11C-1 static guards (native Razorpay spike: bridge only, no payment f
     expect(rel(/RazorpayCheckout/)).toEqual(['src/payments/dev/razorpayDiagnostic.ts', 'src/payments/razorpayNative.ts', 'src/screens/dev/RazorpayTestScreen.tsx']);
     // only the production bridge and the dev diagnostic read the raw native layer
     expect(rel(/razorpayNative'/)).toEqual(['src/payments/dev/razorpayDiagnostic.ts', 'src/payments/razorpayBridge.ts']);
-    // the only importer of the production bridge is the checkout mapping (a TYPE import); the flow layer arrives in a later step
-    expect(rel(/razorpayBridge'/)).toEqual(['src/payments/checkoutMapping.ts']);
+    // the production bridge is imported only by the checkout mapping and controller (TYPE imports) and the orchestration hook (the only runtime import); no screen imports it
+    expect(rel(/razorpayBridge'/)).toEqual(['src/commerce/usePaymentFlow.ts', 'src/payments/checkoutMapping.ts', 'src/payments/paymentFlowController.ts']);
     expect(code.find((c) => c.p.replace(/\\/g, '/') === 'src/payments/checkoutMapping.ts')!.s).toMatch(/import type \{ CheckoutOptions \} from '\.\/razorpayBridge'/);
   });
 
