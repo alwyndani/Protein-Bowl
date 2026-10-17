@@ -12,7 +12,7 @@ import { adoptProviderOrder, lookupProviderOrderByReceipt, markSessionUnknown } 
 import { lockOrder, lockSession, safeCode } from './paymentOps.js';
 
 import type { Tx } from './paymentOps.js';
-import { DECIDED_RECON, DEFAULT_CURRENCY, OPEN_SESSION_STATUSES, SESSION_STATUS } from './paymentStatus.js';
+import { DECIDED_RECON, DEFAULT_CURRENCY, OPEN_SESSION_STATUSES, PROVIDER_STATE_UNVERIFIED, PROVIDER_STATE_UNVERIFIED_ERRORS, SESSION_STATUS } from './paymentStatus.js';
 import { getPaymentProvider } from './providerRegistry.js';
 import { PaymentProvider, ProviderDefiniteError, ProviderOrder, ProviderPaymentInfo, ProviderUnknownError } from './provider.types.js';
 
@@ -108,7 +108,8 @@ export class PaymentSessionService {
 
     switch (decision.kind) {
       case 'REUSE':
-        return this.toCheckoutDto(decision.session, decision.orderNumber, provider);
+        // D1: an unexpired PENDING session is NEVER handed out on trust. The provider is inspected first (outside any DB transaction).
+        return await this.reuseAfterProviderCheck(decision.session, decision.orderNumber, provider, context);
       case 'NEW':
         return await this.callProviderAndPersist(decision.session, decision.orderNumber, provider, context);
       case 'RESOLVE':
@@ -248,8 +249,26 @@ export class PaymentSessionService {
     throw inProgress();
   }
 
-  // ================================================================================================ expired / stale PENDING sessions
-  private static async renewOrReplace(session: Payment, orderNumber: string, provider: PaymentProvider, context?: AuditContext): Promise<CheckoutSessionDto> {
+  // ================================================================================================ provider inspection (D1)
+  /**
+   * RETRY-SAFETY INVARIANT: a payment may be (re)started only when backend / provider-authoritative state proves it safe. Time, an app
+   * restart, a client error, a timeout or a dismissed checkout NEVER prove it.
+   *
+   * Asks the provider about the session's provider order and CONVERGES every payment it reports into the ledger through the one settlement
+   * path (idempotent; safe against a concurrent webhook / verify / reconciliation pass, which serialize on the Order -> session -> ledger
+   * locks inside settle). It runs OUTSIDE any database transaction: no row lock is held across the provider round-trips.
+   *   - a CAPTURED payment is settled                              -> 409 PAYMENT_ALREADY_COMPLETED
+   *   - an AUTHORIZED payment, or the provider order already paid  -> 409 PAYMENT_ATTEMPT_IN_PROGRESS (money may be in flight)
+   *   - the provider cannot be asked / answers unreadably          -> FAIL CLOSED: the session is marked PROVIDER_STATE_UNVERIFIED
+   *     (order summary = CONFIRMING, canStartPayment = false), reconciliation is scheduled now, and the caller gets 503
+   *   - nothing in flight                                          -> the verdict (provider order usable or proven unusable)
+   * Payments that are merely CREATED (an abandoned or dismissed checkout) or FAILED do not block a retry.
+   */
+  private static async inspectProviderState(
+    session: Payment,
+    provider: PaymentProvider,
+    context?: AuditContext
+  ): Promise<{ providerOrder: ProviderOrder | null; unusable: boolean }> {
     const providerOrderId = session.providerOrderId as string;
     let providerOrder: ProviderOrder | null;
     let payments: ProviderPaymentInfo[];
@@ -257,7 +276,10 @@ export class PaymentSessionService {
       providerOrder = await provider.fetchOrder(providerOrderId);
       payments = providerOrder ? await provider.listOrderPayments(providerOrderId) : [];
     } catch (err) {
-      if (err instanceof ProviderUnknownError) throw unavailable(); // uncertain: never replace on uncertainty
+      if (err instanceof ProviderUnknownError || err instanceof ProviderDefiniteError) {
+        await this.markProviderStateUnverified(session.id); // uncertain: never replace, never re-expose payment on uncertainty
+        throw unavailable();
+      }
       throw err;
     }
 
@@ -276,6 +298,55 @@ export class PaymentSessionService {
     const unusable = providerOrder === null || providerOrder.amountMinor !== toMinorUnits(session.amount) || providerOrder.currency !== DEFAULT_CURRENCY;
     if (providerOrder && providerOrder.status === 'paid') throw inProgress(); // provider says paid but no captured payment visible yet: wait
 
+    await this.clearProviderStateUnverified(session.id); // the provider was read and nothing is in flight: the marker (if any) is resolved
+    return { providerOrder, unusable };
+  }
+
+  /** Fail-closed marker + immediate reconciliation. Never changes the session status, never throws. */
+  private static async markProviderStateUnverified(sessionId: string): Promise<void> {
+    await prisma.payment
+      .updateMany({
+        where: { id: sessionId, status: { in: [SESSION_STATUS.PENDING, SESSION_STATUS.EXPIRED] } },
+        data: { lastError: PROVIDER_STATE_UNVERIFIED, nextAttemptAt: new Date() }
+      })
+      .catch(() => undefined);
+  }
+
+  private static async clearProviderStateUnverified(sessionId: string): Promise<void> {
+    await prisma.payment.updateMany({ where: { id: sessionId, lastError: { in: [...PROVIDER_STATE_UNVERIFIED_ERRORS] } }, data: { lastError: null } }).catch(() => undefined);
+  }
+
+  // ================================================================================================ unexpired PENDING sessions (reuse)
+  private static async reuseAfterProviderCheck(session: Payment, orderNumber: string, provider: PaymentProvider, context?: AuditContext): Promise<CheckoutSessionDto> {
+    const verdict = await this.inspectProviderState(session, provider, context);
+    if (verdict.unusable) return await this.applyRenewOrReplace(session, orderNumber, provider, context, verdict.providerOrder, true);
+
+    // Re-read: a webhook / verification / reconciliation may have decided while the provider was being asked.
+    const fresh = await prisma.payment.findUniqueOrThrow({ where: { id: session.id }, include: { order: { select: { paymentStatus: true, paidByProviderPaymentId: true, status: true } } } });
+    if (fresh.order.paymentStatus === 'PAID' || fresh.order.paidByProviderPaymentId) throw new AppError('This order has already been paid', 409, 'PAYMENT_ALREADY_COMPLETED');
+    if (fresh.order.status !== 'PENDING') throw new AppError('This order cannot be paid online', 409, 'ORDER_NOT_PAYABLE');
+    if (fresh.supersededById || !fresh.providerOrderId) throw inProgress();
+    if (fresh.status === SESSION_STATUS.EXPIRED || (fresh.status === SESSION_STATUS.PENDING && fresh.expiresAt && fresh.expiresAt <= new Date())) {
+      return await this.applyRenewOrReplace(fresh, orderNumber, provider, context, verdict.providerOrder, false); // expired meanwhile: renew the same provider order
+    }
+    if (fresh.status !== SESSION_STATUS.PENDING) throw inProgress();
+    return this.toCheckoutDto(fresh, orderNumber, provider);
+  }
+
+  // ================================================================================================ expired / stale PENDING sessions
+  private static async renewOrReplace(session: Payment, orderNumber: string, provider: PaymentProvider, context?: AuditContext): Promise<CheckoutSessionDto> {
+    const verdict = await this.inspectProviderState(session, provider, context);
+    return await this.applyRenewOrReplace(session, orderNumber, provider, context, verdict.providerOrder, verdict.unusable);
+  }
+
+  private static async applyRenewOrReplace(
+    session: Payment,
+    orderNumber: string,
+    provider: PaymentProvider,
+    context: AuditContext | undefined,
+    providerOrder: ProviderOrder | null,
+    unusable: boolean
+  ): Promise<CheckoutSessionDto> {
     if (!unusable) {
       // RENEW: same provider order, new application TTL (Razorpay allows several attempts on one order).
       const cfg = getPaymentConfig();

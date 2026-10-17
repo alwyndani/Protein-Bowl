@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { PAYABLE_ORDER_TYPES } from '../order/orderStatus.js';
 import { toMinorUnits } from './money.js';
+import { PROVIDER_STATE_UNVERIFIED_ERRORS } from './paymentStatus.js';
 import { getPaymentProvider } from './providerRegistry.js';
 
 /**
@@ -20,7 +21,8 @@ import { getPaymentProvider } from './providerRegistry.js';
  *      or total below the provider minimum ................................................ NOT_STARTED,     false
  *   3. Unresolved evidence: any ledger row AUTHORIZED, or CAPTURED/REFUNDED but not APPLIED
  *      (mismatch / duplicate / pending settlement), OR any session UNKNOWN or CREATED
- *      (provider order being created / outcome unknown), OR any session carrying a review flag ... CONFIRMING,  false
+ *      (provider order being created / outcome unknown), OR any session carrying a review flag, OR a current PENDING / EXPIRED
+ *      session whose provider state could NOT be established (PROVIDER_STATE_UNVERIFIED, D1) ..... CONFIRMING,  false
  *   4. A current (not superseded) session that has a provider order and is PENDING or EXPIRED
  *      (the server re-checks the provider before re-using or renewing it) ................. AWAITING_PAYMENT, true
  *   5. Otherwise (no session, or only FAILED / ABANDONED / superseded ones) ................. NOT_STARTED,     true
@@ -46,6 +48,8 @@ export interface SummarySession {
   providerOrderId: string | null;
   supersededById: string | null;
   reviewFlag: string | null;
+  /** Optional so older callers compile; a PROVIDER_STATE_UNVERIFIED marker makes the session unresolved (D1). */
+  lastError?: string | null;
 }
 
 export interface SummaryLedgerRow {
@@ -70,7 +74,13 @@ export function derivePaymentSummary(order: SummaryOrderInput, sessions: Summary
   }
 
   const evidence = ledger.some((r) => r.providerStatus === 'AUTHORIZED' || ((r.providerStatus === 'CAPTURED' || r.providerStatus === 'REFUNDED') && r.reconciliationStatus !== 'APPLIED'));
-  const unresolvedSession = sessions.some((s) => s.status === 'UNKNOWN' || s.status === 'CREATED' || s.reviewFlag !== null);
+  const unresolvedSession = sessions.some(
+    (s) =>
+      s.status === 'UNKNOWN' ||
+      s.status === 'CREATED' ||
+      s.reviewFlag !== null ||
+      (s.supersededById === null && (s.status === 'PENDING' || s.status === 'EXPIRED') && !!s.lastError && PROVIDER_STATE_UNVERIFIED_ERRORS.includes(s.lastError))
+  );
   if (evidence || unresolvedSession) return { state: 'CONFIRMING', canStartPayment: false };
 
   const live = sessions.some((s) => s.supersededById === null && s.providerOrderId !== null && (s.status === 'PENDING' || s.status === 'EXPIRED'));
@@ -84,7 +94,7 @@ export class PaymentSummaryService {
     if (orders.length === 0) return out;
     const ids = orders.map((o) => o.id);
     const [sessions, ledger] = await Promise.all([
-      prisma.payment.findMany({ where: { orderId: { in: ids }, provider: { not: null } }, select: { orderId: true, status: true, providerOrderId: true, supersededById: true, reviewFlag: true } }),
+      prisma.payment.findMany({ where: { orderId: { in: ids }, provider: { not: null } }, select: { orderId: true, status: true, providerOrderId: true, supersededById: true, reviewFlag: true, lastError: true } }),
       prisma.providerPayment.findMany({ where: { orderId: { in: ids } }, select: { orderId: true, providerStatus: true, reconciliationStatus: true } })
     ]);
     const min = getPaymentProvider().minAmountMinor;

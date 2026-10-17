@@ -772,6 +772,12 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       expect(v.status).toBeLessThan(500);
       expect((await subRow(sA.id)).status).toBe('PENDING_PAYMENT');
       expect((await prisma.providerPayment.findFirstOrThrow({ where: { providerPaymentId: wrong.providerPaymentId } })).reconciliationStatus).toBe('AMOUNT_MISMATCH');
+      // P11C-2 D1 test isolation (assertions in #51 and #52 are unchanged): an AUTHORIZED or captured payment on the provider order now
+      // (correctly) blocks any further payment start, exactly as the order payment summary always classified it (authorized, or captured but
+      // not applied = CONFIRMING). #51/#52 only exercise the "does not activate" defences, so their simulated payments are dropped from the
+      // PROVIDER here to let the next scenarios (#53+) start from a payable order. Flagged ledger rows in the database are left as they are.
+      for (const [id, pay] of [...mock.payments]) if (pay.providerOrderId === row.providerOrderId) mock.payments.delete(id);
+      mock.orders.set(row.providerOrderId!, { ...mock.orders.get(row.providerOrderId!)!, status: 'created' });
     });
 
     it('53. verified capture (browser verification, server-checked) activates: order PAID + CONFIRMED, subscription ACTIVE, audit, no meals, no wallet', async () => {

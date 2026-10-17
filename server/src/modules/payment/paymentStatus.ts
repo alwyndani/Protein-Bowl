@@ -67,3 +67,13 @@ export const EVENT_STATUS = {
 export type FirstSeenVia = 'CHECKOUT_VERIFY' | 'WEBHOOK' | 'RECONCILIATION';
 
 export const DEFAULT_CURRENCY = 'INR' as const;
+
+/**
+ * Retry-safety marker (P11C-2 D1). Written on a PENDING / EXPIRED session when the provider could not be inspected while a payment
+ * start (or a customer verification) needed to know whether money may already have moved. While it is set the session counts as
+ * UNRESOLVED (order payment summary = CONFIRMING, canStartPayment = false). It is cleared by the next successful provider inspection or
+ * reconciliation pass. "Unable to prove safe to retry" always means "do not allow another payment yet".
+ */
+export const PROVIDER_STATE_UNVERIFIED = 'PROVIDER_STATE_UNVERIFIED';
+/** Every lastError value that means "the provider's payment state could not be established for this session". */
+export const PROVIDER_STATE_UNVERIFIED_ERRORS: readonly string[] = [PROVIDER_STATE_UNVERIFIED, 'VERIFY_FETCH_UNAVAILABLE'];
