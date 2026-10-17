@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { isRazorpayNativeAvailable, openRazorpayCheckoutDiagnostic } from '../../payments/razorpayBridge';
-import type { ErrorShape, PayloadPresence, RazorpayOutcome } from '../../payments/razorpayBridge';
+import { isRazorpayNativeAvailable, openRazorpayCheckoutDiagnostic } from '../../payments/dev/razorpayDiagnostic';
+import type { ErrorShape, PayloadPresence, DiagnosticOutcome as RazorpayOutcome } from '../../payments/dev/razorpayDiagnostic';
 import { Body, Button, Notice, Screen, TextField, Title } from '../../ui/components';
 
 /**

@@ -1,15 +1,15 @@
 import { NativeModules } from 'react-native';
 
 /**
- * P11C-1: capability detection and result normalisation of the thin Razorpay bridge. Jest can NOT prove the native module builds or runs
- * (that needs a development build on a device: an external gate); these tests prove only the JavaScript boundary.
+ * Production Razorpay bridge (P11C-2 step 3). Jest cannot prove the native module builds or runs (that was the physical-device work of
+ * P11C-1 / step 2); these tests prove the JavaScript boundary: a minimal typed result, no provider text, one checkout at a time.
  */
 const mockOpen = jest.fn();
 jest.mock('react-native-razorpay', () => ({ __esModule: true, default: { open: (...a: unknown[]) => mockOpen(...a) } }));
 
-import { isRazorpayNativeAvailable, openRazorpayCheckout, openRazorpayCheckoutWithPresence, openRazorpayCheckoutDiagnostic, describeErrorShape, RazorpayOpenOptions } from '../src/payments/razorpayBridge';
+import { isRazorpayNativeAvailable, openCheckout, CheckoutOptions } from '../src/payments/razorpayBridge';
 
-const OPTIONS: RazorpayOpenOptions = { key: 'public_key_id', order_id: 'order_ABC123', amount: 33900, currency: 'INR', name: 'Protein Bowl' };
+const OPTIONS: CheckoutOptions = { key: 'public_key_id', order_id: 'order_ABC123', amount: 33900, currency: 'INR', name: 'Protein Bowl' };
 const GOOD = { razorpay_payment_id: 'pay_ABC123', razorpay_order_id: 'order_ABC123', razorpay_signature: 'a'.repeat(64) };
 
 const setNative = (on: boolean) => {
@@ -24,169 +24,116 @@ beforeEach(() => {
 afterEach(() => setNative(false));
 
 describe('capability boundary (Expo Go / no native module)', () => {
-  it('reports unavailable without the native module and NEVER calls the package or fakes a result', async () => {
+  it('is UNAVAILABLE without the native module and never calls the package', async () => {
     setNative(false);
     expect(isRazorpayNativeAvailable()).toBe(false);
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'UNAVAILABLE' });
+    await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'UNAVAILABLE' });
     expect(mockOpen).not.toHaveBeenCalled();
   });
 
-  it('reports available only when the native module is registered', () => {
-    expect(isRazorpayNativeAvailable()).toBe(true);
-  });
-
-  it('a package that fails to load (native module missing at require time) is UNAVAILABLE, not a crash', async () => {
+  it('a package that fails to load is UNAVAILABLE, not a crash', async () => {
     jest.resetModules();
     jest.doMock('react-native-razorpay', () => {
       throw new Error('native module missing');
     });
     const fresh = require('../src/payments/razorpayBridge') as typeof import('../src/payments/razorpayBridge');
     (NativeModules as Record<string, unknown>).RNRazorpayCheckout = {};
-    await expect(fresh.openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'UNAVAILABLE' });
-    // restore the shared mock for the remaining tests
+    await expect(fresh.openCheckout(OPTIONS)).resolves.toEqual({ kind: 'UNAVAILABLE' });
     jest.doMock('react-native-razorpay', () => ({ __esModule: true, default: { open: (...a: unknown[]) => mockOpen(...a) } }));
   });
 });
 
-describe('success normalisation (client evidence only)', () => {
-  it('passes the exact options to the module and returns typed evidence for a complete payload', async () => {
+describe('a complete callback is EVIDENCE (never "payment success")', () => {
+  it('passes the exact options to the module and returns the three evidence fields', async () => {
     mockOpen.mockResolvedValue(GOOD);
-    const out = await openRazorpayCheckout(OPTIONS);
+    const out = await openCheckout(OPTIONS);
     expect(mockOpen).toHaveBeenCalledWith(OPTIONS);
-    expect(out).toEqual({ kind: 'SUCCESS', evidence: { razorpayPaymentId: 'pay_ABC123', razorpayOrderId: 'order_ABC123', razorpaySignature: 'a'.repeat(64) } });
+    expect(out).toEqual({ kind: 'EVIDENCE', evidence: { providerPaymentId: 'pay_ABC123', providerOrderId: 'order_ABC123', signature: 'a'.repeat(64) } });
   });
 
+  it('extra provider fields never reach the result', async () => {
+    mockOpen.mockResolvedValue({ ...GOOD, razorpay_extra: 'x', metadata: { a: 1 }, description: 'text' });
+    const out = await openCheckout(OPTIONS);
+    expect(Object.keys((out as { evidence: object }).evidence).sort()).toEqual(['providerOrderId', 'providerPaymentId', 'signature']);
+    expect(JSON.stringify(out)).not.toMatch(/razorpay_extra|metadata|text/);
+  });
+});
+
+describe('an incomplete or malformed callback is AMBIGUOUS (money may have moved), never success or failure', () => {
   it.each([
-    ['missing signature', { razorpay_payment_id: 'pay_1', razorpay_order_id: 'order_1' }],
-    ['missing payment id', { razorpay_order_id: 'order_1', razorpay_signature: 'b'.repeat(64) }],
+    ['missing signature', { razorpay_payment_id: 'pay_1', razorpay_order_id: 'order_ABC123' }],
+    ['missing payment id', { razorpay_order_id: 'order_ABC123', razorpay_signature: 'b'.repeat(64) }],
+    ['missing order id', { razorpay_payment_id: 'pay_1', razorpay_signature: 'b'.repeat(64) }],
+    ['order-less success (payment id only)', { razorpay_payment_id: 'pay_1' }],
     ['non-hex signature', { ...GOOD, razorpay_signature: 'z'.repeat(64) }],
     ['short signature', { ...GOOD, razorpay_signature: 'a'.repeat(63) }],
     ['payment id with illegal characters', { ...GOOD, razorpay_payment_id: 'pay 1;' }],
     ['non-string field', { ...GOOD, razorpay_order_id: 12 }],
+    ['evidence for a DIFFERENT provider order', { ...GOOD, razorpay_order_id: 'order_OTHER9' }],
     ['null payload', null],
     ['undefined payload', undefined],
     ['string payload', 'success']
-  ])('%s is MALFORMED_RESULT, never SUCCESS', async (_n, payload) => {
+  ])('%s', async (_n, payload) => {
     mockOpen.mockResolvedValue(payload);
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'MALFORMED_RESULT' });
+    await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'AMBIGUOUS' });
   });
 });
 
-describe('failure normalisation', () => {
-  it('maps a rejection to a typed ERROR with a numeric code and bounded description', async () => {
-    mockOpen.mockRejectedValue({ code: 2, description: 'Payment cancelled by user' });
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'ERROR', code: 2, description: 'Payment cancelled by user' });
-  });
-
-  it('bounds an oversized description and ignores non-numeric codes', async () => {
-    mockOpen.mockRejectedValue({ code: 'BAD', description: 'x'.repeat(500) });
-    const out = await openRazorpayCheckout(OPTIONS);
-    expect(out).toEqual({ kind: 'ERROR', code: null, description: 'x'.repeat(200) });
-  });
-
-  it.each([[undefined], ['boom'], [42], [null]])('an unusable rejection (%p) is ERROR with no code and no description', async (raw) => {
+describe('an error callback of ANY cause is one neutral NOT_COMPLETED', () => {
+  const NESTED = JSON.stringify({ error: { code: 'BAD_REQUEST_ERROR', source: 'customer', step: 'payment_authentication', reason: 'payment_error', metadata: { payment_id: 'pay_LEAK1234' } } });
+  it.each([
+    ['dismissal-shaped payload (observed on device)', { code: 0, description: NESTED, error: { code: 'BAD_REQUEST_ERROR', metadata: {} } }],
+    ['card failure with a payment_id metadata key (observed)', { code: 0, description: NESTED, error: { metadata: { payment_id: 'pay_LEAK1234' } } }],
+    ['plain code and description', { code: 2, description: 'Payment cancelled by user' }],
+    ['undefined', undefined],
+    ['string', 'boom'],
+    ['number', 42],
+    ['null', null]
+  ])('%s', async (_n, raw) => {
     mockOpen.mockRejectedValue(raw);
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'ERROR', code: null, description: null });
+    const out = await openCheckout(OPTIONS);
+    expect(out).toEqual({ kind: 'NOT_COMPLETED' });
+    expect(JSON.stringify(out)).not.toMatch(/LEAK|BAD_REQUEST|cancelled|description|code/);
   });
 
-  it('a synchronous throw from the module is an ERROR, not a crash, and the bridge stays usable', async () => {
+  it('a synchronous throw from the module is NOT_COMPLETED, not a crash, and the bridge stays usable', async () => {
     mockOpen.mockImplementationOnce(() => {
       throw new Error('native crash');
     });
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'ERROR', code: null, description: null });
+    await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'NOT_COMPLETED' });
     mockOpen.mockResolvedValue(GOOD);
-    expect((await openRazorpayCheckout(OPTIONS)).kind).toBe('SUCCESS');
+    expect((await openCheckout(OPTIONS)).kind).toBe('EVIDENCE');
   });
 });
 
-describe('single checkout at a time', () => {
-  it('a second open while one is pending is IN_PROGRESS and never reaches the module', async () => {
+describe('one native checkout at a time', () => {
+  it('a second open while one is pending is ALREADY_OPEN and never reaches the module', async () => {
     let finish!: (v: unknown) => void;
     mockOpen.mockReturnValueOnce(new Promise((r) => (finish = r)));
-    const first = openRazorpayCheckout(OPTIONS);
-    await expect(openRazorpayCheckout(OPTIONS)).resolves.toEqual({ kind: 'IN_PROGRESS' });
+    const first = openCheckout(OPTIONS);
+    await expect(openCheckout(OPTIONS)).resolves.toEqual({ kind: 'ALREADY_OPEN' });
     expect(mockOpen).toHaveBeenCalledTimes(1);
     finish(GOOD);
-    expect((await first).kind).toBe('SUCCESS');
+    expect((await first).kind).toBe('EVIDENCE');
     mockOpen.mockResolvedValue(GOOD);
-    expect((await openRazorpayCheckout(OPTIONS)).kind).toBe('SUCCESS');
-  });
-});
-
-describe('field presence for the dev-only harness (booleans only)', () => {
-  it('an order-less success payload (payment id only) is MALFORMED_RESULT with presence yes/no/no', async () => {
-    mockOpen.mockResolvedValue({ razorpay_payment_id: 'pay_ABC123' });
-    const r = await openRazorpayCheckoutWithPresence({ ...OPTIONS, order_id: undefined });
-    expect(r.outcome).toEqual({ kind: 'MALFORMED_RESULT' });
-    expect(r.presence).toEqual({ paymentIdPresent: true, orderIdPresent: false, signaturePresent: false });
+    expect((await openCheckout(OPTIONS)).kind).toBe('EVIDENCE'); // the slot is released
   });
 
-  it('a complete payload is SUCCESS with all three present, and the presence object holds booleans only (no values)', async () => {
+  it('the slot is released after a rejection too', async () => {
+    mockOpen.mockRejectedValueOnce({ code: 0 });
+    expect((await openCheckout(OPTIONS)).kind).toBe('NOT_COMPLETED');
     mockOpen.mockResolvedValue(GOOD);
-    const r = await openRazorpayCheckoutWithPresence(OPTIONS);
-    expect(r.outcome.kind).toBe('SUCCESS');
-    expect(r.presence).toEqual({ paymentIdPresent: true, orderIdPresent: true, signaturePresent: true });
-    expect(Object.values(r.presence!).every((v) => typeof v === 'boolean')).toBe(true);
-    expect(JSON.stringify(r.presence)).not.toMatch(/pay_ABC123|order_ABC123|aaaa/);
+    expect((await openCheckout(OPTIONS)).kind).toBe('EVIDENCE');
   });
 
-  it('an error callback and an unavailable module have no presence, and the plain API is unchanged', async () => {
-    mockOpen.mockRejectedValue({ code: 2, description: 'cancelled' });
-    expect(await openRazorpayCheckoutWithPresence(OPTIONS)).toEqual({ outcome: { kind: 'ERROR', code: 2, description: 'cancelled' }, presence: null });
-    setNative(false);
-    expect(await openRazorpayCheckoutWithPresence(OPTIONS)).toEqual({ outcome: { kind: 'UNAVAILABLE' }, presence: null });
-    setNative(true);
-    mockOpen.mockResolvedValue(GOOD);
-    expect((await openRazorpayCheckout(OPTIONS)).kind).toBe('SUCCESS');
-  });
-});
-
-describe('error SHAPE description (diagnostic only; names and allow-listed enum values, never ids or free text)', () => {
-  const NESTED_JSON = JSON.stringify({
-    error: { code: 'BAD_REQUEST_ERROR', description: 'Payment processing cancelled by user pay_ABCDEF123456', source: 'customer', step: 'payment_authentication', reason: 'payment_cancelled', metadata: { payment_id: 'pay_SECRETID123456', order_id: 'order_SECRETID654321' } }
-  });
-
-  it('Android layout: payment data merged with code and a JSON description string', () => {
-    const shape = describeErrorShape({ code: 2, description: NESTED_JSON, razorpay_payment_id: 'pay_SECRETID123456' });
-    expect(shape.topLevelKeys).toEqual(['code', 'description', 'razorpay_payment_id']);
-    expect(shape.code).toEqual({ type: 'number', value: 2 });
-    expect(shape.descriptionKind).toBe('json');
-    expect(shape.descriptionText).toBeNull();
-    expect(shape.nested).toMatchObject({ code: 'BAD_REQUEST_ERROR', source: 'customer', step: 'payment_authentication', reason: 'payment_cancelled', metadataKeys: ['payment_id', 'order_id'] });
-    expect(shape.nested!.descriptionText).toContain('<id>');
-    const serialized = JSON.stringify(shape);
-    expect(serialized).not.toMatch(/SECRETID|ABCDEF123456/); // no identifier value ever appears
-  });
-
-  it('iOS layout: code and description with the payment data under details', () => {
-    const shape = describeErrorShape({ code: 0, description: 'Payment Cancelled', details: { error: { code: 'GATEWAY_ERROR', source: 'bank', step: 'payment_authorization', reason: 'authentication_failed', metadata: {} } } });
-    expect(shape.descriptionKind).toBe('text');
-    expect(shape.descriptionText).toBe('Payment Cancelled');
-    expect(shape.detailsKeys).toEqual(['error']);
-    expect(shape.nested).toMatchObject({ code: 'GATEWAY_ERROR', source: 'bank', step: 'payment_authorization', reason: 'authentication_failed', metadataKeys: [] });
-  });
-
-  it('unstructured, odd or hostile payloads degrade safely', () => {
-    expect(describeErrorShape(undefined)).toMatchObject({ topLevelKeys: [], code: { type: 'absent', value: null }, descriptionKind: 'absent', nested: null });
-    expect(describeErrorShape('boom')).toMatchObject({ topLevelKeys: [], nested: null });
-    const odd = describeErrorShape({ 'weird key with spaces': 1, code: 'pay_LEAK1234567890', description: 'order_LEAK1234567890 and ' + 'a'.repeat(64) });
-    expect(odd.topLevelKeys).toEqual(['<odd-key>', 'code', 'description']);
-    expect(odd.code).toEqual({ type: 'string', value: null }); // an id-shaped code is never echoed
-    expect(JSON.stringify(odd)).not.toMatch(/LEAK/);
-    expect(describeErrorShape({ description: '{not json' }).descriptionKind).toBe('text');
-    expect(describeErrorShape({ code: 1, description: 'x'.repeat(5000) }).descriptionText!.length).toBeLessThanOrEqual(120);
-  });
-
-  it('the diagnostic entry returns the shape for a rejection only; the existing entries are unchanged', async () => {
-    mockOpen.mockRejectedValue({ code: 2, description: 'Payment cancelled by user' });
-    const failed = await openRazorpayCheckoutDiagnostic(OPTIONS);
-    expect(failed.outcome).toEqual({ kind: 'ERROR', code: 2, description: 'Payment cancelled by user' });
-    expect(failed.errorShape).toMatchObject({ topLevelKeys: ['code', 'description'], descriptionKind: 'text' });
-    mockOpen.mockResolvedValue(GOOD);
-    const ok = await openRazorpayCheckoutDiagnostic(OPTIONS);
-    expect(ok.outcome.kind).toBe('SUCCESS');
-    expect(ok.errorShape).toBeNull();
-    mockOpen.mockRejectedValue({ code: 2, description: 'cancelled' });
-    expect(await openRazorpayCheckoutWithPresence(OPTIONS)).toEqual({ outcome: { kind: 'ERROR', code: 2, description: 'cancelled' }, presence: null });
+  it('many simultaneous callers open exactly one native checkout', async () => {
+    let finish!: (v: unknown) => void;
+    mockOpen.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    const all = [openCheckout(OPTIONS), openCheckout(OPTIONS), openCheckout(OPTIONS), openCheckout(OPTIONS)];
+    await Promise.resolve();
+    expect(mockOpen).toHaveBeenCalledTimes(1);
+    finish(GOOD);
+    const kinds = (await Promise.all(all)).map((r) => r.kind).sort();
+    expect(kinds).toEqual(['ALREADY_OPEN', 'ALREADY_OPEN', 'ALREADY_OPEN', 'EVIDENCE']);
   });
 });

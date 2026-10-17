@@ -1,0 +1,71 @@
+import { NativeModules, TurboModuleRegistry } from 'react-native';
+
+/**
+ * The ONLY file that names the Razorpay package. It loads the native module defensively and serialises access to it; it interprets
+ * NOTHING. The raw callback payload it returns is UNTRUSTED and may hold identifiers, so only the production bridge (which reduces it to a
+ * minimal typed result) and the development-only diagnostic module may import this file (a static guard enforces it).
+ *
+ * Expo Go cannot load the native module. Availability is detected BEFORE the package is required, so the app never crashes there and never
+ * fakes a result.
+ */
+
+export type NativeOpenOptions = {
+  /** PUBLIC key id from the backend payment session. Never a secret. */
+  key: string;
+  /** Provider order id from the backend session. Optional only so the dev-only harness can open an order-less test checkout. */
+  order_id?: string;
+  /** Minor units, exactly as the backend session reports. */
+  amount: number;
+  currency: string;
+  name: string;
+  description?: string;
+};
+
+export type NativeSettled =
+  | { kind: 'UNAVAILABLE' }
+  | { kind: 'IN_PROGRESS' }
+  | { kind: 'RESOLVED'; payload: unknown }
+  | { kind: 'REJECTED'; payload: unknown };
+
+type RazorpayModule = { open: (options: NativeOpenOptions) => Promise<unknown> };
+
+let inFlight = false;
+
+/** True only in a build that actually contains the native module (a development / production build, never Expo Go). */
+export function isRazorpayNativeAvailable(): boolean {
+  try {
+    if (NativeModules.RNRazorpayCheckout != null) return true; // legacy architecture (Expo SDK 52 default)
+    return TurboModuleRegistry.get('RNRazorpayCheckout') != null; // New Architecture
+  } catch {
+    return false;
+  }
+}
+
+function loadModule(): RazorpayModule | null {
+  if (!isRazorpayNativeAvailable()) return null;
+  try {
+    const loaded = require('react-native-razorpay') as { default?: RazorpayModule } & Partial<RazorpayModule>;
+    const mod = loaded.default ?? loaded;
+    return typeof mod.open === 'function' ? (mod as RazorpayModule) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Opens the native checkout. At most ONE checkout exists at a time: a second caller gets IN_PROGRESS and never reaches the module. This is
+ * UX protection only; the backend stays the financial authority. Never throws.
+ */
+export async function openNativeCheckout(options: NativeOpenOptions): Promise<NativeSettled> {
+  const mod = loadModule();
+  if (!mod) return { kind: 'UNAVAILABLE' };
+  if (inFlight) return { kind: 'IN_PROGRESS' };
+  inFlight = true;
+  try {
+    return { kind: 'RESOLVED', payload: await mod.open(options) };
+  } catch (e) {
+    return { kind: 'REJECTED', payload: e };
+  } finally {
+    inFlight = false;
+  }
+}

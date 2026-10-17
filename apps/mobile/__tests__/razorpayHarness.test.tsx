@@ -8,7 +8,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react-nativ
  */
 const mockAvailable = jest.fn();
 const mockOpen = jest.fn();
-jest.mock('../src/payments/razorpayBridge', () => ({
+jest.mock('../src/payments/dev/razorpayDiagnostic', () => ({
   isRazorpayNativeAvailable: () => mockAvailable(),
   openRazorpayCheckoutDiagnostic: (...a: unknown[]) => mockOpen(...a)
 }));

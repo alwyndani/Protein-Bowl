@@ -91,7 +91,9 @@ describe('P11A static guards (production mobile source)', () => {
   });
 
   it('P11B boundary: the commerce API is EXACTLY the approved endpoint set - no payment, verify, cancel, refund, delivery-code, Mess, diet or health request', () => {
-    expect(offenders(/payment-attempts|\/verify\b|\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
+    // P11C-2 step 3: the payment-attempt endpoints are allowed in EXACTLY one module (the payment API); everything else stays forbidden.
+    expect(offenders(/payment-attempts|\/verify\b/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/payments/paymentApi.ts']);
+    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
     expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i)).toEqual([]);
     expect(offenders(/expo-screen-capture/)).toEqual([]);
     const api = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/api.ts')!.s;
@@ -181,11 +183,15 @@ describe('P11A static guards (production mobile source)', () => {
 });
 
 describe('P11C-1 static guards (native Razorpay spike: bridge only, no payment flow)', () => {
-  it('the Razorpay package is referenced by exactly ONE production file (the bridge); only the dev-only harness imports the bridge', () => {
-    expect(offenders(/react-native-razorpay/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/payments/razorpayBridge.ts']);
-    // Bridge function names contain "RazorpayCheckout": the bridge itself plus the dev-only native harness (P11C-1 runtime verification).
-    expect(offenders(/RazorpayCheckout/).map((p) => p.replace(/\\/g, '/')).sort()).toEqual(['src/payments/razorpayBridge.ts', 'src/screens/dev/RazorpayTestScreen.tsx']);
-    expect(offenders(/razorpayBridge/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/screens/dev/RazorpayTestScreen.tsx']);
+  it('the Razorpay package is referenced by exactly ONE production file (the native layer); the layering is native -> bridge / dev diagnostic', () => {
+    const rel = (re: RegExp) => offenders(re).map((p) => p.replace(/\\/g, '/')).sort();
+    expect(rel(/react-native-razorpay/)).toEqual(['src/payments/razorpayNative.ts']);
+    expect(rel(/RazorpayCheckout/)).toEqual(['src/payments/dev/razorpayDiagnostic.ts', 'src/payments/razorpayNative.ts', 'src/screens/dev/RazorpayTestScreen.tsx']);
+    // only the production bridge and the dev diagnostic read the raw native layer
+    expect(rel(/razorpayNative'/)).toEqual(['src/payments/dev/razorpayDiagnostic.ts', 'src/payments/razorpayBridge.ts']);
+    // the only importer of the production bridge is the checkout mapping (a TYPE import); the flow layer arrives in a later step
+    expect(rel(/razorpayBridge'/)).toEqual(['src/payments/checkoutMapping.ts']);
+    expect(code.find((c) => c.p.replace(/\\/g, '/') === 'src/payments/checkoutMapping.ts')!.s).toMatch(/import type \{ CheckoutOptions \} from '\.\/razorpayBridge'/);
   });
 
   it('the native harness is DEV-ONLY: reachable solely through a __DEV__-gated require in the Account screen, never a route or a static import', () => {
@@ -209,9 +215,11 @@ describe('P11C-1 static guards (native Razorpay spike: bridge only, no payment f
     expect(offenders(/process\.env\.(?!EXPO_PUBLIC_)/)).toEqual([]);
   });
 
-  it('the bridge is thin: no network, storage, logging or backend client; no customer payment UI exists', () => {
-    const bridge = code.find((c) => c.p.replace(/\\/g, '/') === 'src/payments/razorpayBridge.ts')!.s;
-    expect(bridge).not.toMatch(/console\.|fetch\(|apiClient|expo-secure-store|setItem|persist|Alert\.|useQuery|useMutation|payment-attempts/);
+  it('the bridge layers are thin: no network, storage, logging or backend client; no customer payment UI exists', () => {
+    for (const file of ['src/payments/razorpayNative.ts', 'src/payments/razorpayBridge.ts']) {
+      const src = code.find((c) => c.p.replace(/\\/g, '/') === file)!.s;
+      expect(src).not.toMatch(/console\.|fetch\(|apiClient|expo-secure-store|setItem|persist|Alert\.|useQuery|useMutation|payment-attempts/);
+    }
     expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
   });
 

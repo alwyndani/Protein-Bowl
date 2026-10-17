@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './auth/AuthProvider';
 import { SessionManager } from './auth/sessionManager';
 import { CheckoutAttemptProvider, CheckoutAttemptStore } from './commerce/checkoutAttempt';
+import { PaymentEvidenceProvider, PaymentEvidenceStore } from './payments/paymentEvidenceStore';
 import { RootNavigator } from './navigation/RootNavigator';
 import { colors } from './ui/components';
 
@@ -16,16 +17,19 @@ const theme = { ...DarkTheme, colors: { ...DarkTheme.colors, background: colors.
  * authenticated server data outlives a sign-out. The manager is injected so tests can supply fakes.
  */
 export function AppRoot({ createManager }: { createManager: (onSessionCleared: () => void) => SessionManager }) {
-  const { queryClient, manager, attempts } = useMemo(() => {
+  const { queryClient, manager, attempts, evidence } = useMemo(() => {
     // networkMode 'always': a request is really attempted (and fails honestly offline) instead of being silently paused; nothing is retried.
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, networkMode: 'always' }, mutations: { retry: false, networkMode: 'always' } } });
     const attempts = new CheckoutAttemptStore();
+    const evidence = new PaymentEvidenceStore();
     return {
       queryClient,
       attempts,
+      evidence,
       manager: createManager(() => {
         queryClient.clear();
         attempts.clear(); // the idempotency key / checkout attempt never outlives the session
+        evidence.clearAllEvidence(); // payment evidence never outlives the session
       })
     };
   }, [createManager]);
@@ -35,9 +39,11 @@ export function AppRoot({ createManager }: { createManager: (onSessionCleared: (
       <QueryClientProvider client={queryClient}>
         <AuthProvider manager={manager}>
           <CheckoutAttemptProvider store={attempts}>
-            <NavigationContainer theme={theme}>
-              <RootNavigator />
-            </NavigationContainer>
+            <PaymentEvidenceProvider store={evidence}>
+              <NavigationContainer theme={theme}>
+                <RootNavigator />
+              </NavigationContainer>
+            </PaymentEvidenceProvider>
           </CheckoutAttemptProvider>
         </AuthProvider>
       </QueryClientProvider>
