@@ -91,7 +91,7 @@ describe('P11A static guards (production mobile source)', () => {
   });
 
   it('P11B boundary: the commerce API is EXACTLY the approved endpoint set - no payment, verify, cancel, refund, delivery-code, Mess, diet or health request', () => {
-    expect(offenders(/razorpay|RazorpayCheckout|payment-attempts|\/verify\b|\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
+    expect(offenders(/payment-attempts|\/verify\b|\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
     expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i)).toEqual([]);
     expect(offenders(/expo-screen-capture/)).toEqual([]);
     const api = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/api.ts')!.s;
@@ -128,10 +128,10 @@ describe('P11A static guards (production mobile source)', () => {
     expect(types).not.toMatch(/email|phone/i);
   });
 
-  it('package.json: no payment SDK, no dev-client, no screen-capture, no weak storage dependency; test tooling is dev-only', () => {
+  it('package.json: only the approved P11C-1 native dependencies (exact Razorpay pin + dev-client), no screen-capture, no weak storage dependency; test tooling is dev-only', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
     const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
-    for (const banned of ['react-native-razorpay', 'razorpay', 'expo-dev-client', 'expo-screen-capture', '@react-native-async-storage/async-storage', 'redux', '@reduxjs/toolkit', 'react-native-webview']) {
+    for (const banned of ['razorpay', 'expo-build-properties', 'expo-screen-capture', '@react-native-async-storage/async-storage', 'redux', '@reduxjs/toolkit', 'react-native-webview']) {
       expect(deps).not.toContain(banned);
     }
     for (const dev of ['jest', 'jest-expo', '@testing-library/react-native', 'react-test-renderer']) {
@@ -140,10 +140,17 @@ describe('P11A static guards (production mobile source)', () => {
     }
     expect(Object.keys(pkg.dependencies)).toEqual(expect.arrayContaining(['@tanstack/react-query', '@react-navigation/native', 'expo-secure-store']));
     expect(pkg.scripts.web).toBeUndefined();
+    // P11C-1 approved native dependencies: the Razorpay wrapper is pinned EXACTLY (native SDK behaviour must not float), dev-client is the Expo SDK 52 catalogue range.
+    expect(pkg.dependencies['react-native-razorpay']).toBe('3.0.0');
+    expect(pkg.dependencies['expo-dev-client']).toMatch(/^~5\.0\./);
   });
 
-  it('remains Expo-Go compatible: no prebuild output, no EAS config, no missing-asset references, no web target', () => {
-    for (const forbidden of ['android', 'ios', 'eas.json', 'app.json']) expect(fs.existsSync(path.join(ROOT, forbidden))).toBe(false);
+  it('native projects are generated, never committed: no android/ios directory, no app.json, only a development-only eas.json without credentials; no missing-asset references, no web target', () => {
+    for (const forbidden of ['android', 'ios', 'app.json']) expect(fs.existsSync(path.join(ROOT, forbidden))).toBe(false);
+    const eas = JSON.parse(fs.readFileSync(path.join(ROOT, 'eas.json'), 'utf8'));
+    expect(Object.keys(eas.build)).toEqual(['development']);
+    expect(eas.build.development.developmentClient).toBe(true);
+    expect(JSON.stringify(eas)).not.toMatch(/secret|password|token|keystore|credentials|serviceAccount|rzp_|submit|production/i);
     const cfg = stripComments(fs.readFileSync(path.join(ROOT, 'app.config.ts'), 'utf8'));
     expect(cfg).not.toMatch(/assets\/|icon:|splash|adaptiveIcon|favicon|newArchEnabled|plugins:/);
     expect(cfg).toMatch(/platforms: \['ios', 'android'\]/);
@@ -170,5 +177,47 @@ describe('P11A static guards (production mobile source)', () => {
 
   it('every non-auth request path goes through the typed client: fetch( is used only inside apiClient', () => {
     expect(offenders(/\bfetch\(/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/api/apiClient.ts']);
+  });
+});
+
+describe('P11C-1 static guards (native Razorpay spike: bridge only, no payment flow)', () => {
+  it('the Razorpay package is referenced by exactly ONE production file (the bridge); only the dev-only harness imports the bridge', () => {
+    expect(offenders(/react-native-razorpay/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/payments/razorpayBridge.ts']);
+    // Bridge function names contain "RazorpayCheckout": the bridge itself plus the dev-only native harness (P11C-1 runtime verification).
+    expect(offenders(/RazorpayCheckout/).map((p) => p.replace(/\\/g, '/')).sort()).toEqual(['src/payments/razorpayBridge.ts', 'src/screens/dev/RazorpayTestScreen.tsx']);
+    expect(offenders(/razorpayBridge/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/screens/dev/RazorpayTestScreen.tsx']);
+  });
+
+  it('the native harness is DEV-ONLY: reachable solely through a __DEV__-gated require in the Account screen, never a route or a static import', () => {
+    const account = code.find((c) => c.p.replace(/\\/g, '/') === 'src/screens/AccountScreen.tsx')!.s;
+    expect(account).toMatch(/=\s*__DEV__\s*\?[\s\S]{0,260}require\('\.\/dev\/RazorpayTestScreen'\)[\s\S]{0,160}:\s*null/);
+    expect(account).not.toMatch(/^import\s[^;]*from\s+'\.\/dev\/RazorpayTestScreen'/m); // a static import would put the harness in every bundle
+    expect(offenders(/RazorpayTestScreen/).map((p) => p.replace(/\\/g, '/')).sort()).toEqual(['src/screens/AccountScreen.tsx', 'src/screens/dev/RazorpayTestScreen.tsx']);
+    expect(offenders(/RazorpayTestScreen/).some((p) => /navigation/.test(p))).toBe(false);
+  });
+
+  it('the harness is isolated from commerce, auth, storage and the backend, reads only the PUBLIC test key id, and shows no payment evidence', () => {
+    const h = code.find((c) => c.p.replace(/\\/g, '/') === 'src/screens/dev/RazorpayTestScreen.tsx')!.s;
+    expect(h).not.toMatch(/apiClient|\bfetch\(|useQuery|useMutation|commerce\/|auth\/|queryClient|expo-secure-store|AsyncStorage|setItem|persist|console\./);
+    expect(h).not.toMatch(/SECRET|WEBHOOK|DATABASE|JWT|RAZORPAY_|verify|cancel|refund|payment-attempts|order\.id|orderId:/i);
+    expect([...h.matchAll(/process\.env\.(\w+)/g)].map((m) => m[1])).toEqual(['EXPO_PUBLIC_P11C1_TEST_KEY_ID']);
+    // Only booleans about field presence are rendered; the values of the payment id / order id / signature are never read here.
+    expect(h).not.toMatch(/razorpayPaymentId|razorpayOrderId|razorpaySignature|evidence/);
+  });
+
+  it('no production source reads a non-public environment variable (secrets cannot be inlined into the app)', () => {
+    expect(offenders(/process\.env\.(?!EXPO_PUBLIC_)/)).toEqual([]);
+  });
+
+  it('the bridge is thin: no network, storage, logging or backend client; no customer payment UI exists', () => {
+    const bridge = code.find((c) => c.p.replace(/\\/g, '/') === 'src/payments/razorpayBridge.ts')!.s;
+    expect(bridge).not.toMatch(/console\.|fetch\(|apiClient|expo-secure-store|setItem|persist|Alert\.|useQuery|useMutation|payment-attempts/);
+    expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
+  });
+
+  it('iOS UPI intent schemes are the documented set; New Architecture is NOT overridden (Expo SDK 52 generates false when unset)', () => {
+    const cfg = stripComments(fs.readFileSync(path.join(ROOT, 'app.config.ts'), 'utf8'));
+    expect(cfg).toMatch(/LSApplicationQueriesSchemes: \['tez', 'phonepe', 'paytmmp'\]/);
+    expect(cfg).not.toMatch(/newArchEnabled/);
   });
 });
