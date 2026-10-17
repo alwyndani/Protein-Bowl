@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
-import { isRazorpayNativeAvailable, openRazorpayCheckoutWithPresence } from '../../payments/razorpayBridge';
-import type { PayloadPresence, RazorpayOutcome } from '../../payments/razorpayBridge';
+import { isRazorpayNativeAvailable, openRazorpayCheckoutDiagnostic } from '../../payments/razorpayBridge';
+import type { ErrorShape, PayloadPresence, RazorpayOutcome } from '../../payments/razorpayBridge';
 import { Body, Button, Notice, Screen, TextField, Title } from '../../ui/components';
 
 /**
@@ -25,7 +25,10 @@ function isTestModeKeyId(key: string): boolean {
   return parts.length >= 3 && parts[0] === 'rzp' && parts[1] === 'test';
 }
 
-type Run = { n: number; outcome: RazorpayOutcome; presence: PayloadPresence | null };
+type Run = { n: number; outcome: RazorpayOutcome; presence: PayloadPresence | null; errorShape: ErrorShape | null };
+
+const list = (v: string[] | null) => (v === null ? 'none' : v.length === 0 ? '(empty)' : v.join(', '));
+const val = (v: string | null) => (v === null ? 'none' : v);
 
 const yn = (v: boolean) => (v ? 'yes' : 'no');
 
@@ -64,7 +67,7 @@ export function RazorpayTestScreen({ onClose, keyId }: { onClose: () => void; ke
     lock.current = true;
     setRunning(true);
     try {
-      const result = await openRazorpayCheckoutWithPresence({
+      const result = await openRazorpayCheckoutDiagnostic({
         key: KEY_ID,
         amount: TEST_AMOUNT_MINOR,
         currency: 'INR',
@@ -73,7 +76,7 @@ export function RazorpayTestScreen({ onClose, keyId }: { onClose: () => void; ke
         ...(trimmedOrder ? { order_id: trimmedOrder } : {})
       });
       counter.current += 1;
-      setRun({ n: counter.current, outcome: result.outcome, presence: result.presence });
+      setRun({ n: counter.current, outcome: result.outcome, presence: result.presence, errorShape: result.errorShape });
     } finally {
       lock.current = false;
       setRunning(false);
@@ -109,10 +112,25 @@ export function RazorpayTestScreen({ onClose, keyId }: { onClose: () => void; ke
               <Body muted>signaturePresent: {yn(run.presence.signaturePresent)}</Body>
             </>
           ) : null}
-          {run.outcome.kind === 'ERROR' ? (
+          {run.outcome.kind === 'ERROR' && run.errorShape ? (
             <>
-              <Body muted>code: {run.outcome.code === null ? 'none' : String(run.outcome.code)}</Body>
-              <Body muted>description: {run.outcome.description ?? 'none'}</Body>
+              <Body muted>{`payload keys: ${list(run.errorShape.topLevelKeys)}`}</Body>
+              <Body muted>{`code: ${run.errorShape.code.type}${run.errorShape.code.value === null ? '' : ` = ${String(run.errorShape.code.value)}`}`}</Body>
+              <Body muted>{`description: ${run.errorShape.descriptionKind}${run.errorShape.descriptionText ? ` = ${run.errorShape.descriptionText}` : ''}`}</Body>
+              <Body muted>{`details keys: ${list(run.errorShape.detailsKeys)}`}</Body>
+              {run.errorShape.nested ? (
+                <>
+                  <Body muted>{`nested keys: ${list(run.errorShape.nested.keys)}`}</Body>
+                  <Body muted>{`nested code: ${val(run.errorShape.nested.code)}`}</Body>
+                  <Body muted>{`nested source: ${val(run.errorShape.nested.source)}`}</Body>
+                  <Body muted>{`nested step: ${val(run.errorShape.nested.step)}`}</Body>
+                  <Body muted>{`nested reason: ${val(run.errorShape.nested.reason)}`}</Body>
+                  <Body muted>{`nested metadata keys: ${list(run.errorShape.nested.metadataKeys)}`}</Body>
+                  <Body muted>{`nested description: ${val(run.errorShape.nested.descriptionText)}`}</Body>
+                </>
+              ) : (
+                <Body muted>nested error object: none</Body>
+              )}
             </>
           ) : null}
           <Button label="Clear result" variant="secondary" onPress={() => setRun(null)} />

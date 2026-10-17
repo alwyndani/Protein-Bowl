@@ -10,12 +10,21 @@ const mockAvailable = jest.fn();
 const mockOpen = jest.fn();
 jest.mock('../src/payments/razorpayBridge', () => ({
   isRazorpayNativeAvailable: () => mockAvailable(),
-  openRazorpayCheckoutWithPresence: (...a: unknown[]) => mockOpen(...a)
+  openRazorpayCheckoutDiagnostic: (...a: unknown[]) => mockOpen(...a)
 }));
 
 const TEST_KEY = 'rzp_' + 'test_AAAAAAAAAAAAAA'; // concatenated so no key-shaped literal sits in the repo
 const LIVE_KEY = 'rzp_' + 'live_AAAAAAAAAAAAAA';
 const LABEL = 'Open Razorpay Test Checkout';
+const SHAPE_PLAIN = { topLevelKeys: ['code', 'description'], code: { type: 'number', value: 2 }, descriptionKind: 'text', descriptionText: 'Payment cancelled by user', detailsKeys: null, nested: null };
+const SHAPE_NESTED = {
+  topLevelKeys: ['code', 'description', 'razorpay_payment_id'],
+  code: { type: 'number', value: 0 },
+  descriptionKind: 'json',
+  descriptionText: null,
+  detailsKeys: null,
+  nested: { keys: ['code', 'description', 'source', 'step', 'reason', 'metadata'], code: 'BAD_REQUEST_ERROR', source: 'customer', step: 'payment_authentication', reason: 'payment_cancelled', metadataKeys: ['payment_id', 'order_id'], descriptionText: 'Payment processing cancelled by user' }
+};
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { RazorpayTestScreen: Harness } = require('../src/screens/dev/RazorpayTestScreen') as typeof import('../src/screens/dev/RazorpayTestScreen');
@@ -76,7 +85,7 @@ describe('availability and key handling', () => {
 
 describe('checkout invocation', () => {
   it('order-less: opens the REAL bridge with the public key, INR 1.00 and no order id', async () => {
-    mockOpen.mockResolvedValue({ outcome: { kind: 'MALFORMED_RESULT' }, presence: { paymentIdPresent: true, orderIdPresent: false, signaturePresent: false } });
+    mockOpen.mockResolvedValue({ outcome: { kind: 'MALFORMED_RESULT' }, presence: { paymentIdPresent: true, orderIdPresent: false, signaturePresent: false }, errorShape: null });
     const H = loadHarness(TEST_KEY);
     render(<H onClose={() => {}} />);
     fireEvent.press(screen.getByLabelText(LABEL));
@@ -91,7 +100,7 @@ describe('checkout invocation', () => {
   });
 
   it('with a test order id: it is passed through unchanged', async () => {
-    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 2, description: 'cancelled' }, presence: null });
+    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 2, description: 'cancelled' }, presence: null, errorShape: SHAPE_PLAIN });
     const H = loadHarness(TEST_KEY);
     render(<H onClose={() => {}} />);
     fireEvent.changeText(screen.getByLabelText('Test order id (optional)'), '  order_ABC123  ');
@@ -105,7 +114,8 @@ describe('what the screen shows', () => {
   it('SUCCESS shows only booleans: the payment id, order id and signature values are NEVER rendered', async () => {
     mockOpen.mockResolvedValue({
       outcome: { kind: 'SUCCESS', evidence: { razorpayPaymentId: 'pay_SECRETVALUE1', razorpayOrderId: 'order_SECRETVALUE2', razorpaySignature: 'f'.repeat(64) } },
-      presence: { paymentIdPresent: true, orderIdPresent: true, signaturePresent: true }
+      presence: { paymentIdPresent: true, orderIdPresent: true, signaturePresent: true },
+      errorShape: null
     });
     const H = loadHarness(TEST_KEY);
     render(<H onClose={() => {}} />);
@@ -117,19 +127,34 @@ describe('what the screen shows', () => {
   });
 
   it('a failure / dismissal is an ERROR callback with its code and description, clearly not a success', async () => {
-    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 2, description: 'Payment cancelled by user' }, presence: null });
+    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 2, description: 'Payment cancelled by user' }, presence: null, errorShape: SHAPE_PLAIN });
     const H = loadHarness(TEST_KEY);
     render(<H onClose={() => {}} />);
     fireEvent.press(screen.getByLabelText(LABEL));
     await waitFor(() => expect(screen.getByText(/ERROR callback/)).toBeTruthy());
-    expect(screen.getByText(/code: 2/)).toBeTruthy();
-    expect(screen.getByText(/description: Payment cancelled by user/)).toBeTruthy();
+    expect(screen.getByText(/code: number = 2/)).toBeTruthy();
+    expect(screen.getByText(/description: text = Payment cancelled by user/)).toBeTruthy();
+    expect(screen.getByText(/nested error object: none/)).toBeTruthy();
     expect(screen.queryByText(/SUCCESS:/)).toBeNull();
     expect(screen.queryByText(/paymentIdPresent/)).toBeNull();
   });
 
+  it('a structured nested error shows key names and the allow-listed code / source / step / reason, and only the NAMES of metadata keys', async () => {
+    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 0, description: 'x' }, presence: null, errorShape: SHAPE_NESTED });
+    const H = loadHarness(TEST_KEY);
+    render(<H onClose={() => {}} />);
+    fireEvent.press(screen.getByLabelText(LABEL));
+    await waitFor(() => expect(screen.getByText(/nested code: BAD_REQUEST_ERROR/)).toBeTruthy());
+    expect(screen.getByText(/nested source: customer/)).toBeTruthy();
+    expect(screen.getByText(/nested step: payment_authentication/)).toBeTruthy();
+    expect(screen.getByText(/nested reason: payment_cancelled/)).toBeTruthy();
+    expect(screen.getByText(/nested metadata keys: payment_id, order_id/)).toBeTruthy();
+    expect(screen.getByText(/payload keys: code, description, razorpay_payment_id/)).toBeTruthy();
+    expect(screen.getByText(/description: json/)).toBeTruthy();
+  });
+
   it('the result lives in memory only: it is cleared on request and gone after the panel is closed and reopened', async () => {
-    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 0, description: 'x' }, presence: null });
+    mockOpen.mockResolvedValue({ outcome: { kind: 'ERROR', code: 0, description: 'x' }, presence: null, errorShape: SHAPE_PLAIN });
     const H = loadHarness(TEST_KEY);
     const first = render(<H onClose={() => {}} />);
     fireEvent.press(screen.getByLabelText(LABEL));
@@ -151,7 +176,7 @@ describe('what the screen shows', () => {
     fireEvent.press(screen.getByLabelText(LABEL));
     fireEvent.press(screen.getByLabelText(LABEL));
     expect(mockOpen).toHaveBeenCalledTimes(1);
-    finish({ outcome: { kind: 'ERROR', code: 0, description: null }, presence: null });
+    finish({ outcome: { kind: 'ERROR', code: 0, description: null }, presence: null, errorShape: SHAPE_PLAIN });
     await waitFor(() => expect(screen.getByText(/ERROR callback/)).toBeTruthy());
   });
 });

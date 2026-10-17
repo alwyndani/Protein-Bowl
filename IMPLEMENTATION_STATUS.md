@@ -443,3 +443,8 @@ Baseline dd0c301 (P10A committed). **Migration #17** (`20261012174358_p10b_mess_
 - **Invariant:** a payment retry is allowed only when backend / provider-authoritative state proves it safe; time, restart, client error, timeout, SDK dismissal or network failure alone never do.
 - **Evidence:** new `p11c2.d1.test.ts` 23/23 (mutation-checked), payment suites p7b 141/141 and p10a 93/93 green; FULL backend 1225/1225 (49 files) on a freshly rebuilt disposable test database (`p10b #51` passes on a clean database; it had failed on the baseline because of test-database accumulation); `tsc` clean; 18 migrations.
 - **Not done:** the mobile payment flow (P11C-2 remaining steps), verification that Razorpay refuses a second checkout on an already-paid order (device check).
+
+## 🔎 P11C-2 Step 2 — Razorpay native error-shape verification: DONE on a physical Android device (2026-10-17) — dev-only diagnostic, NOT YET COMMITTED
+- **Finding:** dismissal, a genuine Netbanking TEST failure and a genuine card TEST failure return the SAME structured error (code 0, BAD_REQUEST_ERROR / customer / payment_authentication / payment_error, nested description "undefined"); only the card failure's metadata carries the key name `payment_id` (not usable as a signal). Dismissal and failure are therefore NOT distinguishable; production uses one neutral NOT_COMPLETED outcome and never lets client error classification decide retry safety (backend only).
+- **Evidence:** mobile 298/298 (12 suites), mobile and root typechecks clean, expo-doctor 17/17, the diagnostic strings are absent from the production bundle (dev bundle positive control). Backend untouched.
+- **Not done:** the production mobile payment flow (rest of P11C-2); iOS error layout (`details`) remains unverified.
