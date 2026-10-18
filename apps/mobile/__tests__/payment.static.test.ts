@@ -97,9 +97,10 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
     for (const f of payments) expect(f.s).not.toMatch(/paymentMethod|payment_method|wallet|\bupi\b|\bcod\b/i);
   });
 
-  it('no payment UI exists yet: no payment panel, Pay button or screen consumer; the orchestration hook is imported by nothing', () => {
-    expect(offenders(/PaymentPanel|Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
-    expect(offenders(/usePaymentFlow/)).toEqual(['src/commerce/usePaymentFlow.ts']);
+  it('payment UI exists in ONE panel: the hook has one consumer, the explicit controls live only in the panel, nothing else offers payment', () => {
+    expect(offenders(/PaymentPanel/).sort()).toEqual(['src/screens/commerce/OrderScreens.tsx', 'src/screens/commerce/PaymentPanel.tsx']);
+    expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual(['src/screens/commerce/PaymentPanel.tsx']);
+    expect(offenders(/usePaymentFlow/).sort()).toEqual(['src/commerce/usePaymentFlow.ts', 'src/screens/commerce/PaymentPanel.tsx']);
     expect(offenders(/paymentFlowController|paymentPresentation|paymentFlowMachine/).filter((p) => p.startsWith('src/screens/') || p.startsWith('src/navigation/'))).toEqual([]);
     for (const f of payments) expect(f.s).not.toMatch(/setInterval|refetchInterval/);
   });
@@ -148,5 +149,49 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
     const hook = named('src/commerce/usePaymentFlow.ts');
     expect(hook).toMatch(/qk\.order\(orderId\)/);
     expect(hook).not.toMatch(/useState|createContext|AsyncStorage|SecureStore|persist/);
+  });
+});
+
+describe('P11C-2 step 5 static guards (payment UI boundaries)', () => {
+  const screens = files.filter((f) => f.p.startsWith('src/screens/') && !f.p.startsWith('src/screens/dev/'));
+  const panel = () => named('src/screens/commerce/PaymentPanel.tsx');
+
+  it('dependency direction: UI -> usePaymentFlow only. Screens never touch the native layer, the bridge, the payment API, the mapping, the controller or the evidence store', () => {
+    for (const f of [...screens, ...files.filter((x) => x.p.startsWith('src/navigation/'))]) {
+      expect(f.s).not.toMatch(/razorpayNative|razorpayBridge|react-native-razorpay|paymentApi|PaymentApi|checkoutMapping|buildCheckoutOptions|paymentFlowController|PaymentFlowController|paymentEvidenceStore|PaymentEvidenceStore|razorpayDiagnostic/);
+      expect(f.s).not.toMatch(/createAttempt|verifyPayment|getAttempt|openCheckout|openNativeCheckout/);
+    }
+    expect(panel()).toMatch(/from '\.\.\/\.\.\/commerce\/usePaymentFlow'/);
+  });
+
+  it('the panel constructs no checkout options and passes nothing into the actions (no amount, currency, provider order, method, evidence)', () => {
+    expect(panel()).not.toMatch(/order_id|key:|currency|amountMinor|providerOrderId|providerPaymentId|signature|paymentMethod|razorpay/i);
+    expect(panel()).toMatch(/onPress=\{\(\) => void startPayment\(\)\}/);
+    expect(panel()).toMatch(/onPress=\{\(\) => void retryVerification\(\)\}/);
+    expect(panel()).toMatch(/onPress=\{\(\) => void checkPaymentStatus\(\)\}/);
+    expect(panel().match(/startPayment\(/g)).toHaveLength(1);
+  });
+
+  it('nothing starts automatically: no effect, timer or navigation listener in the panel or the order screens triggers a payment action', () => {
+    expect(panel()).not.toMatch(/useEffect|useLayoutEffect|useFocusEffect|setTimeout|setInterval|AppState/);
+    for (const f of screens.filter((x) => x.p !== 'src/screens/commerce/PaymentPanel.tsx')) expect(f.s).not.toMatch(/startPayment|retryVerification|checkPaymentStatus/);
+    expect(offenders(/startPayment\(/).sort()).toEqual(['src/payments/paymentFlowController.ts', 'src/screens/commerce/PaymentPanel.tsx']);
+  });
+
+  it('no payment evidence, session or provider data in navigation params or navigation calls', () => {
+    expect(offenders(/navigate\([^)]*(evidence|signature|providerPaymentId|providerOrderId|attemptId|keyId|session)/i)).toEqual([]);
+    const nav = named('src/navigation/types.ts');
+    expect(nav).not.toMatch(/evidence|signature|provider|attempt|session|payment/i);
+  });
+
+  it('no custom payment-method UI, no card / bank / wallet / QR input, and no fallback (cash, COD, wallet, browser, transfer)', () => {
+    for (const f of screens) {
+      expect(f.s).not.toMatch(/\bupi\b|netbanking|net banking|card number|cvv|expiry|\bqr\b|bank transfer|open_?url|Linking\.|WebView/i);
+    }
+    expect(panel()).not.toMatch(/\bcod\b|cash|wallet|browser|transfer|fallback/i);
+  });
+
+  it('the panel is not part of cancellation / refund / delivery-code work and logs nothing', () => {
+    expect(panel()).not.toMatch(/cancel|refund|delivery[- ]?code|handover|console\./i);
   });
 });

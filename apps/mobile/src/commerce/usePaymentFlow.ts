@@ -6,7 +6,7 @@ import { PaymentApi } from '../payments/paymentApi';
 import { usePaymentEvidenceStore } from '../payments/paymentEvidenceStore';
 import { PaymentFlowController } from '../payments/paymentFlowController';
 import { derivePresentation } from '../payments/paymentPresentation';
-import { isNativeCheckoutOpen, isRazorpayNativeAvailable, onNativeCheckoutSettled, openCheckout } from '../payments/razorpayBridge';
+import { isNativeCheckoutOpen, isRazorpayNativeAvailable, onNativeCheckoutSettled, onNativeCheckoutStateChange, openCheckout } from '../payments/razorpayBridge';
 import { CommerceApi } from './api';
 import { useOrder } from './hooks';
 import { qk } from './queryKeys';
@@ -56,7 +56,13 @@ export function usePaymentFlow(orderId: string) {
   }, [controller, order]);
 
   const flow = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
-  const presentation = useMemo(() => derivePresentation(order, flow, controller.hasEvidence()), [order, flow, controller]);
+  // The native lock is process-wide (another screen may hold it): read it live so Pay Now disappears the moment it is taken.
+  const lockOpen = useSyncExternalStore(onNativeCheckoutStateChange, isNativeCheckoutOpen, isNativeCheckoutOpen);
+  const nativeAvailable = isRazorpayNativeAvailable();
+  const presentation = useMemo(
+    () => derivePresentation(order, flow, controller.hasEvidence(), { lockOpen, nativeAvailable }),
+    [order, flow, controller, lockOpen, nativeAvailable]
+  );
 
   return {
     flow,

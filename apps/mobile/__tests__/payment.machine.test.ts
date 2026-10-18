@@ -100,3 +100,51 @@ describe('presentation model (derived, never a second truth)', () => {
     expect(derivePresentation(o, { ...idle, phase: 'CONFIRMING' }, false).canRetryVerification).toBe(false);
   });
 });
+
+describe('presentation hardening (fail closed)', () => {
+  const idle = INITIAL_FLOW_STATE;
+  const startable = ord({ state: 'AWAITING_PAYMENT', canStartPayment: true });
+
+  it('an inconsistent or malformed payment summary never offers Pay Now', () => {
+    for (const payment of [
+      { state: 'CONFIRMING', canStartPayment: true },
+      { state: 'PAID', canStartPayment: true },
+      { state: 'SOMETHING_NEW', canStartPayment: true },
+      { state: 'AWAITING_PAYMENT', canStartPayment: 'true' },
+      { state: 'AWAITING_PAYMENT' },
+      {}
+    ]) {
+      expect(derivePresentation(ord(payment as never), idle, false).canStartPayment).toBe(false);
+    }
+    expect(derivePresentation(ord({ state: 'NOT_STARTED', canStartPayment: true }), idle, false).canStartPayment).toBe(true);
+  });
+
+  it('terminal / non-payable orders never offer Pay Now even with a startable-looking summary', () => {
+    for (const status of ['CANCELLED', 'CONFIRMED', 'DELIVERED', 'READY']) expect(derivePresentation(ord({ state: 'AWAITING_PAYMENT', canStartPayment: true }, { status }), idle, false).canStartPayment).toBe(false);
+  });
+
+  it('unverified in-memory evidence means unresolved: no Pay Now, Retry verification offered (also on the first render before any observation)', () => {
+    const p = derivePresentation(startable, idle, true);
+    expect(p).toMatchObject({ kind: 'CHECKING_PAYMENT', canStartPayment: false, canRetryVerification: true, canCheckStatus: true });
+  });
+
+  it('an unsettled native lock (even one opened by another screen) blocks Pay Now and shows the pending message', () => {
+    const p = derivePresentation(startable, idle, false, { lockOpen: true, nativeAvailable: true });
+    expect(p).toMatchObject({ kind: 'CHECKING_PAYMENT', canStartPayment: false, canCheckStatus: true });
+    expect(p.message).toMatch(/payment window may still be open/i);
+    expect(p.message).not.toMatch(/fail|declin|cancel/i);
+    // the lock owned by THIS flow is the normal checkout-open state
+    expect(derivePresentation(startable, { ...idle, phase: 'CHECKOUT_ACTIVE', nativeOpen: true }, false, { lockOpen: true, nativeAvailable: true }).kind).toBe('CHECKOUT_OPEN');
+  });
+
+  it('a build without the native checkout is UNAVAILABLE up front (no Pay Now), but checking an unresolved payment still works', () => {
+    const p = derivePresentation(startable, idle, false, { lockOpen: false, nativeAvailable: false });
+    expect(p).toMatchObject({ kind: 'UNAVAILABLE', canStartPayment: false, nativeUnavailable: true });
+    const c = derivePresentation(ord({ state: 'CONFIRMING', canStartPayment: false }), { ...idle, phase: 'CONFIRMING' }, false, { lockOpen: false, nativeAvailable: false });
+    expect(c).toMatchObject({ kind: 'CHECKING_PAYMENT', canCheckStatus: true, nativeUnavailable: false });
+  });
+
+  it('an order the backend blocks is UNAVAILABLE for the ORDER (not the build), so the panel stays hidden', () => {
+    expect(derivePresentation(ord({ state: 'NOT_STARTED', canStartPayment: false }), idle, false)).toMatchObject({ kind: 'UNAVAILABLE', nativeUnavailable: false });
+  });
+});

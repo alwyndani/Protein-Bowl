@@ -31,6 +31,17 @@ type RazorpayModule = { open: (options: NativeOpenOptions) => Promise<unknown> }
 
 let inFlight = false;
 const settledListeners = new Set<() => void>();
+const stateListeners = new Set<() => void>();
+
+function notifyState() {
+  stateListeners.forEach((l) => {
+    try {
+      l();
+    } catch {
+      /* a listener must never break the checkout path */
+    }
+  });
+}
 
 /** True only in a build that actually contains the native module (a development / production build, never Expo Go). */
 export function isRazorpayNativeAvailable(): boolean {
@@ -62,6 +73,12 @@ export function isNativeCheckoutOpen(): boolean {
   return inFlight;
 }
 
+/** Read-only: notified whenever the lock is taken or released (so a screen can show the pending state). It can never change the lock. */
+export function onNativeCheckoutStateChange(listener: () => void): () => void {
+  stateListeners.add(listener);
+  return () => stateListeners.delete(listener);
+}
+
 /** Notified (once per checkout) when the native promise settles and the lock is released. Returns an unsubscribe function. */
 export function onNativeCheckoutSettled(listener: () => void): () => void {
   settledListeners.add(listener);
@@ -77,12 +94,14 @@ export async function openNativeCheckout(options: NativeOpenOptions): Promise<Na
   if (!mod) return { kind: 'UNAVAILABLE' };
   if (inFlight) return { kind: 'IN_PROGRESS' };
   inFlight = true;
+  notifyState();
   try {
     return { kind: 'RESOLVED', payload: await mod.open(options) };
   } catch (e) {
     return { kind: 'REJECTED', payload: e };
   } finally {
     inFlight = false;
+    notifyState();
     settledListeners.forEach((l) => {
       try {
         l();

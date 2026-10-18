@@ -80,5 +80,8 @@ export function deliveryNotice(order: Pick<CustomerOrder, 'delivery'>): { title:
   }
 }
 
-/** The honest P11B wording for an order that still needs online payment. It never implies confirmation or payment. */
-export const PAYMENT_REQUIRED_COPY = 'Payment is required before your order can be confirmed. Online payment from this app is coming soon; your order is saved and is not confirmed yet.';
+/** Wording for an order that still needs online payment. It never implies confirmation or payment. */
+export const PAYMENT_REQUIRED_COPY = 'Payment is required before your order can be confirmed. Your order is saved and is not confirmed yet.';
+
+/** The order is still waiting for payment (informational; the BACKEND payment summary decides whether payment may start). */
+export const needsPayment = (o: Pick<CustomerOrder, 'status' | 'paymentStatus'>) => o.status === 'PENDING' && o.paymentStatus !== 'PAID' && o.paymentStatus !== 'REFUNDED';

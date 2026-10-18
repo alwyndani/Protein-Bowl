@@ -7,7 +7,7 @@ import { NativeModules } from 'react-native';
 const mockOpen = jest.fn();
 jest.mock('react-native-razorpay', () => ({ __esModule: true, default: { open: (...a: unknown[]) => mockOpen(...a) } }));
 
-import { isRazorpayNativeAvailable, isNativeCheckoutOpen, onNativeCheckoutSettled, openCheckout, CheckoutOptions } from '../src/payments/razorpayBridge';
+import { isRazorpayNativeAvailable, isNativeCheckoutOpen, onNativeCheckoutSettled, onNativeCheckoutStateChange, openCheckout, CheckoutOptions } from '../src/payments/razorpayBridge';
 
 const OPTIONS: CheckoutOptions = { key: 'public_key_id', order_id: 'order_ABC123', amount: 33900, currency: 'INR', name: 'Protein Bowl' };
 const GOOD = { razorpay_payment_id: 'pay_ABC123', razorpay_order_id: 'order_ABC123', razorpay_signature: 'a'.repeat(64) };
@@ -178,5 +178,23 @@ describe('the native lock: a promise that never settles fails closed (only settl
   it('the lock lives in the native layer and has no timer-based release', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'payments', 'razorpayNative.ts'), 'utf8') as string;
     expect(src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')).not.toMatch(/setTimeout|setInterval|Promise\.race|AbortController/);
+  });
+});
+
+describe('read-only lock state notifications', () => {
+  it('fire when the lock is taken AND when it is released, and cannot change it', async () => {
+    const seen: boolean[] = [];
+    const off = onNativeCheckoutStateChange(() => seen.push(isNativeCheckoutOpen()));
+    let finish!: (v: unknown) => void;
+    mockOpen.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    const p = openCheckout(OPTIONS);
+    expect(seen).toEqual([true]);
+    finish(GOOD);
+    await p;
+    expect(seen).toEqual([true, false]);
+    off();
+    mockOpen.mockResolvedValue(GOOD);
+    await openCheckout(OPTIONS);
+    expect(seen).toEqual([true, false]);
   });
 });

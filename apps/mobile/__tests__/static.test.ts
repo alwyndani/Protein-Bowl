@@ -220,7 +220,8 @@ describe('P11C-1 static guards (native Razorpay spike: bridge only, no payment f
       const src = code.find((c) => c.p.replace(/\\/g, '/') === file)!.s;
       expect(src).not.toMatch(/console\.|fetch\(|apiClient|expo-secure-store|setItem|persist|Alert\.|useQuery|useMutation|payment-attempts/);
     }
-    expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual([]);
+    // P11C-2 step 5: the explicit payment controls exist in EXACTLY the payment panel (and its orchestration copy), nowhere else.
+    expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/screens/commerce/PaymentPanel.tsx']);
   });
 
   it('iOS UPI intent schemes are the documented set; New Architecture is NOT overridden (Expo SDK 52 generates false when unset)', () => {

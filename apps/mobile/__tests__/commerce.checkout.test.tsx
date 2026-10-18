@@ -1,3 +1,4 @@
+import { NativeModules } from 'react-native';
 import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { IDEMPOTENCY_KEY_PATTERN } from '../src/commerce/idempotencyKey';
 import { FakeCommerceBackend } from '../src/test/fakeCommerceBackend';
@@ -88,11 +89,11 @@ describe('P11B order creation (ONLINE, idempotent)', () => {
     expect(screen.getByText(/^Order PB-/)).toBeTruthy();
     expect(screen.getAllByText('Order placed').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Payment required').length).toBeGreaterThan(0);
-    // the order is not confirmed and not paid, and there is NO payment action in P11B
+    // the order is not confirmed and not paid; the ONLY payment-related control is the explicit navigation to the order (P11C-2 step 5)
     expect(screen.queryByText('Confirmed')).toBeNull();
     expect(screen.queryByText(/^Paid$/)).toBeNull();
     const names = screen.getAllByRole('button').map((n) => String(n.props.accessibilityLabel ?? ''));
-    expect(names.filter((n) => /pay|razorpay|upi|card/i.test(n))).toEqual([]);
+    expect(names.filter((n) => /pay|razorpay|upi|card/i.test(n))).toEqual(['Continue to payment']);
   });
 
   it('delivery instructions are sent only when entered and are limited to the backend maximum', async () => {
@@ -367,9 +368,17 @@ describe('P11B orders list and detail (read-only)', () => {
     expect(screen.getAllByText('Payment required').length).toBeGreaterThan(0);
   });
 
+  // The secure payment window exists only in a native build: simulate one for the tests that expect Pay Now.
+  const withNative = (on: boolean) => {
+    if (on) (NativeModules as Record<string, unknown>).RNRazorpayCheckout = {};
+    else delete (NativeModules as Record<string, unknown>).RNRazorpayCheckout;
+  };
+  afterEach(() => withNative(false));
+
   it('detail: items with server price snapshots, totals, address snapshot, instructions, timeline - and NO email, phone, SKU or internal fields', async () => {
+    withNative(true);
     await place();
-    await pressAsync('View this order');
+    await pressAsync('Continue to payment');
     expect(await screen.findByText('Chicken Bowl')).toBeTruthy();
     expect(screen.getByText('2 × ₹299.00')).toBeTruthy();
     expect(screen.getByText('Delivery address')).toBeTruthy();
@@ -377,10 +386,30 @@ describe('P11B orders list and detail (read-only)', () => {
     expect(screen.getByText('Instructions: Leave at the gate')).toBeTruthy();
     expect(screen.getByText('Order placed · 13 Oct 2026, 3:45 pm IST')).toBeTruthy();
     expect(screen.queryByText(/@|\+91|SKU-SECRET|PB-.*idempot|fingerprint/i)).toBeNull();
-    // payment is still required and the screen has no cancel / refund / payment / delivery-code control
+    // payment is still required: the payment panel (its explicit Pay Now) is the only payment control; no cancel / refund / delivery-code control
     expect(screen.getByText(/Payment is required before your order can be confirmed/)).toBeTruthy();
     const names = screen.getAllByRole('button').map((n) => String(n.props.accessibilityLabel ?? ''));
-    expect(names.filter((n) => /cancel|refund|pay|delivery code|code/i.test(n))).toEqual([]);
+    expect(names.filter((n) => /cancel|refund|delivery code|code/i.test(n))).toEqual([]);
+    expect(names.filter((n) => /pay/i.test(n)).sort()).toEqual(['Pay Now']);
+  });
+
+  it('a build WITHOUT the secure payment window shows the explanation up front and no Pay Now (no fallback)', async () => {
+    withNative(false);
+    await place();
+    await pressAsync('Continue to payment');
+    expect(await screen.findByText(/Secure payment can.t be opened on this app build or device/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Pay Now' })).toBeNull();
+    expect(screen.queryByText(/cash|wallet|COD|bank transfer/i)).toBeNull();
+  });
+
+  it('Continue to payment only NAVIGATES to the order: no payment request is made, nothing opens, the panel offers an explicit Pay Now', async () => {
+    withNative(true);
+    const { b } = await place();
+    const before = b.log.length;
+    await pressAsync('Continue to payment');
+    expect(await screen.findByText('Chicken Bowl')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pay Now' })).toBeTruthy();
+    expect(b.log.slice(before).filter((r) => /payment-attempts|verify/.test(r.path) || r.method !== 'GET')).toEqual([]);
   });
 
   it('cancellation / refund / delivery states are DISPLAYED read-only when meaningful - still no action control', async () => {
@@ -392,7 +421,7 @@ describe('P11B orders list and detail (read-only)', () => {
     o.refund = { state: 'REFUND_PROCESSING' };
     o.cancellation = { state: 'CANCELLATION_NOT_ALLOWED', allowed: false };
     o.delivery = { state: 'ON_THE_WAY', attemptNumber: 1, maxAttempts: 3 };
-    await pressAsync('View this order');
+    await pressAsync('Continue to payment');
     expect(await screen.findByText('Refund processing')).toBeTruthy();
     expect(screen.getByText('Out for delivery. Your order is on its way.')).toBeTruthy();
     expect(screen.getAllByText('Paid').length).toBeGreaterThan(0);
@@ -406,7 +435,7 @@ describe('P11B orders list and detail (read-only)', () => {
     const o = b.orders.get(uid)![0];
     o.status = 'CANCELLED';
     o.cancellation = { state: 'CANCELLED', allowed: false };
-    await pressAsync('View this order');
+    await pressAsync('Continue to payment');
     expect(await screen.findByText('This order was cancelled.')).toBeTruthy();
     expect(screen.queryByText(/Payment is required/)).toBeNull();
   });

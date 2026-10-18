@@ -5,17 +5,16 @@ import { ApiError } from '../../api/ApiError';
 import { commerceMessage } from '../../commerce/commerceErrors';
 import { formatIstDateTime } from '../../commerce/dates';
 import { useOrder, useOrders, useRefetchOnFocus } from '../../commerce/hooks';
-import { cancellationNotice, deliveryNotice, orderBadge, orderStatusLabel, paymentBadge, PAYMENT_REQUIRED_COPY, refundBadge } from '../../commerce/labels';
+import { cancellationNotice, deliveryNotice, needsPayment, orderBadge, orderStatusLabel, paymentBadge, PAYMENT_REQUIRED_COPY, refundBadge } from '../../commerce/labels';
 import { formatInr, isZeroMoney } from '../../commerce/money';
 import type { CustomerOrder } from '../../commerce/types';
 import type { OrdersStackParamList } from '../../navigation/types';
 import { Body, colors, Notice, Screen, Title } from '../../ui/components';
 import { EmptyState, ErrorState, Pill, Row, StaleBanner } from '../../ui/commerceUi';
+import { PaymentPanel } from './PaymentPanel';
 
 type ListProps = NativeStackScreenProps<OrdersStackParamList, 'Orders'>;
 type DetailProps = NativeStackScreenProps<OrdersStackParamList, 'OrderDetail'>;
-
-const needsPayment = (o: CustomerOrder) => o.status === 'PENDING' && o.paymentStatus !== 'PAID' && o.paymentStatus !== 'REFUNDED';
 
 export function OrdersScreen({ navigation }: ListProps) {
   const orders = useOrders();
@@ -66,7 +65,7 @@ function OrderCard({ order, onPress }: { order: CustomerOrder; onPress: () => vo
   );
 }
 
-/** Read-only. No cancel, refund, payment or delivery-code control exists in P11B: those states are only DISPLAYED when meaningful. */
+/** Order status is read-only here. Payment is handled ONLY by the PaymentPanel (cancel, refund and delivery-code controls do not exist yet). */
 export function OrderDetailScreen({ route }: DetailProps) {
   const order = useOrder(route.params.orderId);
   useRefetchOnFocus(order.refetch);
@@ -101,7 +100,7 @@ export function OrderDetailScreen({ route }: DetailProps) {
         <Pill label={pay.label} tone={pay.tone} />
         {refund ? <Pill label={refund.label} tone={refund.tone} /> : null}
       </View>
-      {needsPayment(o) ? <Notice tone="info">{PAYMENT_REQUIRED_COPY}</Notice> : null}
+      {o.payment ? <PaymentPanel order={o} /> : needsPayment(o) ? <Notice tone="info">{PAYMENT_REQUIRED_COPY}</Notice> : null}
       {cancelled ? <Notice tone="info">{cancelled}</Notice> : null}
       {delivery ? <Notice tone="info">{`${delivery.title}. ${delivery.body}`}</Notice> : null}
 

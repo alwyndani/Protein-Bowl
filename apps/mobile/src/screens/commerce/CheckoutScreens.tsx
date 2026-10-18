@@ -8,7 +8,7 @@ import { commerceMessage, isAmbiguousOutcome, isOfflineError, OFFLINE_WRITE_COPY
 import { useCheckoutPreview, useOrder, usePlaceOrder, useRefetchOnFocus } from '../../commerce/hooks';
 import { formatInr, isZeroMoney } from '../../commerce/money';
 import { previewSignature } from '../../commerce/previewSignature';
-import { orderStatusLabel, paymentBadge, PAYMENT_REQUIRED_COPY } from '../../commerce/labels';
+import { needsPayment, orderStatusLabel, paymentBadge, PAYMENT_REQUIRED_COPY } from '../../commerce/labels';
 import { goToOrders } from '../../navigation/goToOrders';
 import type { MenuStackParamList } from '../../navigation/types';
 import { Body, Button, colors, Notice, Screen, TextField, Title } from '../../ui/components';
@@ -145,7 +145,10 @@ export function CheckoutScreen({ route, navigation }: CheckoutProps) {
   );
 }
 
-/** Shown after an order was created. It is NOT confirmed and NOT paid, and it offers no payment action in P11B. */
+/**
+ * Shown after an order was created. It is NOT confirmed and NOT paid. Payment is never started here: the explicit button only navigates to
+ * the order, where the payment panel (and only its "Pay Now") can start it. Only the normal order id travels in the navigation params.
+ */
 export function OrderPlacedScreen({ route, navigation }: PlacedProps) {
   const order = useOrder(route.params.orderId);
   if (order.isPending) {
@@ -170,7 +173,7 @@ export function OrderPlacedScreen({ route, navigation }: PlacedProps) {
         <Row label="Total" value={formatInr(o.netAmount)} strong />
       </View>
       <Notice tone="info">{PAYMENT_REQUIRED_COPY}</Notice>
-      <Button label="View this order" onPress={() => goToOrders(navigation, o.id)} />
+      <Button label={needsPayment(o) ? 'Continue to payment' : 'View this order'} onPress={() => goToOrders(navigation, o.id)} />
       <Button label="Back to the menu" variant="secondary" onPress={() => navigation.popToTop()} />
     </Screen>
   );
