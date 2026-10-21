@@ -34,6 +34,14 @@ beforeEach(() => {
 
 const renderIt = () => render(<KeralaMessSection onSessionExpired={onSessionExpired} />);
 
+// A local calendar date n days from today as YYYY-MM-DD (no toISOString, so no timezone shift). The fixture plan's minStartLeadDays is 1,
+// so a hard-coded date goes stale as soon as the calendar passes it.
+const daysFromToday = (n: number): string => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 describe('Kerala Mess customer screen (real backend data, no mock behaviour)', () => {
   it('shows onboarding for a customer without an account and submits ONLY service point, room and student id', async () => {
     const user = userEvent.setup();
@@ -90,18 +98,20 @@ describe('Kerala Mess customer screen (real backend data, no mock behaviour)', (
     renderIt();
     const plan = await screen.findByTestId('mess-plan-MONTHLY-LB');
     const date = within(plan).getByLabelText('Start date');
-    await user.type(date, '2026-10-20');
+    const firstDate = daysFromToday(3);
+    const secondDate = daysFromToday(8);
+    await user.type(date, firstDate);
     await user.click(within(plan).getByRole('button', { name: 'Continue to payment' }));
     await waitFor(() => expect(mess.purchase).toHaveBeenCalledTimes(1));
     expect(await screen.findByTestId('mess-error')).toBeInTheDocument();
     await user.click(within(plan).getByRole('button', { name: 'Continue to payment' }));
     await waitFor(() => expect(mess.purchase).toHaveBeenCalledTimes(2));
     const [first, second] = mess.purchase.mock.calls;
-    expect(first[0]).toEqual({ planId: 'plan-1', startDate: '2026-10-20' });
+    expect(first[0]).toEqual({ planId: 'plan-1', startDate: firstDate });
     expect(second[1]).toBe(first[1]); // same request => same key (a retry can never double-buy)
     expect(String(first[1]).length).toBeGreaterThanOrEqual(8);
     await user.clear(date);
-    await user.type(date, '2026-10-25');
+    await user.type(date, secondDate);
     mess.purchase.mockResolvedValue({ subscription: subscription(), replay: false });
     await user.click(within(plan).getByRole('button', { name: 'Continue to payment' }));
     await waitFor(() => expect(mess.purchase).toHaveBeenCalledTimes(3));
@@ -175,7 +185,7 @@ describe('Kerala Mess customer screen (real backend data, no mock behaviour)', (
     mess.purchase.mockRejectedValue(new ApiRequestError('SQL constraint mess_subs_status_ck violated at 10.0.0.5', 'OPEN_PURCHASE_EXISTS', 409));
     renderIt();
     const plan = await screen.findByTestId('mess-plan-MONTHLY-LB');
-    await user.type(within(plan).getByLabelText('Start date'), '2026-10-20');
+    await user.type(within(plan).getByLabelText('Start date'), daysFromToday(3));
     await user.click(within(plan).getByRole('button', { name: 'Continue to payment' }));
     const err = await screen.findByTestId('mess-error');
     expect(err).toHaveTextContent('You already have an unpaid Kerala Mess purchase');
