@@ -23,13 +23,13 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
               Kerala's premier clinical nutrition kitchen, student mess subscription hub, probiotic brewery, and state-wide cloud kitchen ERP network.
             </p>
             <div className="pt-2 flex items-center gap-3">
-              <a href="#" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+              <a href="#" aria-label="Protein Bowl on Instagram" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
                 <Instagram className="w-4 h-4" />
               </a>
-              <a href="#" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+              <a href="#" aria-label="Protein Bowl on Facebook" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
                 <Facebook className="w-4 h-4" />
               </a>
-              <a href="#" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+              <a href="#" aria-label="Protein Bowl on Twitter" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
                 <Twitter className="w-4 h-4" />
               </a>
             </div>
