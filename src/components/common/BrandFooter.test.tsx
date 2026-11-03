@@ -32,14 +32,8 @@ describe('BrandFooter', () => {
     expect(openEmployeeLogin).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the SRS document button only when a handler is passed, and calls it once on click', async () => {
-    const user = userEvent.setup();
-    const openSrs = vi.fn();
-    const { rerender } = render(<BrandFooter />);
-    expect(screen.queryByRole('button', { name: /srs document/i })).not.toBeInTheDocument();
-
-    rerender(<BrandFooter onOpenSRS={openSrs} />);
-    await user.click(screen.getByRole('button', { name: /srs document/i }));
-    expect(openSrs).toHaveBeenCalledTimes(1);
+  it('has no SRS document control', () => {
+    render(<BrandFooter />);
+    expect(screen.queryByText(/srs/i)).not.toBeInTheDocument();
   });
 });

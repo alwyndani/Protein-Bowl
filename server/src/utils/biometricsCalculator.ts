@@ -10,7 +10,13 @@ export interface BiometricsInput {
 }
 
 export interface CalculatedBiometricsResult {
-  age: number;
+  /**
+   * false when the figures that depend on age and sex cannot be calculated: NOTHING is assumed. Those figures (bmr, tdee, calories, macros)
+   * are then 0 = "not calculated", `missing` names what is needed, and only BMI, water and ideal weight (which need just height/weight) are real.
+   */
+  available: boolean;
+  missing: Array<'dateOfBirth' | 'gender' | 'calculationPolicy'>;
+  age: number | null;
   bmi: number;
   bmiCategory: 'Underweight' | 'Normal' | 'Overweight' | 'Obese';
   bmr: number;
@@ -41,8 +47,8 @@ export function calculateBiometrics(input: BiometricsInput): CalculatedBiometric
   else if (bmi >= 25 && bmi < 29.9) bmiCategory = 'Overweight';
   else bmiCategory = 'Obese';
 
-  // 2. Age Determination
-  let age = input.age || 25;
+  // 2. Age Determination: from the saved date of birth (or an explicit age). There is NO default age.
+  let age: number | null = typeof input.age === 'number' && input.age > 0 && input.age < 120 ? input.age : null;
   if (input.dob) {
     const dobDate = new Date(input.dob);
     if (!isNaN(dobDate.getTime())) {
@@ -56,6 +62,27 @@ export function calculateBiometrics(input: BiometricsInput): CalculatedBiometric
         age = calculatedAge;
       }
     }
+  }
+
+  // Water and ideal weight need only height and weight.
+  const waterRequirementL = Number((weightKg * 0.035 + (input.hasExercise ? 0.5 : 0)).toFixed(2));
+  const idealBodyWeightKg = Number((22 * heightM * heightM).toFixed(1));
+
+  // BMR (and everything built on it) needs the age and the sex: without them it is NOT CALCULATED, never assumed.
+  // Mifflin-St Jeor has two published constants (male, female). "other" is NOT silently mapped to either: it is unavailable
+  // ('calculationPolicy') until the business approves how it is to be calculated. Any other unknown value counts as a missing gender.
+  const missing: Array<'dateOfBirth' | 'gender' | 'calculationPolicy'> = [];
+  if (age === null) missing.push('dateOfBirth');
+  const sex = (input.gender || '').trim().toLowerCase();
+  if (sex === 'other') missing.push('calculationPolicy');
+  else if (sex !== 'male' && sex !== 'female') missing.push('gender');
+  if (missing.length > 0 || age === null) {
+    return {
+      available: false, missing, age, bmi, bmiCategory,
+      bmr: 0, tdee: 0, maintenanceCalories: 0, targetCalories: 0, calorieDeficitSurplus: 0,
+      macroTargets: { proteinGrams: 0, carbsGrams: 0, fatGrams: 0, fiberGrams: 0 },
+      waterRequirementL, idealBodyWeightKg
+    };
   }
 
   // 3. BMR Calculation (Mifflin-St Jeor Formula)
@@ -104,13 +131,9 @@ export function calculateBiometrics(input: BiometricsInput): CalculatedBiometric
   const carbsGrams = Math.max(80, Math.round(remainingCalForCarbs / 4));
   const fiberGrams = Math.round((targetCalories / 1000) * 14);
 
-  // 7. Water Requirement
-  const waterRequirementL = Number((weightKg * 0.035 + (input.hasExercise ? 0.5 : 0)).toFixed(2));
-
-  // 8. Ideal Body Weight
-  const idealBodyWeightKg = Number((22 * heightM * heightM).toFixed(1));
-
   return {
+    available: true,
+    missing: [],
     age,
     bmi,
     bmiCategory,

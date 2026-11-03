@@ -91,6 +91,9 @@ describe('P7B — payment sessions, verification, ledger, webhooks, reconciliati
   async function quiesce() {
     await prisma.payment.updateMany({ where: { provider: { not: null } }, data: { nextAttemptAt: null, lockedUntil: null, lockedBy: null } });
     await prisma.paymentWebhookEvent.updateMany({ where: { status: { in: ['RECEIVED', 'RETRY_PENDING'] } }, data: { status: 'IGNORED', ignoredReason: 'TEST_CLEANUP', lockedUntil: null } });
+    // Captured-but-unapplied ledger rows left by earlier tests/files would each cost the worker a provider read (it now re-verifies every one
+    // before applying), which would distort the counters of the test at hand. They belong to finished tests: mark them reviewed.
+    await prisma.providerPayment.updateMany({ where: { providerStatus: 'CAPTURED', reconciliationStatus: 'PENDING' }, data: { reconciliationStatus: 'REVIEWED' } });
   }
 
   beforeAll(async () => {
@@ -1156,15 +1159,23 @@ describe('P7B — payment sessions, verification, ledger, webhooks, reconciliati
       expect(s.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
     });
 
-    it('83. a captured ledger row that was never applied is decided from stored evidence (no provider call needed)', async () => {
+    it('83. a captured ledger row that was never applied is applied only after the provider confirms its CURRENT state (stored evidence alone is never enough)', async () => {
       await quiesce();
       const { order, attemptId, providerOrderId } = await ready();
+      const real = captured(providerOrderId); // the payment really exists at the (mock) provider
       await prisma.providerPayment.create({
-        data: { provider: 'mock', providerPaymentId: `pay_orphan_${ts}`, providerOrderId, paymentId: attemptId, orderId: order.id, amount: NET, currency: 'INR', providerStatus: 'CAPTURED', firstSeenVia: 'WEBHOOK', firstCapturedSeenAt: new Date() }
+        data: { provider: 'mock', providerPaymentId: real.providerPaymentId, providerOrderId, paymentId: attemptId, orderId: order.id, amount: NET, currency: 'INR', providerStatus: 'CAPTURED', firstSeenVia: 'WEBHOOK', firstCapturedSeenAt: new Date() }
       });
-      mock.setReadFailure(true); // proves no provider call is needed
-      const stats = await PaymentReconciliationService.runOnce({ workerId: 't83' });
-      expect(stats.ledgerApplied).toBeGreaterThanOrEqual(1);
+      // Provider unreachable: nothing is applied, the row stays PENDING for the next run.
+      mock.setReadFailure(true);
+      const down = await PaymentReconciliationService.runOnce({ workerId: 't83a' });
+      expect(down.providerErrors).toBeGreaterThanOrEqual(1);
+      expect(await orderOf(order.id)).toMatchObject({ paymentStatus: 'PENDING' });
+      expect((await prisma.providerPayment.findFirstOrThrow({ where: { providerPaymentId: real.providerPaymentId } })).reconciliationStatus).toBe('PENDING');
+      // Provider reachable and the payment is still captured for this order: applied.
+      mock.setReadFailure(false);
+      const up = await PaymentReconciliationService.runOnce({ workerId: 't83b' });
+      expect(up.ledgerApplied).toBeGreaterThanOrEqual(1);
       expect(await orderOf(order.id)).toMatchObject({ paymentStatus: 'PAID', status: 'CONFIRMED' });
     });
 
@@ -1357,15 +1368,15 @@ describe('P7B — payment sessions, verification, ledger, webhooks, reconciliati
 
   // =============================================================================================== G. RBAC + admin visibility + privacy
   describe('RBAC, admin visibility and privacy', () => {
-    it('96. GET /admin/payments: SUPER_ADMIN and MD may read; CHEF, DELIVERY, customers and anonymous may not', async () => {
+    it('96. GET /admin/payments: SUPER_ADMIN may read; the retired MD role, CHEF, DELIVERY, customers and anonymous may not', async () => {
       await ready();
-      for (const label of ['admin', 'md']) {
+      for (const label of ['admin']) {
         const res = await request(app).get('/api/v1/admin/payments').set(bearer(who[label].token));
         expect(res.status, label).toBe(200);
         expect(res.body.data).toHaveProperty('items');
         expect(res.body.data).toHaveProperty('review');
       }
-      for (const label of ['chef', 'driver', 'custA']) expect((await request(app).get('/api/v1/admin/payments').set(bearer(who[label].token))).status, label).toBe(403);
+      for (const label of ['md', 'chef', 'driver', 'custA']) expect((await request(app).get('/api/v1/admin/payments').set(bearer(who[label].token))).status, label).toBe(403);
       expect((await request(app).get('/api/v1/admin/payments')).status).toBe(401);
     });
 
@@ -1383,7 +1394,7 @@ describe('P7B — payment sessions, verification, ledger, webhooks, reconciliati
       expect(item).toBeDefined();
       expect(item.reviewFlag).toBe('DUPLICATE_CAPTURE');
       expect(item.providerPayments.map((p: { reconciliationStatus: string }) => p.reconciliationStatus).sort()).toEqual(['APPLIED', 'DUPLICATE']);
-      const filtered = await request(app).get('/api/v1/admin/payments?status=SUCCESS').set(bearer(who.md.token));
+      const filtered = await request(app).get('/api/v1/admin/payments?status=SUCCESS').set(bearer(who.admin.token));
       expect(filtered.body.data.items.every((i: { status: string }) => i.status === 'SUCCESS')).toBe(true);
       expect((await request(app).get('/api/v1/admin/payments?status=NOPE').set(bearer(who.admin.token))).status).toBe(422);
     });

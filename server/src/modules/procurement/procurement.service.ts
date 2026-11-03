@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { BranchFilter, branchWhere } from '../../authz/branchScope.js';
+import { AppError } from '../../middleware/error.middleware.js';
 
 export class ProcurementService {
   /** Inventory for the branches in `filter` (computed by the authorization layer; never "all" for branch-scoped staff). */
@@ -37,11 +38,17 @@ export class ProcurementService {
         }
       });
 
-      const adjustment = data.type === 'PURCHASE_RECEIPT' || data.type === 'TRANSFER_IN' ? data.quantity : -data.quantity;
-      await tx.inventoryItem.update({
-        where: { id: data.inventoryItemId },
-        data: { quantityOnHand: { increment: adjustment } }
-      });
+      const increase = data.type === 'PURCHASE_RECEIPT' || data.type === 'TRANSFER_IN';
+      if (increase) {
+        await tx.inventoryItem.update({ where: { id: data.inventoryItemId }, data: { quantityOnHand: { increment: data.quantity } } });
+      } else {
+        // Stock can never go negative: the conditional update is atomic with the movement row (rolled back together).
+        const res = await tx.inventoryItem.updateMany({
+          where: { id: data.inventoryItemId, quantityOnHand: { gte: data.quantity } },
+          data: { quantityOnHand: { decrement: data.quantity } }
+        });
+        if (res.count === 0) throw new AppError('Insufficient stock', 409, 'INSUFFICIENT_STOCK');
+      }
 
       return movement;
     });

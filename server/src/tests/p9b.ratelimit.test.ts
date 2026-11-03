@@ -67,9 +67,10 @@ describe('P9B - Delivery Code rate limits (secondary to the persisted per-proof 
     expect((await regen(4)).status).toBe(404);
   });
 
-  it('driver verification is limited per user (the PERSISTED per-proof lock is what actually bounds guessing)', async () => {
-    const v = () => request(app).post(`/api/v1/delivery/orders/${missing(5)}/verify-delivery`).set(auth('d')).send({ code: '123456' });
-    expect([(await v()).status, (await v()).status, (await v()).status]).toEqual([404, 404, 429]);
+  it('SUPER_ADMIN code verification is limited per user (the PERSISTED per-proof lock is what actually bounds guessing); the removed driver verify route is 404', async () => {
+    const v = () => request(app).post(`/api/v1/admin/delivery/orders/${missing(5)}/verify-delivery`).set(auth('admin')).send({ code: '123456' });
+    expect([(await v()).status, (await v()).status, (await v()).status]).toEqual([403, 403, 429]); // no step-up proof: counted before the step-up check; RL_DELIVERY_VERIFY_MAX = 2
+    expect((await request(app).post(`/api/v1/delivery/orders/${missing(5)}/verify-delivery`).set(auth('d')).send({ code: '123456' })).status).toBe(404);
   });
 
   it('the override limiter sits before the step-up check and is the tightest', async () => {

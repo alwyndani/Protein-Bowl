@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { DietPlanRequest, CustomerProfile, RecipeItem, ComboOffer } from '../../types';
-import { INITIAL_RECIPES, INITIAL_COMBO_OFFERS } from '../../data/mockData';
+import { ALL_RECIPES } from '../../data/recipeDatabase';
 import { DietService } from '../../services/dietService';
 import { Sparkles, Check, RefreshCw, X, Calendar, Utensils, Flame, ChevronRight, AlertCircle, ShoppingBag } from 'lucide-react';
 
 interface CustomerPlanReviewProps {
   request: DietPlanRequest | null;
   profile: CustomerProfile;
-  onApproveAndCheckout: (req: DietPlanRequest) => void;
+  /** Called only after the server accepted the approval. There is no payment step for diet plans. */
+  onApproved: (req: DietPlanRequest) => void;
   onRequestRevision: (reqId: string, notes: string) => void;
   onRejectPlan: (reqId: string) => void;
   onOpenMenuModal: (recipe: RecipeItem) => void;
@@ -16,7 +17,7 @@ interface CustomerPlanReviewProps {
 export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
   request,
   profile,
-  onApproveAndCheckout,
+  onApproved,
   onRequestRevision,
   onRejectPlan,
   onOpenMenuModal
@@ -24,6 +25,7 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
   const [selectedDayTab, setSelectedDayTab] = useState(1);
   const [revisionNote, setRevisionNote] = useState('');
   const [showRevisionBox, setShowRevisionBox] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   if (!request) {
     return (
@@ -37,7 +39,7 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
     );
   }
 
-  const recipeMap = new Map(INITIAL_RECIPES.map((r) => [r.id, r]));
+  const recipeMap = new Map(ALL_RECIPES.map((r) => [r.id, r]));
   const dayPlans = request.dayWisePlan || [];
   const activeDayPlan = dayPlans.find((d) => d.dayNumber === selectedDayTab) || dayPlans[0];
 
@@ -60,7 +62,7 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
 
           <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl text-center">
             <span className="text-[10px] uppercase font-bold text-emerald-200 block">Subscription Total</span>
-            <span className="text-2xl font-black text-emerald-300">₹{(request.calculatedPrice || 14999).toLocaleString()}</span>
+            <span className="text-2xl font-black text-emerald-300">{request.calculatedPrice ? `₹${request.calculatedPrice.toLocaleString()}` : 'Not priced yet'}</span>
             <span className="text-[10px] text-emerald-200 block">{request.durationDays} Days Duration</span>
           </div>
         </div>
@@ -201,12 +203,15 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
             </button>
             <button
               onClick={async () => {
+                setActionError(null);
                 try {
                   if (request.id) {
-                    await DietService.requestRevision(request.id, revisionNote);
+                    const res = await DietService.requestRevision(request.id, revisionNote);
+                    if (!res.success) throw new Error(res.message || 'not sent');
                   }
-                } catch (e) {
-                  console.error('Request revision API error:', e);
+                } catch {
+                  setActionError('We could not send your change request. Please try again.');
+                  return;
                 }
                 onRequestRevision(request.id, revisionNote);
                 setShowRevisionBox(false);
@@ -218,6 +223,13 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
           </div>
         </div>
       )}
+
+      {request.status === 'approved' && (
+        <p role="status" className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+          You approved this plan. Your nutritionist has been notified. Nothing was charged: there is no payment for diet plans in the app.
+        </p>
+      )}
+      {actionError && <p role="alert" className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{actionError}</p>}
 
       {/* Decision Action Buttons */}
       <div className="bg-white p-6 rounded-3xl border border-stone-200 shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -248,57 +260,25 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
           <button
             type="button"
             onClick={async () => {
+              // Only continue when the server accepted the approval: a failed call must never look like success.
+              setActionError(null);
               try {
                 if (request.id) {
-                  await DietService.approvePlan(request.id, 'Approved by customer');
+                  const res = await DietService.approvePlan(request.id, 'Approved by customer');
+                  if (!res.success) throw new Error(res.message || 'not approved');
                 }
-              } catch (e) {
-                console.error('Approve plan API error:', e);
+              } catch {
+                setActionError('We could not confirm your approval. Please try again.');
+                return;
               }
-              onApproveAndCheckout(request);
+              onApproved(request);
             }}
+            disabled={request.status === 'approved'}
             className="px-6 py-3 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-sm transition-all shadow-md flex items-center gap-2"
           >
             <Check className="w-4 h-4" />
             <span>Approve & Confirm Diet Plan</span>
           </button>
-        </div>
-      </div>
-
-      {/* Combo Offers Options Banner */}
-      <div className="space-y-4 pt-4">
-        <h3 className="text-sm font-extrabold uppercase tracking-wider text-stone-600">
-          Available Subscription Combos & Value Offers
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {INITIAL_COMBO_OFFERS.map((combo) => (
-            <div
-              key={combo.id}
-              className="bg-white rounded-2xl p-5 border border-stone-200 shadow-2xs hover:shadow-md transition-all flex flex-col justify-between"
-            >
-              <div>
-                {combo.popularTag && (
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md mb-2 inline-block">
-                    {combo.popularTag}
-                  </span>
-                )}
-                <h4 className="font-black text-stone-900 text-base">{combo.title}</h4>
-                <p className="text-xs text-stone-500 mt-1 leading-relaxed">{combo.subtitle}</p>
-              </div>
-
-              <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between">
-                <div>
-                  <span className="text-xs text-stone-400 line-through">₹{Math.round(combo.price * 1.25)}</span>
-                  <div className="text-xl font-black text-emerald-800">₹{combo.price.toLocaleString()}</div>
-                </div>
-
-                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg">
-                  Save {combo.discountPct}%
-                </span>
-              </div>
-            </div>
-          ))}
         </div>
       </div>
 

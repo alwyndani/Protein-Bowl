@@ -78,10 +78,10 @@ export function toCustomerAccountDto(a: AccountRow) {
   };
 }
 
-/** Staff view of an account. MD (viewer 'MD') never receives the student id card or the customer's phone. */
+/** Staff view of an account (SUPER_ADMIN): includes the student id card and the customer's phone and email. */
 export function toAdminAccountDto(
   a: AccountRow & { customerProfile: { fullName: string; user: { phone: string | null; email: string } | null } },
-  viewer: 'ADMIN' | 'MD'
+  viewer: 'ADMIN'
 ) {
   return {
     id: a.id,

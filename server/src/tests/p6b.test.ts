@@ -101,7 +101,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     await makeUser('admin2', [RoleEnum.SUPER_ADMIN]);
     await makeUser('md', [RoleEnum.MD], { withProfile: true, branchIds: [branchA.id] });
     await makeUser('chef', [RoleEnum.CHEF], { withProfile: true, branchIds: [branchA.id] });
-    await makeUser('pos', [RoleEnum.POS], { withProfile: true, branchIds: [branchA.id] });
+    await makeUser('pos', [RoleEnum.PROCUREMENT], { withProfile: true, branchIds: [branchA.id] });
     await makeUser('customer', [RoleEnum.CUSTOMER]);
   });
 
@@ -126,10 +126,10 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect((await request(app).get('/api/v1/admin/staff')).status).toBe(401);
     });
 
-    it('customers cannot even read branch admin data; MD can read branches but not mutate', async () => {
+    it('customers cannot even read branch admin data; a retired MD account has no access at all', async () => {
       expect((await request(app).get('/api/v1/admin/branches').set(bearer(users.customer.token))).status).toBe(403);
-      expect((await request(app).get('/api/v1/admin/branches').set(bearer(users.md.token))).status).toBe(200);
-      expect((await request(app).get(`/api/v1/admin/branches/${branchA.id}`).set(bearer(users.md.token))).status).toBe(200);
+      expect((await request(app).get('/api/v1/admin/branches').set(bearer(users.md.token))).status).toBe(403);
+      expect((await request(app).get(`/api/v1/admin/branches/${branchA.id}`).set(bearer(users.md.token))).status).toBe(403);
       expect((await request(app).patch(`/api/v1/admin/branches/${branchA.id}`).set(bearer(users.md.token)).send({ name: 'Hacked' })).status).toBe(403);
     });
 
@@ -384,9 +384,9 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     });
 
     it('server-side filters and pagination work, and unsafe pagination is rejected', async () => {
-      const byRole = await request(app).get(`/api/v1/admin/staff?role=POS&branchId=${branchA.id}&pageSize=100`).set(bearer(users.admin1.token));
+      const byRole = await request(app).get(`/api/v1/admin/staff?role=PROCUREMENT&branchId=${branchA.id}&pageSize=100`).set(bearer(users.admin1.token));
       expect(byRole.status).toBe(200);
-      expect(byRole.body.data.items.every((s: any) => s.roles.some((r: any) => r.role === 'POS'))).toBe(true);
+      expect(byRole.body.data.items.every((s: any) => s.roles.some((r: any) => r.role === 'PROCUREMENT'))).toBe(true);
       expect(byRole.body.data.items.map((s: any) => s.id)).toContain(users.pos.id);
 
       const search = await request(app).get(`/api/v1/admin/staff?q=${encodeURIComponent(users.pos.email)}`).set(bearer(users.admin1.token));
@@ -430,7 +430,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     let target: { id: string; email: string; token: string };
 
     beforeAll(async () => {
-      const c = await createStaff({ roles: ['CHEF', 'POS'], branchIds: [branchA.id] });
+      const c = await createStaff({ roles: ['CHEF', 'PROCUREMENT'], branchIds: [branchA.id] });
       const { accessToken } = await acceptAndLogin(c.rawToken, c.staff.email);
       target = { id: c.staff.id, email: c.staff.email, token: accessToken };
     });
@@ -444,7 +444,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
         expect(revoke.status, role).toBe(403);
       }
       const roles = (await prisma.userRoleAssignment.findMany({ where: { userId: target.id } })).map((r) => r.role).sort();
-      expect(roles).toEqual(['CHEF', 'POS']);
+      expect(roles).toEqual(['CHEF', 'PROCUREMENT']);
       expect((await request(app).post(`/api/v1/admin/staff/${target.id}/roles`).set(await as('admin1')).send({ role: 'WIZARD' })).status).toBe(422);
     });
 
@@ -452,8 +452,8 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       const self = users.admin1.id;
       const h = await as('admin1');
       for (const res of [
-        await request(app).post(`/api/v1/admin/staff/${self}/roles`).set(h).send({ role: 'MD' }),
-        await request(app).delete(`/api/v1/admin/staff/${self}/roles/MD`).set(h),
+        await request(app).post(`/api/v1/admin/staff/${self}/roles`).set(h).send({ role: 'TRAINER' }),
+        await request(app).delete(`/api/v1/admin/staff/${self}/roles/TRAINER`).set(h),
         await request(app).post(`/api/v1/admin/staff/${self}/branches`).set(h).send({ branchId: branchA.id }),
         await request(app).delete(`/api/v1/admin/staff/${self}/branches/${branchA.id}`).set(h),
         await request(app).post(`/api/v1/admin/staff/${self}/deactivate`).set(h).send({ reason: 'self lockout attempt' })
@@ -465,22 +465,22 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     });
 
     it('16/17. assigning twice is safe; role changes take effect on the next request with the old token', async () => {
-      // CHEF + POS today: POS endpoints work
-      expect((await request(app).get('/api/v1/pos/transactions').set(bearer(target.token))).status).toBe(200);
+      // CHEF + PROCUREMENT today: procurement endpoints work
+      expect((await request(app).get('/api/v1/procurement/items').set(bearer(target.token))).status).toBe(200);
 
-      const revoke = await request(app).delete(`/api/v1/admin/staff/${target.id}/roles/POS`).set(await as('admin1'));
+      const revoke = await request(app).delete(`/api/v1/admin/staff/${target.id}/roles/PROCUREMENT`).set(await as('admin1'));
       expect(revoke.status).toBe(200);
       expect(revoke.body.data.changed).toBe(true);
-      expect((await request(app).get('/api/v1/pos/transactions').set(bearer(target.token))).status).toBe(403); // same token, immediate
+      expect((await request(app).get('/api/v1/procurement/items').set(bearer(target.token))).status).toBe(403); // same token, immediate
 
-      const assign = await request(app).post(`/api/v1/admin/staff/${target.id}/roles`).set(await as('admin1')).send({ role: 'POS' });
+      const assign = await request(app).post(`/api/v1/admin/staff/${target.id}/roles`).set(await as('admin1')).send({ role: 'PROCUREMENT' });
       expect(assign.body.data.changed).toBe(true);
-      expect((await request(app).get('/api/v1/pos/transactions').set(bearer(target.token))).status).toBe(200);
+      expect((await request(app).get('/api/v1/procurement/items').set(bearer(target.token))).status).toBe(200);
 
-      const dupe = await request(app).post(`/api/v1/admin/staff/${target.id}/roles`).set(await as('admin1')).send({ role: 'POS' });
+      const dupe = await request(app).post(`/api/v1/admin/staff/${target.id}/roles`).set(await as('admin1')).send({ role: 'PROCUREMENT' });
       expect(dupe.status).toBe(200);
       expect(dupe.body.data.changed).toBe(false);
-      expect(await prisma.userRoleAssignment.count({ where: { userId: target.id, role: 'POS' } })).toBe(1);
+      expect(await prisma.userRoleAssignment.count({ where: { userId: target.id, role: 'PROCUREMENT' } })).toBe(1);
       expect(await prisma.auditLog.count({ where: { action: 'ROLE_ASSIGNED', entityId: target.id } })).toBe(1); // duplicate not audited
     });
 
@@ -504,7 +504,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       const mixed = await prisma.user.create({
         data: { email: email('mixed'), passwordHash: 'x', roles: { create: [{ role: RoleEnum.CUSTOMER }, { role: RoleEnum.CHEF }] } }
       });
-      const res = await request(app).post(`/api/v1/admin/staff/${mixed.id}/roles`).set(await as('admin1')).send({ role: 'POS' });
+      const res = await request(app).post(`/api/v1/admin/staff/${mixed.id}/roles`).set(await as('admin1')).send({ role: 'PROCUREMENT' });
       expect(res.status).toBe(409);
       expect(res.body.error).toBe('MIXED_IDENTITY');
       await prisma.user.delete({ where: { id: mixed.id } });
@@ -514,7 +514,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect((await request(app).post(`/api/v1/admin/staff/00000000-0000-4000-8000-000000000000/roles`).set(await as('admin1')).send({ role: 'CHEF' })).status).toBe(404);
       const c = await createStaff();
       await prisma.user.update({ where: { id: c.staff.id }, data: { deletedAt: new Date() } });
-      expect((await request(app).post(`/api/v1/admin/staff/${c.staff.id}/roles`).set(await as('admin1')).send({ role: 'POS' })).status).toBe(409);
+      expect((await request(app).post(`/api/v1/admin/staff/${c.staff.id}/roles`).set(await as('admin1')).send({ role: 'PROCUREMENT' })).status).toBe(409);
     });
   });
 
@@ -677,8 +677,8 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
   describe('password step-up', () => {
     const sensitive = (id: string) => [
       { name: 'create staff', call: () => request(app).post('/api/v1/admin/staff').send({ email: email('s'), fullName: 'Step Up', designation: 'Cook', roles: ['CHEF'], branchIds: [branchA.id] }) },
-      { name: 'assign role', call: () => request(app).post(`/api/v1/admin/staff/${id}/roles`).send({ role: 'POS' }) },
-      { name: 'revoke role', call: () => request(app).delete(`/api/v1/admin/staff/${id}/roles/POS`) },
+      { name: 'assign role', call: () => request(app).post(`/api/v1/admin/staff/${id}/roles`).send({ role: 'PROCUREMENT' }) },
+      { name: 'revoke role', call: () => request(app).delete(`/api/v1/admin/staff/${id}/roles/PROCUREMENT`) },
       { name: 'deactivate', call: () => request(app).post(`/api/v1/admin/staff/${id}/deactivate`).send({ reason: 'step up test' }) },
       { name: 'activate', call: () => request(app).post(`/api/v1/admin/staff/${id}/activate`).send({ reason: 'step up test' }) },
       { name: 'reissue invitation', call: () => request(app).post(`/api/v1/admin/staff/${id}/invitation`) },
@@ -701,7 +701,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
     it('28. invalid, expired, foreign, wrong-purpose and credential-stale proofs all fail', async () => {
       const t = await createStaff();
       const call = (header: string | undefined) => {
-        const r = request(app).post(`/api/v1/admin/staff/${t.staff.id}/roles`).set(bearer(users.admin1.token)).send({ role: 'POS' });
+        const r = request(app).post(`/api/v1/admin/staff/${t.staff.id}/roles`).set(bearer(users.admin1.token)).send({ role: 'PROCUREMENT' });
         return header === undefined ? r : r.set('X-Step-Up-Token', header);
       };
 
@@ -722,7 +722,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       // a real proof stops working once the password changes
       const mutable = await makeUser('mutableAdmin', [RoleEnum.SUPER_ADMIN]);
       const proof = (await request(app).post('/api/v1/admin/step-up').set(bearer(users.mutableAdmin.token)).send({ password: ADMIN_PASSWORD })).body.data.stepUpToken;
-      const okCall = () => request(app).post(`/api/v1/admin/staff/${t.staff.id}/roles`).set(bearer(users.mutableAdmin.token)).set('X-Step-Up-Token', proof).send({ role: 'POS' });
+      const okCall = () => request(app).post(`/api/v1/admin/staff/${t.staff.id}/roles`).set(bearer(users.mutableAdmin.token)).set('X-Step-Up-Token', proof).send({ role: 'PROCUREMENT' });
       expect((await okCall()).status).toBe(200);
       await prisma.user.update({ where: { id: mutable.id }, data: { passwordHash: await bcrypt.hash('Brand-New#Admin-Pass-77', 10) } });
       expect((await okCall()).status).toBe(403);
@@ -820,14 +820,13 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect((await request(app).get('/api/v1/staff/permissions').set(bearer(users.customer.token))).status).toBe(403);
     });
 
-    it('39b. SUPER_ADMIN and MD see their global scopes; the catalogue is descriptive and exposes no secrets', async () => {
+    it('39b. SUPER_ADMIN sees its global scope, a retired MD account sees nothing; the catalogue is descriptive and exposes no secrets', async () => {
       const admin = await request(app).get('/api/v1/staff/me').set(bearer(users.admin1.token));
       expect(admin.body.data.scope).toEqual({ isGlobal: true, isGlobalRead: false });
       expect(admin.body.data.permissions).toEqual(expect.arrayContaining(['staff:admin', 'audit:read']));
       const md = await request(app).get('/api/v1/staff/me').set(bearer(users.md.token));
-      expect(md.body.data.scope).toEqual({ isGlobal: false, isGlobalRead: true });
-      expect(md.body.data.permissions).not.toContain('staff:admin');
-      expect(md.body.data.permissions).not.toContain('audit:read');
+      expect(md.status).toBe(403);
+      expect(md.body.error).toBe('NO_APPROVED_ROLE');
 
       const catalogue = await request(app).get('/api/v1/staff/permissions').set(bearer(users.chef.token));
       expect(catalogue.status).toBe(200);
@@ -835,6 +834,7 @@ describe('P6B — staff administration APIs & secure onboarding', () => {
       expect(roles).toContain('CHEF');
       expect(roles).not.toContain('CUSTOMER');
       expect(catalogue.body.data.roles.find((r: any) => r.role === 'SUPER_ADMIN').assignableThroughAdminApi).toBe(false);
+      expect([...roles].sort()).toEqual(['CHEF', 'NUTRITIONIST', 'PROCUREMENT', 'SUPER_ADMIN', 'TRAINER']); // only approved staff roles are listed
     });
   });
 

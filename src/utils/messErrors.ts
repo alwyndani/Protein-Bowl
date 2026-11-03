@@ -1,4 +1,5 @@
 import { ApiRequestError } from '../services/apiClient';
+import { NO_APPROVED_ROLE_COPY } from './authErrors';
 
 /**
  * Customer-facing copy for the Kerala Mess API. Server `message` text is never rendered directly: every known code maps to fixed copy,
@@ -16,6 +17,8 @@ const TABLE: Record<string, { action: MessErrorAction; message: string }> = {
   UNAUTHORIZED: { action: 'SIGN_IN', message: 'Your session has expired. Please sign in again.' },
   TOKEN_EXPIRED: { action: 'SIGN_IN', message: 'Your session has expired. Please sign in again.' },
   ACCOUNT_INACTIVE: { action: 'SIGN_IN', message: 'Your session has ended. Please sign in again.' },
+  // The backend now refuses a retired MESS_CUSTOMER account at authentication (403 NO_APPROVED_ROLE); the screen treats it like the old legacy-role case: fixed message, no forms.
+  NO_APPROVED_ROLE: { action: 'LEGACY_ROLE', message: NO_APPROVED_ROLE_COPY },
   MESS_CUSTOMER_LEGACY_ROLE: { action: 'LEGACY_ROLE', message: 'This account uses a legacy Kerala Mess role. Please contact Protein Bowl support to move it to a customer account.' },
   FORBIDDEN: { action: 'NONE', message: 'This account cannot use Kerala Mess.' },
   SERVICE_POINT_UNAVAILABLE: { action: 'REFRESH', message: 'That service point is not available any more. Please choose another one.' },

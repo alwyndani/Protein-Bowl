@@ -56,8 +56,6 @@ const envSchema = z.object({
   RL_DELIVERY_READ_WINDOW_MS: positiveInt(60 * 1000),
   RL_DELIVERY_ACTION_MAX: positiveInt(60),
   RL_DELIVERY_ACTION_WINDOW_MS: positiveInt(60 * 1000),
-  RL_DELIVERY_ASSIGN_MAX: positiveInt(30),
-  RL_DELIVERY_ASSIGN_WINDOW_MS: positiveInt(15 * 60 * 1000),
   // P9B Delivery Code: customer state reads, customer issue/regenerate (per user AND order, secondary to the persisted limits), driver verify, SUPER_ADMIN override. Optional; defaults are safe.
   RL_DELIVERY_CODE_READ_MAX: positiveInt(60),
   RL_DELIVERY_CODE_READ_WINDOW_MS: positiveInt(60 * 1000),
@@ -101,7 +99,20 @@ const envSchema = z.object({
   // Staff onboarding. Until an email provider exists the ONLY supported mode is "manual": the one-time setup link is
   // returned once to the authorizing SUPER_ADMIN, who hands it over out of band. Nothing is emailed.
   // REQUIRED in production (startup fails without it); development/test default to "manual". Unsupported values fail validation.
-  INVITE_DELIVERY: z.enum(['manual']).optional(),
+  INVITE_DELIVERY: z.enum(['manual', 'email']).optional(),
+  // Transactional email. "none" = no email is ever sent (password reset is then unavailable, 503); "log" = development only (nothing leaves the process);
+  // "resend" = Resend HTTPS API (needs RESEND_API_KEY + EMAIL_FROM). REQUIRED explicitly in production; "log" is refused there.
+  EMAIL_PROVIDER: z.enum(['none', 'log', 'resend']).optional(),
+  EMAIL_FROM: z.string().trim().min(3).max(200).optional(),
+  RESEND_API_KEY: z.string().trim().min(10).optional(),
+  // Public web origin used in emailed links (defaults to STAFF_INVITE_BASE_URL, then the first allowed CORS origin).
+  WEB_BASE_URL: z.string().url().optional(),
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(10).max(24 * 60).default(60),
+  // Unpaid online orders (PENDING, no payment evidence at all) are cancelled by the expiry job after this many minutes of inactivity
+  // (counted from the later of order creation and the last payment-session activity). 0 disables expiry. Business default proposal: 15.
+  UNPAID_ORDER_EXPIRY_MINUTES: z.coerce.number().int().min(0).max(24 * 60).default(15),
+  // Minimum seconds between reset emails for one account (stops inbox flooding; the response is identical either way).
+  PASSWORD_RESET_COOLDOWN_SECONDS: z.coerce.number().int().min(0).max(3600).default(60),
   // Invitation lifetime in hours (default 72h = 3 days; max 14 days).
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 14).default(72),
   // Public web origin used to build the setup link (defaults to the first allowed CORS origin).
@@ -156,18 +167,53 @@ function resolveAllowedOrigins(data: z.infer<typeof envSchema>): string[] {
   return parseAllowedOrigins(data.CLIENT_URL);
 }
 
-function resolveInviteDelivery(data: z.infer<typeof envSchema>): 'manual' {
-  // Production must be explicit: delivery of staff invitations is a conscious deployment decision, never a silent default.
-  // Development/test default to "manual". (Unsupported values are rejected by the schema above.)
-  if (!data.INVITE_DELIVERY && data.NODE_ENV === 'production') {
-    throw new Error("INVITE_DELIVERY must be set explicitly in production (supported: 'manual' - no email is sent; the one-time setup link is returned once to the SUPER_ADMIN)");
+/** Production signing secrets must be strong and different from each other (development/test keep the 16-character minimum of the schema). */
+function assertProductionSecrets(data: z.infer<typeof envSchema>): void {
+  if (data.NODE_ENV !== 'production') return;
+  if (data.JWT_ACCESS_SECRET.length < 32 || data.JWT_REFRESH_SECRET.length < 32) {
+    throw new Error('In production JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must each be at least 32 characters');
   }
-  return data.INVITE_DELIVERY ?? 'manual';
+  if (data.JWT_ACCESS_SECRET === data.JWT_REFRESH_SECRET) {
+    throw new Error('In production JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values');
+  }
+  // Development / test / end-to-end secrets are public (they sit in the repository): a production deployment must never run on one of them.
+  if (DEV_SECRET_MARKERS.test(data.JWT_ACCESS_SECRET) || DEV_SECRET_MARKERS.test(data.JWT_REFRESH_SECRET)) {
+    throw new Error('In production the JWT secrets must not be development, test or placeholder values (generate fresh random secrets)');
+  }
 }
+
+const DEV_SECRET_MARKERS = /e2e-isolated|valid-only-for-this-local-run|h1-test-|test[_-](access|refresh)[_-]secret|dev(elopment)?[_-](access|refresh)|changeme|change[_-]me|your[_-]|placeholder|replace[_-]me|super_secret|0123456789|1234567890/i;
+
+function resolveEmailProvider(data: z.infer<typeof envSchema>): 'none' | 'log' | 'resend' {
+  const production = data.NODE_ENV === 'production';
+  if (production && !data.EMAIL_PROVIDER) {
+    throw new Error("EMAIL_PROVIDER must be set explicitly in production ('resend', or 'none' to disable password-reset email)");
+  }
+  const provider = data.EMAIL_PROVIDER ?? 'log';
+  if (production && provider === 'log') throw new Error("EMAIL_PROVIDER 'log' is development-only and is refused in production");
+  if (provider === 'resend' && (!data.RESEND_API_KEY || !data.EMAIL_FROM)) {
+    throw new Error('EMAIL_PROVIDER=resend requires RESEND_API_KEY and EMAIL_FROM');
+  }
+  return provider;
+}
+
+function resolveInviteDelivery(data: z.infer<typeof envSchema>): 'manual' | 'email' {
+  // Production must be explicit: delivery of staff invitations is a conscious deployment decision, never a silent default.
+  // Development/test default to "manual". 'email' needs a real sending provider (not 'none').
+  if (!data.INVITE_DELIVERY && data.NODE_ENV === 'production') {
+    throw new Error("INVITE_DELIVERY must be set explicitly in production ('manual': the one-time link is returned once to the SUPER_ADMIN; 'email': it is also emailed)");
+  }
+  const mode = data.INVITE_DELIVERY ?? 'manual';
+  if (mode === 'email' && (data.EMAIL_PROVIDER ?? 'log') === 'none') throw new Error("INVITE_DELIVERY=email requires EMAIL_PROVIDER other than 'none'");
+  return mode;
+}
+
+assertProductionSecrets(_env.data);
 
 export const env = {
   ..._env.data,
   inviteDelivery: resolveInviteDelivery(_env.data),
+  emailProvider: resolveEmailProvider(_env.data),
   allowedOrigins: resolveAllowedOrigins(_env.data),
   rateLimitDisabled: _env.data.NODE_ENV !== 'production' && _env.data.RL_DISABLED === 'true'
 };

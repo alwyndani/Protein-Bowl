@@ -8,11 +8,9 @@ import type {
   MessAdminSubscription,
   MessCancelResult,
   MessDeliveryMonitor,
-  MessDriverRuns,
   MessHandoverStatus,
   MessIssuedHandoverCode,
   MessRun,
-  MessStopFailureCode,
   MessStopOverrideReason,
   MessKitchenBatch,
   MessKitchenDemand,
@@ -110,27 +108,7 @@ export class MessService {
     return await ApiClient.requestData(`/mess/kitchen/batches/${encodeURIComponent(batchId)}/release`, { method: 'POST', body: JSON.stringify({}) });
   }
 
-  // ------------------------------------------------------------------ P10C bulk delivery (DELIVERY actions; SUPER_ADMIN / MD read-only monitor)
-  public static async deliveryRuns(branchId?: string): Promise<MessDriverRuns> {
-    return await ApiClient.requestData(`/mess/delivery/runs${branchId ? `?branchId=${encodeURIComponent(branchId)}` : ''}`);
-  }
-  public static async claimRun(runId: string): Promise<{ changed: boolean }> {
-    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/claim`, { method: 'POST', body: JSON.stringify({}) });
-  }
-  public static async dispatchRun(runId: string): Promise<{ changed: boolean }> {
-    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/dispatch`, { method: 'POST', body: JSON.stringify({}) });
-  }
-  /** The code is sent ONLY in this body; it is never stored, logged or kept after the request. */
-  public static async verifyStop(runId: string, stopId: string, code: string): Promise<{ changed: boolean }> {
-    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/verify`, { method: 'POST', body: JSON.stringify({ code }) });
-  }
-  public static async failStop(runId: string, stopId: string, reasonCode: MessStopFailureCode, note?: string): Promise<{ changed: boolean }> {
-    const n = note?.trim();
-    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/fail`, { method: 'POST', body: JSON.stringify(n ? { reasonCode, note: n } : { reasonCode }) });
-  }
-  public static async retryStop(runId: string, stopId: string): Promise<{ changed: boolean }> {
-    return await ApiClient.requestData(`/mess/delivery/runs/${encodeURIComponent(runId)}/stops/${encodeURIComponent(stopId)}/retry`, { method: 'POST', body: JSON.stringify({}) });
-  }
+  // ------------------------------------------------------------------ P10C bulk delivery (B2a: the DELIVERY driver calls were removed; the SUPER_ADMIN monitor remains, runs are operated through messOperateService)
   public static async deliveryMonitor(branchId: string): Promise<MessDeliveryMonitor> {
     return await ApiClient.requestData(`/mess/delivery/monitor?branchId=${encodeURIComponent(branchId)}`);
   }

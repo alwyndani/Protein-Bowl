@@ -1,3 +1,4 @@
+/* B2a: driver (DELIVERY) operations removed; SUPER_ADMIN is the only operator. */
 import { Prisma, RoleEnum } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
@@ -22,7 +23,8 @@ import {
 } from './messPolicy.js';
 
 /**
- * Kerala Mess BULK DELIVERY (P10C). A CHEF releases a READY kitchen batch into ONE run with one stop per frozen service point; ONE DELIVERY employee owns the run;
+ * Kerala Mess BULK DELIVERY (P10C; B2a). A CHEF releases a READY kitchen batch into ONE run with one stop per frozen service point; ONE SUPER_ADMIN operator owns the run
+ * (the DELIVERY driver surface was removed: claim, dispatch, handover, failure and retry are administrator operations, and a run a legacy driver still owns is taken over);
  * a stop is handed over all-or-nothing with a code that only a resident CUSTOMER of that stop can obtain. Entirely separate from the P9 per-order delivery
  * (no DeliveryAssignment / DeliveryProof / DeliveryAttempt, no Order). It performs NO financial mutation.
  *
@@ -33,18 +35,8 @@ import {
  */
 type Tx = Prisma.TransactionClient;
 
-export interface DriverCaller {
-  userId: string;
-  employeeProfileId: string;
-  branchIds: string[];
-}
-
-/** A run that is not visible to the caller (foreign branch, claimed by someone else, unknown): ONE indistinguishable 404. */
-export class RunNotVisible extends AppError {
-  constructor(public readonly existed: boolean, public readonly mode: string) {
-    super('Delivery run not found', 404, 'NOT_FOUND');
-  }
-}
+type Operator = { kind: 'ADMIN'; userId: string; roles: readonly string[] };
+type AdminRunRow = { id: string; status: string; branchId: string; mealDate: Date; claimedByEmployeeId: string | null; claimedByUserId: string | null };
 
 const lockRun = (tx: Tx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_delivery_runs" WHERE "id" = ${id} FOR UPDATE`;
 const lockStop = (tx: Tx, id: string) => tx.$queryRaw`SELECT "id" FROM "mess_delivery_stops" WHERE "id" = ${id} FOR UPDATE`;
@@ -60,14 +52,14 @@ const STOP_SELECT = {
   handedOverAt: true, handoverMethod: true, closedAt: true
 } as const;
 const RUN_SELECT = {
-  id: true, branchId: true, mealDate: true, slot: true, status: true, stopCount: true, mealCount: true, releasedAt: true, claimedAt: true, dispatchedAt: true, completedAt: true, closedAt: true, claimedByEmployeeId: true,
+  id: true, branchId: true, mealDate: true, slot: true, status: true, stopCount: true, mealCount: true, releasedAt: true, claimedAt: true, dispatchedAt: true, completedAt: true, closedAt: true, claimedByEmployeeId: true, claimedByUserId: true,
   branch: { select: { id: true, code: true, name: true } },
   claimedBy: { select: { fullName: true, employeeCode: true } },
   stops: { orderBy: { servicePointName: 'asc' as const }, select: STOP_SELECT }
 } as const;
 type StopRow = Prisma.MessDeliveryStopGetPayload<{ select: typeof STOP_SELECT }>;
 type RunRow = Prisma.MessDeliveryRunGetPayload<{ select: typeof RUN_SELECT }>;
-export type DeliveryView = 'DRIVER' | 'ADMIN' | 'MD';
+export type DeliveryView = 'ADMIN';
 
 export type ProofState = 'NOT_AVAILABLE' | 'CODE_NOT_ISSUED' | 'READY_FOR_VERIFICATION' | 'LOCKED' | 'CODE_BLOCKED' | 'CODE_EXPIRED' | 'VERIFIED';
 function proofState(s: StopRow, now: Date): ProofState {
@@ -97,7 +89,11 @@ export function toStopDto(s: StopRow, view: DeliveryView, now = new Date()) {
   };
 }
 
-export function toRunDto(r: RunRow, view: DeliveryView, now = new Date()) {
+/**
+ * `exposeDriverId` adds the owning driver's employee id to the `driver` object. It exists ONLY so a SUPER_ADMIN can send it back as `expectedEmployeeId` when taking
+ * the run over (the server compares it under the run lock); it is set by the SUPER_ADMIN monitor and the SUPER_ADMIN operate responses, never for a driver or for the CHEF release.
+ */
+export function toRunDto(r: RunRow, view: DeliveryView, now = new Date(), exposeDriverId = false) {
   return {
     id: r.id,
     branch: r.branch,
@@ -111,12 +107,11 @@ export function toRunDto(r: RunRow, view: DeliveryView, now = new Date()) {
     dispatchedAt: r.dispatchedAt ? r.dispatchedAt.toISOString() : null,
     completedAt: r.completedAt ? r.completedAt.toISOString() : null,
     closedAt: r.closedAt ? r.closedAt.toISOString() : null,
-    ...(view !== 'DRIVER' ? { driver: r.claimedBy ? { name: r.claimedBy.fullName, employeeCode: r.claimedBy.employeeCode } : null } : {}),
+    driver: r.claimedBy ? { ...(exposeDriverId && r.claimedByEmployeeId ? { employeeId: r.claimedByEmployeeId } : {}), name: r.claimedBy.fullName, employeeCode: r.claimedBy.employeeCode } : null,
+    operator: r.claimedByUserId ? ('ADMIN' as const) : null,
     stops: r.stops.map((s) => toStopDto(s, view, now))
   };
 }
-
-const DRIVER = [RoleEnum.DELIVERY];
 
 export class MessDeliveryService {
   // ================================================================================================ release (CHEF)
@@ -182,114 +177,41 @@ export class MessDeliveryService {
     return { changed: false, run: await this.loadRunDto(prisma, run.id, 'ADMIN') };
   }
 
-  private static async loadRunDto(db: Tx | typeof prisma, runId: string, view: DeliveryView) {
+  private static async loadRunDto(db: Tx | typeof prisma, runId: string, view: DeliveryView, exposeDriverId = false) {
     const row = await db.messDeliveryRun.findUniqueOrThrow({ where: { id: runId }, select: RUN_SELECT });
-    return toRunDto(row, view);
+    return toRunDto(row, view, new Date(), exposeDriverId);
   }
 
   // ================================================================================================ reads
-  public static async listForDriver(caller: DriverCaller, requestedBranchId?: string) {
-    if (requestedBranchId && !caller.branchIds.includes(requestedBranchId)) throw new AppError('You do not have access to the requested branch', 403, 'BRANCH_FORBIDDEN');
-    const branchIds = requestedBranchId ? [requestedBranchId] : caller.branchIds;
-    const today = dateFromBusiness(businessDate());
-    const [available, mine] = await Promise.all([
-      prisma.messDeliveryRun.findMany({ where: { branchId: { in: branchIds }, status: RUN_STATUS.AVAILABLE, mealDate: { gte: today } }, orderBy: [{ mealDate: 'asc' }, { slot: 'asc' }], take: 50, select: RUN_SELECT }),
-      prisma.messDeliveryRun.findMany({
-        where: {
-          branchId: { in: branchIds },
-          claimedByEmployeeId: caller.employeeProfileId,
-          OR: [{ status: { in: [RUN_STATUS.CLAIMED, RUN_STATUS.IN_TRANSIT] } }, { status: { in: [RUN_STATUS.COMPLETED, RUN_STATUS.CLOSED] }, mealDate: { gte: today } }]
-        },
-        orderBy: [{ mealDate: 'asc' }, { slot: 'asc' }],
-        take: 50,
-        select: RUN_SELECT
-      })
-    ]);
-    const now = new Date();
-    return { serverTime: now.toISOString(), today: businessDate(), available: available.map((r) => toRunDto(r, 'DRIVER', now)), mine: mine.map((r) => toRunDto(r, 'DRIVER', now)) };
-  }
-
-  /** One run the caller may see: an AVAILABLE run of an authorized branch, or their OWN run. Everything else is null (=> the same 404). */
-  public static async getForDriver(caller: DriverCaller, runId: string) {
-    const row = await prisma.messDeliveryRun.findFirst({
-      where: { id: runId, branchId: { in: caller.branchIds }, OR: [{ status: RUN_STATUS.AVAILABLE }, { claimedByEmployeeId: caller.employeeProfileId }] },
-      select: RUN_SELECT
-    });
-    return row ? toRunDto(row, 'DRIVER') : null;
-  }
-
-  /** SUPER_ADMIN / MD read-only monitor for ONE explicit branch (the last 3 business days). MD never receives free-text failure notes. */
-  public static async monitor(branchId: string, view: 'ADMIN' | 'MD') {
+  /** SUPER_ADMIN read-only monitor for ONE explicit branch (the last 3 business days). */
+  public static async monitor(branchId: string, view: 'ADMIN') {
     const since = dateFromBusiness(addDays(businessDate(), -2));
     const rows = await prisma.messDeliveryRun.findMany({ where: { branchId, mealDate: { gte: since } }, orderBy: [{ mealDate: 'desc' }, { slot: 'asc' }], take: 60, select: RUN_SELECT });
     const now = new Date();
-    return { serverTime: now.toISOString(), today: businessDate(), runs: rows.map((r) => toRunDto(r, view, now)) };
+    return { serverTime: now.toISOString(), today: businessDate(), runs: rows.map((r) => toRunDto(r, view, now, true)) }; // SUPER_ADMIN only (see the route): the driver's employee id enables a takeover
   }
 
-  // ================================================================================================ claim / dispatch (DELIVERY)
-  public static async claim(caller: DriverCaller, runId: string, context?: AuditContext) {
-    return await this.driverRun(caller, runId, 'claim', context, async (tx, run) => {
-      if (run.claimedByEmployeeId === caller.employeeProfileId && run.status !== RUN_STATUS.AVAILABLE) return { changed: false };
-      if (run.status !== RUN_STATUS.AVAILABLE) throw run.claimedByEmployeeId ? new AppError('This run was already claimed', 409, 'ALREADY_CLAIMED') : new AppError('This run is not available', 409, 'RUN_NOT_AVAILABLE');
-      if (dateToString(run.mealDate) < businessDate()) throw new AppError('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
-      const cas = await tx.messDeliveryRun.updateMany({ where: { id: run.id, status: RUN_STATUS.AVAILABLE, claimedByEmployeeId: null }, data: { status: RUN_STATUS.CLAIMED, claimedByEmployeeId: caller.employeeProfileId, claimedAt: new Date() } });
-      if (cas.count !== 1) throw new AppError('This run was already claimed', 409, 'ALREADY_CLAIMED');
-      await AuditService.record({ actor: { userId: caller.userId, roles: DRIVER }, action: 'MESS_RUN_CLAIMED', entity: 'MessDeliveryRun', entityId: run.id, payload: { driverEmployeeId: caller.employeeProfileId }, context }, tx);
-      return { changed: true };
-    });
-  }
-
-  public static async dispatch(caller: DriverCaller, runId: string, context?: AuditContext) {
-    return await this.driverRun(caller, runId, 'dispatch', context, async (tx, run) => {
-      if (run.claimedByEmployeeId !== caller.employeeProfileId) throw new RunNotVisible(true, 'write');
-      if (run.status === RUN_STATUS.IN_TRANSIT) return { changed: false };
-      if (run.status !== RUN_STATUS.CLAIMED) throw new AppError('Only a claimed run can be dispatched', 409, 'RUN_NOT_CLAIMED');
-      if (dateToString(run.mealDate) < businessDate()) throw new AppError('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
-      const cas = await tx.messDeliveryRun.updateMany({ where: { id: run.id, status: RUN_STATUS.CLAIMED, claimedByEmployeeId: caller.employeeProfileId }, data: { status: RUN_STATUS.IN_TRANSIT, dispatchedAt: new Date() } });
-      if (cas.count !== 1) throw new AppError('The run changed. Please refresh.', 409, 'RUN_CHANGED');
-      await AuditService.record({ actor: { userId: caller.userId, roles: DRIVER }, action: 'MESS_RUN_DISPATCHED', entity: 'MessDeliveryRun', entityId: run.id, payload: { driverEmployeeId: caller.employeeProfileId }, context }, tx);
-      return { changed: true };
-    });
-  }
-
-  private static async driverRun<T extends { changed: boolean }>(
-    caller: DriverCaller,
-    runId: string,
-    action: string,
-    context: AuditContext | undefined,
-    fn: (tx: Tx, run: { id: string; status: string; branchId: string; mealDate: Date; claimedByEmployeeId: string | null }) => Promise<T>
-  ) {
-    try {
-      const changed = await prisma.$transaction(async (tx) => {
-        await lockRun(tx, runId);
-        const run = await tx.messDeliveryRun.findUnique({ where: { id: runId }, select: { id: true, status: true, branchId: true, mealDate: true, claimedByEmployeeId: true } });
-        if (!run || !caller.branchIds.includes(run.branchId)) throw new RunNotVisible(!!run, 'write'); // foreign branch / unknown: one indistinguishable 404
-        return await fn(tx, run);
-      });
-      return { changed: changed.changed, run: (await this.getForDriver(caller, runId)) ?? undefined };
-    } catch (err) {
-      return await this.denyAudit(err, caller, action, runId, context);
-    }
-  }
-
-  public static async denyAudit(err: unknown, caller: DriverCaller, action: string, runId: string, context?: AuditContext): Promise<never> {
-    if (err instanceof RunNotVisible && err.existed) {
-      await AuditService.recordSafe({ actor: { userId: caller.userId, roles: DRIVER }, action: 'BRANCH_ACCESS_DENIED', entity: 'MessDeliveryRun', entityId: runId, payload: { mode: err.mode, action, code: 'RUN_NOT_VISIBLE' }, context });
-    }
-    throw err;
-  }
-
-  // ================================================================================================ stop actions (owner DELIVERY)
-  /** Locks run -> stop, enforces: caller owns the run, run IN_TRANSIT (unless `allowDone`), stop of that run. */
-  private static async lockOwned(tx: Tx, caller: DriverCaller, runId: string, stopId: string) {
+  // ================================================================================================ stop actions (SUPER_ADMIN operator)
+  /** Locks run -> stop for an ADMINISTRATOR-operated run: no driver owns it and an administrator does (a driver-owned run needs a takeover first). */
+  private static async lockAdminOperated(tx: Tx, runId: string, stopId: string) {
     await lockRun(tx, runId);
-    const run = await tx.messDeliveryRun.findUnique({ where: { id: runId }, select: { id: true, status: true, branchId: true, mealDate: true, claimedByEmployeeId: true } });
-    if (!run || !caller.branchIds.includes(run.branchId) || run.claimedByEmployeeId !== caller.employeeProfileId) throw new RunNotVisible(!!run, 'write');
+    const run = await tx.messDeliveryRun.findUnique({ where: { id: runId }, select: { id: true, status: true, branchId: true, mealDate: true, claimedByEmployeeId: true, claimedByUserId: true } });
+    if (!run) throw new AppError('Delivery run not found', 404, 'NOT_FOUND');
+    if (run.claimedByEmployeeId) throw new AppError('This run is owned by a driver. Take it over first.', 409, 'RUN_OWNED_BY_DRIVER');
+    if (!run.claimedByUserId) throw new AppError('This run has not been claimed by an administrator', 409, 'RUN_NOT_OPERATED');
     const stopPeek = await tx.messDeliveryStop.findFirst({ where: { id: stopId, runId }, select: { id: true } });
-    if (!stopPeek) throw new RunNotVisible(true, 'write');
+    if (!stopPeek) throw new AppError('Stop not found', 404, 'NOT_FOUND');
     await lockStop(tx, stopId);
     const stop = await tx.messDeliveryStop.findUniqueOrThrow({ where: { id: stopId }, select: STOP_SELECT });
     return { run, stop };
+  }
+
+  private static lockFor(tx: Tx, _op: Operator, runId: string, stopId: string) {
+    return this.lockAdminOperated(tx, runId, stopId);
+  }
+
+  private static async runFor(op: Operator, runId: string) {
+    return await this.loadRunDto(prisma, runId, 'ADMIN', true); // administrator operations are SUPER_ADMIN only
   }
 
   private static assertWorkable(run: { status: string; mealDate: Date }) {
@@ -301,71 +223,76 @@ export class MessDeliveryService {
    * Verifies the handover code. Wrong attempts are committed (counter / lock / block) and the safe error is thrown only AFTER the transaction commits.
    * `receivedAt` is when the request ARRIVED: a code submitted before a concurrent regeneration committed is stale, not a guess, and is not counted.
    */
-  public static async verify(caller: DriverCaller, runId: string, stopId: string, rawCode: string, receivedAt: Date, context?: AuditContext) {
+  /** Role simplification: a SUPER_ADMIN operating the run enters the resident's code (the SAME single implementation: attempts, lock cycles, block, expiry). */
+  public static async verifyAsAdmin(admin: { userId: string; roles: readonly string[] }, runId: string, stopId: string, rawCode: string, receivedAt: Date, context?: AuditContext) {
+    return await this.verifyAs({ kind: 'ADMIN', userId: admin.userId, roles: admin.roles }, runId, stopId, rawCode, receivedAt, context);
+  }
+
+  private static async verifyAs(op: Operator, runId: string, stopId: string, rawCode: string, receivedAt: Date, context?: AuditContext) {
     const code = normalizeHandoverCode(rawCode);
     if (!code) throw new AppError('Enter the 6-digit handover code', 422, 'INVALID_HANDOVER_CODE_FORMAT');
+    const userId = op.userId;
+    const roles: readonly string[] = op.roles;
+    const operatorPayload = { operatorUserId: op.userId };
     type Outcome = { kind: 'OK'; changed: boolean; subs: string[] } | { kind: 'ERROR'; error: AppError };
     let outcome: Outcome;
-    try {
-      outcome = await prisma.$transaction(
-        async (tx): Promise<Outcome> => {
-          const { run, stop } = await this.lockOwned(tx, caller, runId, stopId);
-          const err = (message: string, status: number, name: string): Outcome => ({ kind: 'ERROR', error: new AppError(message, status, name) });
-          if (stop.status === STOP_STATUS.HANDED_OVER) {
-            const replay = stop.handoverMethod === HANDOVER_METHOD.CODE && !!stop.codeHash && handoverHashesMatch(stop.codeHash, hashHandoverCode(stop.id, stop.codeVersion, code)) && (await tx.messDeliveryStop.count({ where: { id: stop.id, handedOverByEmployeeId: caller.employeeProfileId } })) === 1;
-            return replay ? { kind: 'OK', changed: false, subs: [] } : err('This stop has already been handed over', 409, 'ALREADY_HANDED_OVER');
-          }
-          if (stop.status === STOP_STATUS.CLOSED_UNDELIVERED) return err('This stop has been closed', 409, 'STOP_CLOSED');
-          if (stop.status === STOP_STATUS.FAILED) return err('A problem was reported for this stop. Retry it first.', 409, 'STOP_FAILED');
-          if (run.status !== RUN_STATUS.IN_TRANSIT) return err('The run is not on the road', 409, 'RUN_NOT_IN_TRANSIT');
-          if (dateToString(run.mealDate) < businessDate()) return err('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
-          if (!stop.codeHash || !stop.codeIssuedAt) return err('No resident has requested the handover code yet', 409, 'HANDOVER_CODE_NOT_ISSUED');
-          if (stop.blockedAt) return err('This handover code is blocked. A resident must generate a new one.', 409, 'HANDOVER_CODE_BLOCKED');
-          const now = new Date();
-          if (stop.lockedUntil && stop.lockedUntil.getTime() > now.getTime()) return err('Handover code entry is temporarily locked', 409, 'HANDOVER_CODE_LOCKED');
-          if (stop.codeExpiresAt && now.getTime() >= stop.codeExpiresAt.getTime()) return err('The handover code has expired. A resident must generate a new one.', 409, 'HANDOVER_CODE_EXPIRED');
+    outcome = await prisma.$transaction(
+      async (tx): Promise<Outcome> => {
+        const { run, stop } = await this.lockFor(tx, op, runId, stopId);
+        const err = (message: string, status: number, name: string): Outcome => ({ kind: 'ERROR', error: new AppError(message, status, name) });
+        if (stop.status === STOP_STATUS.HANDED_OVER) {
+          const sameVerifier = (await tx.messDeliveryStop.count({ where: { id: stop.id, handedOverByUserId: userId } })) === 1;
+          const replay = stop.handoverMethod === HANDOVER_METHOD.CODE && !!stop.codeHash && handoverHashesMatch(stop.codeHash, hashHandoverCode(stop.id, stop.codeVersion, code)) && sameVerifier;
+          return replay ? { kind: 'OK', changed: false, subs: [] } : err('This stop has already been handed over', 409, 'ALREADY_HANDED_OVER');
+        }
+        if (stop.status === STOP_STATUS.CLOSED_UNDELIVERED) return err('This stop has been closed', 409, 'STOP_CLOSED');
+        if (stop.status === STOP_STATUS.FAILED) return err('A problem was reported for this stop. Retry it first.', 409, 'STOP_FAILED');
+        if (run.status !== RUN_STATUS.IN_TRANSIT) return err('The run is not on the road', 409, 'RUN_NOT_IN_TRANSIT');
+        if (dateToString(run.mealDate) < businessDate()) return err('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
+        if (!stop.codeHash || !stop.codeIssuedAt) return err('No resident has requested the handover code yet', 409, 'HANDOVER_CODE_NOT_ISSUED');
+        if (stop.blockedAt) return err('This handover code is blocked. A resident must generate a new one.', 409, 'HANDOVER_CODE_BLOCKED');
+        const now = new Date();
+        if (stop.lockedUntil && stop.lockedUntil.getTime() > now.getTime()) return err('Handover code entry is temporarily locked', 409, 'HANDOVER_CODE_LOCKED');
+        if (stop.codeExpiresAt && now.getTime() >= stop.codeExpiresAt.getTime()) return err('The handover code has expired. A resident must generate a new one.', 409, 'HANDOVER_CODE_EXPIRED');
 
-          const match = handoverHashesMatch(stop.codeHash, hashHandoverCode(stop.id, stop.codeVersion, code));
-          if (!match) {
-            if (stop.codeIssuedAt.getTime() > receivedAt.getTime()) return err('A new handover code was generated. Ask for the latest one.', 409, 'HANDOVER_CODE_CHANGED');
-            let failed = stop.failedCodeAttempts + 1;
-            let cycles = stop.lockCycles;
-            let lockedUntil = stop.lockedUntil;
-            let blockedAt: Date | null = null;
-            let result = 'WRONG';
-            if (failed >= MAX_HANDOVER_ATTEMPTS_PER_WINDOW) {
-              failed = 0;
-              cycles += 1;
-              lockedUntil = new Date(now.getTime() + HANDOVER_LOCK_MS);
-              result = 'LOCKED';
-              if (cycles >= MAX_HANDOVER_LOCK_CYCLES) {
-                blockedAt = now;
-                result = 'BLOCKED';
-              }
+        const match = handoverHashesMatch(stop.codeHash, hashHandoverCode(stop.id, stop.codeVersion, code));
+        if (!match) {
+          if (stop.codeIssuedAt.getTime() > receivedAt.getTime()) return err('A new handover code was generated. Ask for the latest one.', 409, 'HANDOVER_CODE_CHANGED');
+          let failed = stop.failedCodeAttempts + 1;
+          let cycles = stop.lockCycles;
+          let lockedUntil = stop.lockedUntil;
+          let blockedAt: Date | null = null;
+          let result = 'WRONG';
+          if (failed >= MAX_HANDOVER_ATTEMPTS_PER_WINDOW) {
+            failed = 0;
+            cycles += 1;
+            lockedUntil = new Date(now.getTime() + HANDOVER_LOCK_MS);
+            result = 'LOCKED';
+            if (cycles >= MAX_HANDOVER_LOCK_CYCLES) {
+              blockedAt = now;
+              result = 'BLOCKED';
             }
-            await tx.messDeliveryStop.update({ where: { id: stop.id }, data: { failedCodeAttempts: failed, lockCycles: cycles, lockedUntil, ...(blockedAt ? { blockedAt } : {}) } });
-            const actor = { userId: caller.userId, roles: DRIVER };
-            await AuditService.record({ actor, action: 'MESS_HANDOVER_VERIFY_FAILED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, driverEmployeeId: caller.employeeProfileId }, context }, tx);
-            if (result !== 'WRONG') await AuditService.record({ actor, action: result === 'BLOCKED' ? 'MESS_HANDOVER_CODE_BLOCKED' : 'MESS_HANDOVER_VERIFY_LOCKED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, lockCycle: cycles }, context }, tx);
-            return result === 'BLOCKED'
-              ? err('This handover code is now blocked. A resident must generate a new one.', 409, 'HANDOVER_CODE_BLOCKED')
-              : result === 'LOCKED'
-                ? err('Too many incorrect codes. Handover code entry is locked for 15 minutes.', 409, 'HANDOVER_CODE_LOCKED')
-                : err('The handover code is not correct', 422, 'INVALID_HANDOVER_CODE');
           }
-          const subs = await this.completeStop(tx, { id: stop.id, expectedQuantity: stop.expectedQuantity }, run.id, {
-            method: HANDOVER_METHOD.CODE, handedOverByEmployeeId: caller.employeeProfileId, auditActor: { userId: caller.userId, roles: DRIVER }, context
-          });
-          return { kind: 'OK', changed: true, subs };
-        },
-        { maxWait: 10000, timeout: 30000 }
-      );
-    } catch (err) {
-      return await this.denyAudit(err, caller, 'verify', runId, context);
-    }
+          await tx.messDeliveryStop.update({ where: { id: stop.id }, data: { failedCodeAttempts: failed, lockCycles: cycles, lockedUntil, ...(blockedAt ? { blockedAt } : {}) } });
+          const actor = { userId, roles };
+          await AuditService.record({ actor, action: 'MESS_HANDOVER_VERIFY_FAILED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, ...operatorPayload }, context }, tx);
+          if (result !== 'WRONG') await AuditService.record({ actor, action: result === 'BLOCKED' ? 'MESS_HANDOVER_CODE_BLOCKED' : 'MESS_HANDOVER_VERIFY_LOCKED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, lockCycle: cycles }, context }, tx);
+          return result === 'BLOCKED'
+            ? err('This handover code is now blocked. A resident must generate a new one.', 409, 'HANDOVER_CODE_BLOCKED')
+            : result === 'LOCKED'
+              ? err('Too many incorrect codes. Handover code entry is locked for 15 minutes.', 409, 'HANDOVER_CODE_LOCKED')
+              : err('The handover code is not correct', 422, 'INVALID_HANDOVER_CODE');
+        }
+        const subs = await this.completeStop(tx, { id: stop.id, expectedQuantity: stop.expectedQuantity }, run.id, {
+          method: HANDOVER_METHOD.CODE, handedOverByUserId: userId, auditActor: { userId, roles }, context
+        });
+        return { kind: 'OK', changed: true, subs };
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
     if (outcome.kind === 'ERROR') throw outcome.error;
     if (outcome.subs.length) await MessCompletionService.attempt(outcome.subs, context);
-    return { changed: outcome.changed, run: (await this.getForDriver(caller, runId)) ?? undefined };
+    return { changed: outcome.changed, run: await this.runFor(op, runId) };
   }
 
   /**
@@ -376,7 +303,7 @@ export class MessDeliveryService {
     tx: Tx,
     stop: { id: string; expectedQuantity: number },
     runId: string,
-    p: { method: string; handedOverByEmployeeId?: string; override?: { userId: string; reasonCode: string; note: string }; auditActor: { userId: string; roles: readonly string[] }; context?: AuditContext }
+    p: { method: string; handedOverByEmployeeId?: string; handedOverByUserId?: string; override?: { userId: string; reasonCode: string; note: string }; auditActor: { userId: string; roles: readonly string[] }; context?: AuditContext }
   ): Promise<string[]> {
     const meals = await lockStopMeals(tx, stop.id);
     const open = meals.filter((m) => m.status === MEAL_STATUS.SCHEDULED);
@@ -387,6 +314,7 @@ export class MessDeliveryService {
       data: {
         status: STOP_STATUS.HANDED_OVER, handedOverAt: now, handoverMethod: p.method, failedCodeAttempts: 0,
         ...(p.handedOverByEmployeeId ? { handedOverByEmployeeId: p.handedOverByEmployeeId } : {}),
+        ...(p.handedOverByUserId ? { handedOverByUserId: p.handedOverByUserId } : {}),
         ...(p.override ? { overrideByUserId: p.override.userId, overrideReasonCode: p.override.reasonCode, overrideNote: p.override.note } : {})
       }
     });
@@ -424,60 +352,123 @@ export class MessDeliveryService {
   }
 
   /** Operational failure report. No money, no meal change: the meals stay SCHEDULED until the stop is handed over or closed at day end. */
-  public static async fail(caller: DriverCaller, runId: string, stopId: string, body: { reasonCode: string; note?: string | null }, context?: AuditContext) {
+  public static async failAsAdmin(admin: { userId: string; roles: readonly string[] }, runId: string, stopId: string, body: { reasonCode: string; note?: string | null }, context?: AuditContext) {
+    return await this.failAs({ kind: 'ADMIN', userId: admin.userId, roles: admin.roles }, runId, stopId, body, context);
+  }
+
+  private static async failAs(op: Operator, runId: string, stopId: string, body: { reasonCode: string; note?: string | null }, context?: AuditContext) {
     let changed = true;
-    try {
-      await prisma.$transaction(async (tx) => {
-        const { run, stop } = await this.lockOwned(tx, caller, runId, stopId);
-        if (stop.status === STOP_STATUS.FAILED) {
-          changed = false; // replay
-          return;
-        }
-        if (stop.status !== STOP_STATUS.PENDING) throw new AppError('This stop can no longer be reported', 409, 'STOP_NOT_PENDING');
-        this.assertWorkable(run);
-        const cas = await tx.messDeliveryStop.updateMany({
-          where: { id: stop.id, status: STOP_STATUS.PENDING },
-          data: { status: STOP_STATUS.FAILED, failedAt: new Date(), lastFailureCode: body.reasonCode, lastFailureNote: body.note ?? null, codeHash: null, codeIssuedAt: null, codeExpiresAt: null }
-        });
-        if (cas.count !== 1) throw new AppError('The stop changed. Please refresh.', 409, 'STOP_CHANGED');
-        await AuditService.record({ actor: { userId: caller.userId, roles: DRIVER }, action: 'MESS_STOP_FAILED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, reasonCode: body.reasonCode, attempt: stop.attemptCount }, context }, tx);
+    await prisma.$transaction(async (tx) => {
+      const { run, stop } = await this.lockFor(tx, op, runId, stopId);
+      if (stop.status === STOP_STATUS.FAILED) {
+        changed = false; // replay
+        return;
+      }
+      if (stop.status !== STOP_STATUS.PENDING) throw new AppError('This stop can no longer be reported', 409, 'STOP_NOT_PENDING');
+      this.assertWorkable(run);
+      const cas = await tx.messDeliveryStop.updateMany({
+        where: { id: stop.id, status: STOP_STATUS.PENDING },
+        data: { status: STOP_STATUS.FAILED, failedAt: new Date(), lastFailureCode: body.reasonCode, lastFailureNote: body.note ?? null, codeHash: null, codeIssuedAt: null, codeExpiresAt: null }
       });
-    } catch (err) {
-      return await this.denyAudit(err, caller, 'fail-stop', runId, context);
-    }
-    return { changed, run: (await this.getForDriver(caller, runId)) ?? undefined };
+      if (cas.count !== 1) throw new AppError('The stop changed. Please refresh.', 409, 'STOP_CHANGED');
+      await AuditService.record({ actor: { userId: op.userId, roles: op.roles }, action: 'MESS_STOP_FAILED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, reasonCode: body.reasonCode, attempt: stop.attemptCount, ...(op.kind === 'ADMIN' ? { operatorUserId: op.userId } : {}) }, context }, tx);
+    });
+    return { changed, run: await this.runFor(op, runId) };
   }
 
   /**
    * FAILED -> PENDING. Attempt semantics: attemptCount is the number of the CURRENT attempt (starts at 1); a retry makes it +1 and is refused once it is already
    * MAX_DELIVERY_ATTEMPTS (so at most 3 attempts exist). The previous proof dies (codeVersion + 1, hash/recipient cleared) and a fresh resident may request a new code.
    */
-  public static async retry(caller: DriverCaller, runId: string, stopId: string, context?: AuditContext) {
+  public static async retryAsAdmin(admin: { userId: string; roles: readonly string[] }, runId: string, stopId: string, context?: AuditContext) {
+    return await this.retryAs({ kind: 'ADMIN', userId: admin.userId, roles: admin.roles }, runId, stopId, context);
+  }
+
+  private static async retryAs(op: Operator, runId: string, stopId: string, context?: AuditContext) {
     let changed = true;
-    try {
-      await prisma.$transaction(async (tx) => {
-        const { run, stop } = await this.lockOwned(tx, caller, runId, stopId);
-        if (stop.status === STOP_STATUS.PENDING) {
-          changed = false;
-          return;
+    await prisma.$transaction(async (tx) => {
+      const { run, stop } = await this.lockFor(tx, op, runId, stopId);
+      if (stop.status === STOP_STATUS.PENDING) {
+        changed = false;
+        return;
+      }
+      if (stop.status !== STOP_STATUS.FAILED) throw new AppError('Only a stop with a reported problem can be retried', 409, 'STOP_NOT_FAILED');
+      this.assertWorkable(run);
+      if (stop.attemptCount >= MAX_DELIVERY_ATTEMPTS) throw new AppError('The maximum number of delivery attempts has been reached', 409, 'DELIVERY_ATTEMPT_LIMIT_REACHED');
+      const cas = await tx.messDeliveryStop.updateMany({
+        where: { id: stop.id, status: STOP_STATUS.FAILED, attemptCount: stop.attemptCount },
+        data: {
+          status: STOP_STATUS.PENDING, attemptCount: stop.attemptCount + 1, codeVersion: stop.codeVersion + 1, codeHash: null, codeIssuedAt: null, codeExpiresAt: null, recipientCustomerProfileId: null,
+          failedCodeAttempts: 0, lockCycles: 0, lockedUntil: null, blockedAt: null
         }
-        if (stop.status !== STOP_STATUS.FAILED) throw new AppError('Only a stop with a reported problem can be retried', 409, 'STOP_NOT_FAILED');
-        this.assertWorkable(run);
-        if (stop.attemptCount >= MAX_DELIVERY_ATTEMPTS) throw new AppError('The maximum number of delivery attempts has been reached', 409, 'DELIVERY_ATTEMPT_LIMIT_REACHED');
-        const cas = await tx.messDeliveryStop.updateMany({
-          where: { id: stop.id, status: STOP_STATUS.FAILED, attemptCount: stop.attemptCount },
-          data: {
-            status: STOP_STATUS.PENDING, attemptCount: stop.attemptCount + 1, codeVersion: stop.codeVersion + 1, codeHash: null, codeIssuedAt: null, codeExpiresAt: null, recipientCustomerProfileId: null,
-            failedCodeAttempts: 0, lockCycles: 0, lockedUntil: null, blockedAt: null
-          }
-        });
-        if (cas.count !== 1) throw new AppError('The stop changed. Please refresh.', 409, 'STOP_CHANGED');
-        await AuditService.record({ actor: { userId: caller.userId, roles: DRIVER }, action: 'MESS_STOP_RETRIED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, attempt: stop.attemptCount + 1 }, context }, tx);
       });
-    } catch (err) {
-      return await this.denyAudit(err, caller, 'retry-stop', runId, context);
-    }
-    return { changed, run: (await this.getForDriver(caller, runId)) ?? undefined };
+      if (cas.count !== 1) throw new AppError('The stop changed. Please refresh.', 409, 'STOP_CHANGED');
+      await AuditService.record({ actor: { userId: op.userId, roles: op.roles }, action: 'MESS_STOP_RETRIED', entity: 'MessDeliveryStop', entityId: stop.id, payload: { runId, attempt: stop.attemptCount + 1, ...(op.kind === 'ADMIN' ? { operatorUserId: op.userId } : {}) }, context }, tx);
+    });
+    return { changed, run: await this.runFor(op, runId) };
+  }
+
+  // ================================================================================================ SUPER_ADMIN operation of a run (role simplification)
+  /**
+   * An administrator operates a run exactly like a driver would, with EXACTLY ONE owner (employee OR administrator, enforced by a CHECK). Claim, dispatch, takeover
+   * and the stop actions each need a step-up proof at the route. A run a driver owns must be taken over first. Nothing here touches money or meals directly.
+   */
+  private static async adminRun<T extends { changed: boolean }>(runId: string, fn: (tx: Tx, run: AdminRunRow) => Promise<T>) {
+    const result = await prisma.$transaction(async (tx) => {
+      await lockRun(tx, runId);
+      const run = await tx.messDeliveryRun.findUnique({ where: { id: runId }, select: { id: true, status: true, branchId: true, mealDate: true, claimedByEmployeeId: true, claimedByUserId: true } });
+      if (!run) throw new AppError('Delivery run not found', 404, 'NOT_FOUND');
+      return await fn(tx, run);
+    });
+    return { changed: result.changed, run: await this.loadRunDto(prisma, runId, 'ADMIN', true) };
+  }
+
+  public static async adminClaim(admin: { userId: string; roles: readonly string[] }, runId: string, context?: AuditContext) {
+    return await this.adminRun(runId, async (tx, run) => {
+      if (run.claimedByUserId && run.status !== RUN_STATUS.AVAILABLE) return { changed: false }; // an administrator already operates it
+      if (run.status !== RUN_STATUS.AVAILABLE) throw run.claimedByEmployeeId ? new AppError('This run is owned by a driver. Take it over first.', 409, 'RUN_OWNED_BY_DRIVER') : new AppError('This run is not available', 409, 'RUN_NOT_AVAILABLE');
+      if (dateToString(run.mealDate) < businessDate()) throw new AppError('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
+      const cas = await tx.messDeliveryRun.updateMany({ where: { id: run.id, status: RUN_STATUS.AVAILABLE, claimedByEmployeeId: null, claimedByUserId: null }, data: { status: RUN_STATUS.CLAIMED, claimedByUserId: admin.userId, claimedAt: new Date() } });
+      if (cas.count !== 1) throw new AppError('This run was already claimed', 409, 'ALREADY_CLAIMED');
+      await AuditService.record({ actor: { userId: admin.userId, roles: admin.roles }, action: 'MESS_RUN_CLAIMED', entity: 'MessDeliveryRun', entityId: run.id, payload: { operatorUserId: admin.userId }, context }, tx);
+      return { changed: true };
+    });
+  }
+
+  public static async adminDispatch(admin: { userId: string; roles: readonly string[] }, runId: string, context?: AuditContext) {
+    return await this.adminRun(runId, async (tx, run) => {
+      if (run.claimedByEmployeeId) throw new AppError('This run is owned by a driver. Take it over first.', 409, 'RUN_OWNED_BY_DRIVER');
+      if (!run.claimedByUserId) throw new AppError('This run has not been claimed by an administrator', 409, 'RUN_NOT_OPERATED');
+      if (run.status === RUN_STATUS.IN_TRANSIT) return { changed: false };
+      if (run.status !== RUN_STATUS.CLAIMED) throw new AppError('Only a claimed run can be dispatched', 409, 'RUN_NOT_CLAIMED');
+      if (dateToString(run.mealDate) < businessDate()) throw new AppError('The day of this run has already ended', 409, 'DELIVERY_DAY_ENDED');
+      const cas = await tx.messDeliveryRun.updateMany({ where: { id: run.id, status: RUN_STATUS.CLAIMED, claimedByEmployeeId: null, claimedByUserId: { not: null } }, data: { status: RUN_STATUS.IN_TRANSIT, dispatchedAt: new Date() } });
+      if (cas.count !== 1) throw new AppError('The run changed. Please refresh.', 409, 'RUN_CHANGED');
+      await AuditService.record({ actor: { userId: admin.userId, roles: admin.roles }, action: 'MESS_RUN_DISPATCHED', entity: 'MessDeliveryRun', entityId: run.id, payload: { operatorUserId: admin.userId }, context }, tx);
+      return { changed: true };
+    });
+  }
+
+  /** Moves a CLAIMED / IN_TRANSIT run from a legacy driver to the administrators. Only the live run row changes; the previous driver is recorded on it and in the audit trail. */
+  public static async adminTakeover(admin: { userId: string; roles: readonly string[] }, runId: string, body: { expectedEmployeeId: string; reason: string }, context?: AuditContext) {
+    return await this.adminRun(runId, async (tx, run) => {
+      if (run.claimedByUserId && !run.claimedByEmployeeId) {
+        const taken = await tx.messDeliveryRun.count({ where: { id: run.id, takenOverFromEmployeeId: body.expectedEmployeeId } });
+        if (taken === 1) return { changed: false }; // replay
+      }
+      if (![RUN_STATUS.CLAIMED, RUN_STATUS.IN_TRANSIT].includes(run.status as never)) throw new AppError('This run cannot be taken over in its current state', 409, 'RUN_NOT_TAKEOVER_ELIGIBLE');
+      if (run.claimedByEmployeeId !== body.expectedEmployeeId) throw new AppError('The run owner changed in the meantime. Refresh and try again.', 409, 'RUN_OWNER_CHANGED');
+      const cas = await tx.messDeliveryRun.updateMany({
+        where: { id: run.id, status: run.status, claimedByEmployeeId: body.expectedEmployeeId, claimedByUserId: null },
+        data: { claimedByEmployeeId: null, claimedByUserId: admin.userId, takenOverFromEmployeeId: body.expectedEmployeeId }
+      });
+      if (cas.count !== 1) throw new AppError('The run owner changed in the meantime. Refresh and try again.', 409, 'RUN_OWNER_CHANGED');
+      await AuditService.record(
+        { actor: { userId: admin.userId, roles: admin.roles }, action: 'MESS_RUN_TAKEN_OVER', entity: 'MessDeliveryRun', entityId: run.id, payload: { fromDriverEmployeeId: body.expectedEmployeeId, operatorUserId: admin.userId, status: run.status, reason: body.reason }, context },
+        tx
+      );
+      return { changed: true };
+    });
   }
 
   // ================================================================================================ SUPER_ADMIN exceptional override

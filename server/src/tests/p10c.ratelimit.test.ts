@@ -39,7 +39,8 @@ describe('P10C - bulk delivery and handover rate limits (per user)', () => {
     app = (await import('../app.js')).default;
     const branchId = (await prisma.kitchenBranch.create({ data: { code: `p10c-rl-${ts}`, name: 'RL', address: 'A', city: 'Kochi' } })).id;
     await mk('d1', RoleEnum.DELIVERY, branchId);
-    await mk('d2', RoleEnum.DELIVERY, branchId);
+    await mk('admin', RoleEnum.SUPER_ADMIN, branchId);
+    await mk('admin2', RoleEnum.SUPER_ADMIN, branchId);
     await mk('c1', RoleEnum.CUSTOMER);
     await mk('c2', RoleEnum.CUSTOMER);
   });
@@ -47,18 +48,21 @@ describe('P10C - bulk delivery and handover rate limits (per user)', () => {
     await prisma.$disconnect();
   });
 
-  it('driver actions share a per-user budget (the limiter runs before ownership); another driver keeps their own', async () => {
+  it('SUPER_ADMIN Mess delivery actions share a per-user budget (the limiter runs before the step-up check); another administrator keeps their own', async () => {
+    const claim = (who: string) => request(app).post(`/api/v1/admin/mess/delivery/runs/${missing}/claim`).set(auth(who)).send({});
     const s: number[] = [];
-    for (let i = 0; i < 3; i++) s.push((await request(app).post(`/api/v1/mess/delivery/runs/${missing}/claim`).set(auth('d1')).send({})).status);
-    expect(s).toEqual([404, 404, 429]);
-    expect((await request(app).post(`/api/v1/mess/delivery/runs/${missing}/claim`).set(auth('d2')).send({})).status).toBe(404);
+    for (let i = 0; i < 3; i++) s.push((await claim('admin')).status);
+    expect(s).toEqual([403, 403, 429]); // no step-up proof: counted first; RL_MESS_DELIVERY_ACTION_MAX = 2
+    expect((await claim('admin2')).status).toBe(403);
   });
 
-  it('handover code verification has its OWN stricter budget', async () => {
+  it('SUPER_ADMIN handover code verification has its OWN stricter budget; the removed driver routes are 404', async () => {
+    const verify = () => request(app).post(`/api/v1/admin/mess/delivery/runs/${missing}/stops/${missing}/verify`).set(auth('admin2')).send({ code: '123456' });
     const s: number[] = [];
-    for (let i = 0; i < 3; i++) s.push((await request(app).post(`/api/v1/mess/delivery/runs/${missing}/stops/${missing}/verify`).set(auth('d2')).send({ code: '123456' })).status);
-    expect(s[2]).toBe(429);
-    expect(s.slice(0, 2).every((x) => x === 404 || x === 409)).toBe(true);
+    for (let i = 0; i < 3; i++) s.push((await verify()).status);
+    expect(s).toEqual([403, 403, 429]); // RL_MESS_DELIVERY_VERIFY_MAX = 2
+    expect((await request(app).post(`/api/v1/mess/delivery/runs/${missing}/claim`).set(auth('d1')).send({})).status).toBe(404);
+    expect((await request(app).post(`/api/v1/mess/delivery/runs/${missing}/stops/${missing}/verify`).set(auth('d1')).send({ code: '123456' })).status).toBe(404);
   });
 
   it('a resident asking for the handover code has a per-user budget; another resident keeps their own', async () => {

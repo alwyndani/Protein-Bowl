@@ -386,10 +386,12 @@ describe('P11B orders list and detail (read-only)', () => {
     expect(screen.getByText('Instructions: Leave at the gate')).toBeTruthy();
     expect(screen.getByText('Order placed · 13 Oct 2026, 3:45 pm IST')).toBeTruthy();
     expect(screen.queryByText(/@|\+91|SKU-SECRET|PB-.*idempot|fingerprint/i)).toBeNull();
-    // payment is still required: the payment panel (its explicit Pay Now) is the only payment control; no cancel / refund / delivery-code control
+    // payment is still required: the payment panel (its explicit Pay Now) is the only payment control. A pending order may be cancelled
+    // (the server says so); there is still no refund control and no delivery-code control before dispatch.
     expect(screen.getByText(/Payment is required before your order can be confirmed/)).toBeTruthy();
     const names = screen.getAllByRole('button').map((n) => String(n.props.accessibilityLabel ?? ''));
-    expect(names.filter((n) => /cancel|refund|delivery code|code/i.test(n))).toEqual([]);
+    expect(names.filter((n) => /refund|delivery code|code/i.test(n))).toEqual([]);
+    expect(names.filter((n) => /cancel/i.test(n))).toEqual(['Cancel order']);
     expect(names.filter((n) => /pay/i.test(n)).sort()).toEqual(['Pay Now']);
   });
 
@@ -486,6 +488,8 @@ describe('P11B automated journey (no device, stops before payment)', () => {
     fireEvent.changeText(await screen.findByLabelText('Address line 1'), '12 Beach Road');
     fireEvent.changeText(screen.getByLabelText('City'), 'Kochi');
     fireEvent.changeText(screen.getByLabelText('Postal code'), '682001');
+    fireEvent.changeText(screen.getByLabelText('Label (for example Home)'), 'Home');
+    fireEvent.changeText(screen.getByLabelText('State'), 'Kerala');
     press('Save address');
     fireEvent.press(await screen.findByRole('button', { name: 'Deliver to Home' }));
 
@@ -532,10 +536,24 @@ describe('P11B registration phone', () => {
     expect('phone' in b.log.find((r) => r.path === '/auth/mobile/register')!.body).toBe(false);
   });
 
-  it('a server error with a phone entered gives honest, non-leaky guidance', async () => {
+  it('an invalid phone is explained on the field and nothing is sent', async () => {
+    const b = new FakeCommerceBackend();
+    await fill(b, '12ab');
+    expect(await screen.findByText(/Enter a valid phone number/)).toBeTruthy();
+    expect(b.log.some((r) => r.path === '/auth/mobile/register')).toBe(false);
+  });
+
+  it('a phone number already registered (409 PHONE_IN_USE) gets a clear message, not a generic failure', async () => {
+    const b = new FakeCommerceBackend();
+    b.failNext('/auth/mobile/register', { status: 409, code: 'PHONE_IN_USE' });
+    await fill(b, '9876543210');
+    expect(await screen.findByText(/phone number is already registered to another account/)).toBeTruthy();
+  });
+
+  it('a server error (5xx) is reported as a service problem, never as a phone problem', async () => {
     const b = new FakeCommerceBackend();
     b.failNext('/auth/mobile/register', 500);
     await fill(b, '9876543210');
-    expect(await screen.findByText(/phone number is already registered, try again without it/)).toBeTruthy();
+    expect(await screen.findByText(/having trouble right now/)).toBeTruthy();
   });
 });

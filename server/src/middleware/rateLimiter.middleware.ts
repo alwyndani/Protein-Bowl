@@ -26,6 +26,8 @@ export const loginRateLimiter = createRateLimiter('LOGIN', env.RL_LOGIN_MAX, env
 export const registerRateLimiter = createRateLimiter('REGISTER', env.RL_REGISTER_MAX, env.RL_REGISTER_WINDOW_MS);
 export const refreshRateLimiter = createRateLimiter('REFRESH', env.RL_REFRESH_MAX, env.RL_REFRESH_WINDOW_MS);
 export const acceptInviteRateLimiter = createRateLimiter('ACCEPT_INVITE', env.RL_ACCEPT_INVITE_MAX, env.RL_ACCEPT_INVITE_WINDOW_MS);
+/** Forgot/reset password: strict per-IP budget (each request can trigger an email). */
+export const passwordResetRateLimiter = createRateLimiter('PASSWORD_RESET', Number(process.env.RL_PASSWORD_RESET_MAX) || 10, Number(process.env.RL_PASSWORD_RESET_WINDOW_MS) || 15 * 60 * 1000);
 export const stepUpRateLimiter = createRateLimiter('STEPUP', env.RL_STEPUP_MAX, env.RL_STEPUP_WINDOW_MS);
 /** Identity-aware limiters for authenticated payment endpoints (placed AFTER authenticateToken): the key is the user, not just the IP. */
 const byUser = (req: Request): string => `u:${req.user?.userId ?? req.ip ?? 'anon'}`;
@@ -40,7 +42,6 @@ export const kitchenRoutingRateLimiter = createRateLimiter('KITCHEN_ROUTING', en
 /** P9A delivery: reads (polling), driver actions and SUPER_ADMIN assignment, keyed by the authenticated user. */
 export const deliveryReadRateLimiter = createRateLimiter('DELIVERY_READ', env.RL_DELIVERY_READ_MAX, env.RL_DELIVERY_READ_WINDOW_MS, undefined, byUser);
 export const deliveryActionRateLimiter = createRateLimiter('DELIVERY_ACTION', env.RL_DELIVERY_ACTION_MAX, env.RL_DELIVERY_ACTION_WINDOW_MS, undefined, byUser);
-export const deliveryAssignRateLimiter = createRateLimiter('DELIVERY_ASSIGN', env.RL_DELIVERY_ASSIGN_MAX, env.RL_DELIVERY_ASSIGN_WINDOW_MS, undefined, byUser);
 /** P9B Delivery Code. Secondary to the PERSISTED per-proof attempt state (DeliveryProof), which is what actually bounds guessing. */
 const byUserAndOrder = (req: Request): string => `u:${req.user?.userId ?? req.ip ?? 'anon'}:o:${String(req.params.orderId ?? req.params.id ?? '')}`;
 export const deliveryCodeReadRateLimiter = createRateLimiter('DELIVERY_CODE_READ', env.RL_DELIVERY_CODE_READ_MAX, env.RL_DELIVERY_CODE_READ_WINDOW_MS, undefined, byUser);

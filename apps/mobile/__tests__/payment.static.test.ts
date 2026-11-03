@@ -65,7 +65,9 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
   });
 
   it('future-phase endpoints are absent: no cancel, refund, delivery-code, handover or Mess request anywhere', () => {
-    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b/i)).toEqual([]);
+    // Cancellation / refund-status / Delivery Code requests live in exactly one module: src/orders/orderActionsApi.ts.
+    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code/i).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/orders/orderActionsApi.ts']);
+    expect(offenders(/handover-code|\/mess\b/i)).toEqual([]);
   });
 
   it('payment evidence is memory-only: payment modules use no storage, Query cache, navigation, logging or analytics', () => {

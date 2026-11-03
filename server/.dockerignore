@@ -1,0 +1,10 @@
+# Build context for the API image is ./server. Secrets and local state never enter the context.
+.env
+.env.*
+!.env.example
+node_modules
+dist
+scripts/*.log
+src/tests
+coverage
+*.log

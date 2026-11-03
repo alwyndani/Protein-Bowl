@@ -98,12 +98,12 @@ describe('P11A — customer mobile authentication transport', () => {
       expect(b.body.error).toBe('INVALID_CREDENTIALS');
     });
 
-    it('7. staff, SUPER_ADMIN and legacy MESS_CUSTOMER are refused 403 CUSTOMER_APP_ONLY and NO session is created', async () => {
+    it('7. staff and SUPER_ADMIN are refused 403 CUSTOMER_APP_ONLY; a retired MESS_CUSTOMER and a role-less account are refused 403 NO_APPROVED_ROLE; NO session is created', async () => {
       for (const key of ['staff', 'admin', 'legacy', 'norole']) {
         const before = await prisma.refreshToken.count({ where: { userId: users[key].id } });
         const res = await mobile('/login').send({ email: users[key].email, password: PASSWORD });
         expect(res.status, key).toBe(403);
-        expect(res.body.error, key).toBe('CUSTOMER_APP_ONLY');
+        expect(res.body.error, key).toBe(key === 'legacy' || key === 'norole' ? 'NO_APPROVED_ROLE' : 'CUSTOMER_APP_ONLY');
         expect(JSON.stringify(res.body)).not.toMatch(/accessToken|refreshToken/);
         expect(await prisma.refreshToken.count({ where: { userId: users[key].id } }), key).toBe(before);
       }

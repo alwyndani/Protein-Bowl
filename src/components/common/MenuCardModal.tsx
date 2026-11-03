@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { RecipeItem, UserRole } from '../../types';
 import { LogoMark } from './LogoMark';
 import { X, Flame, Shield, Sparkles, Utensils, Heart, Calculator, Lock, ChefHat } from 'lucide-react';
-import { IngredientPriceCalculator } from './IngredientPriceCalculator';
 
 interface MenuCardModalProps {
   recipe: RecipeItem | null;
@@ -17,8 +16,6 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
   onSelectForPlan,
   userRole = 'customer'
 }) => {
-  const [activeTab, setActiveTab] = useState<'nutrition' | 'pricing'>('nutrition');
-
   if (!recipe) return null;
 
   const isChefOrAdmin = userRole === 'chef' || userRole === 'super_admin';
@@ -74,37 +71,11 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Navigation Tabs (Only if Chef or Admin) */}
-        {isChefOrAdmin && (
-          <div className="flex border-b border-stone-200 bg-stone-50 px-6 pt-2 gap-2">
-            <button
-              onClick={() => setActiveTab('nutrition')}
-              className={`px-4 py-2.5 text-xs font-extrabold rounded-t-xl transition-all flex items-center gap-2 border-b-2 ${
-                activeTab === 'nutrition'
-                  ? 'border-emerald-700 text-emerald-900 bg-white shadow-2xs'
-                  : 'border-transparent text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Nutritional Card & Prep Steps</span>
-            </button>
+        {/* The ingredient price calculator was removed: it ran on made-up inventory prices, not on real costs. */}
 
-            <button
-              onClick={() => setActiveTab('pricing')}
-              className={`px-4 py-2.5 text-xs font-extrabold rounded-t-xl transition-all flex items-center gap-2 border-b-2 ${
-                activeTab === 'pricing'
-                  ? 'border-emerald-700 text-emerald-900 bg-white shadow-2xs'
-                  : 'border-transparent text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              <Calculator className="w-3.5 h-3.5 text-amber-600" />
-              <span>💰 Ingredient Price Calculator & Rates</span>
-            </button>
-          </div>
-        )}
+        {/* Card Body: Recipe Image & Nutrition Table */}
+        {(
 
-        {/* Card Body - Tab 1: Recipe Image & Nutrition Table */}
-        {activeTab === 'nutrition' && (
           <div className="p-6 overflow-y-auto space-y-6">
             {/* Dish Image */}
             <div className="relative h-48 rounded-2xl overflow-hidden shadow-inner group">
@@ -152,13 +123,6 @@ export const MenuCardModal: React.FC<MenuCardModalProps> = ({
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Tab 2: Price Calculator (Chef & Admin Only) */}
-        {isChefOrAdmin && activeTab === 'pricing' && (
-          <div className="p-6 overflow-y-auto space-y-6">
-            <IngredientPriceCalculator compact={true} />
           </div>
         )}
 

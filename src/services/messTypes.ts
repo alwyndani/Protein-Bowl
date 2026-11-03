@@ -276,16 +276,13 @@ export interface MessRun {
   dispatchedAt: string | null;
   completedAt: string | null;
   closedAt: string | null;
-  driver?: { name: string; employeeCode: string } | null;
+  /** `employeeId` is present only in the SUPER_ADMIN monitor / operate responses; it is the value a takeover must send back as `expectedEmployeeId`. */
+  driver?: { employeeId?: string; name: string; employeeCode: string } | null;
+  /** Role simplification: the run is operated by a SUPER_ADMIN (no driver). Only in the SUPER_ADMIN monitor. */
+  operator?: 'ADMIN' | null;
   stops: MessStop[];
 }
 
-export interface MessDriverRuns {
-  serverTime: string;
-  today: string;
-  available: MessRun[];
-  mine: MessRun[];
-}
 export interface MessDeliveryMonitor {
   serverTime: string;
   today: string;

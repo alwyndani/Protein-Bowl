@@ -9,6 +9,7 @@ import { sanitizeNote } from '../refund/cancellationPolicy.js';
 /** Attempt 1 is the original delivery; the first retry is attempt 2, the second retry attempt 3. After attempt 3 fails only Cancel & Full Refund or the exceptional override remain. */
 export const MAX_DELIVERY_ATTEMPTS = 3;
 
+/** Outcomes are HISTORICAL vocabulary: REASSIGNED and RETRY_SAME_DRIVER rows written before B2a stay valid (database CHECK); new retries by an administrator are archived as RETRY_SAME_DRIVER. */
 export const ATTEMPT_OUTCOMES = ['RETRY_SAME_DRIVER', 'REASSIGNED', 'UNDELIVERABLE_CANCELLED', 'ADMIN_OVERRIDE_DELIVERED'] as const;
 export type AttemptOutcome = (typeof ATTEMPT_OUTCOMES)[number];
 
@@ -21,23 +22,6 @@ const noteSchema = z
   .max(1000) // transport bound only; the stored note is sanitized and cut to 200
   .optional()
   .transform((v) => sanitizeNote(v));
-
-/** SAME_DRIVER retries with the current driver; REASSIGN hands the attempt to another driver of the SAME branch (also used for a pending ASSIGNED attempt). */
-export const retryBodySchema = z
-  .object({
-    mode: z.enum(['SAME_DRIVER', 'REASSIGN']),
-    driverEmployeeId: z.string().uuid().optional(),
-    expectedAttemptNumber: z.number().int().min(1).max(MAX_DELIVERY_ATTEMPTS),
-    expectedDriverId: z.string().uuid(),
-    reasonCode: z.enum(RETRY_REASON_CODES),
-    note: noteSchema
-  })
-  .strict()
-  .superRefine((v, ctx) => {
-    if (v.mode === 'REASSIGN' && !v.driverEmployeeId) ctx.addIssue({ code: 'custom', path: ['driverEmployeeId'], message: 'A driver is required to reassign' });
-    if (v.mode === 'SAME_DRIVER' && v.driverEmployeeId) ctx.addIssue({ code: 'custom', path: ['driverEmployeeId'], message: 'A driver must not be given when retrying with the same driver' });
-  });
-export type RetryBody = z.infer<typeof retryBodySchema>;
 
 export const undeliverableBodySchema = z
   .object({

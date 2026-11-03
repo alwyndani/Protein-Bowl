@@ -10,7 +10,8 @@ import { AuditService } from '../audit/audit.service.js';
 import { requireStepUp } from '../admin/stepUp.service.js';
 import { PaymentReconciliationService } from '../payment/paymentReconciliation.service.js';
 import { CancellationService } from './cancellation.service.js';
-import { adminCancelBodySchema, refundApprovalBodySchema } from './cancellationPolicy.js';
+import { adminCancelBodySchema, cancellationApproveBodySchema, cancellationDeclineBodySchema, refundApprovalBodySchema } from './cancellationPolicy.js';
+import { CancellationReviewService } from './cancellationReview.service.js';
 import { RefundService } from './refund.service.js';
 import { REFUND_STATUS, REFUND_TRIGGER } from './refundStatus.js';
 
@@ -58,6 +59,40 @@ router.post('/orders/:orderId/cancel', authenticateToken, requirePermission('ref
   try {
     const data = await CancellationService.adminCancel({ userId: req.user!.userId, roles: req.user!.roles }, req.params.orderId, req.body, AuditService.contextFromRequest(req));
     return ApiResponse.success(res, data, data.alreadyCancelled ? 'Order was already cancelled' : 'Order cancelled', 200);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---- Staff review of customer cancellation requests (paid orders the kitchen has started). SUPER_ADMIN only; decisions need a step-up proof. ----
+const requestListQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  status: z.enum(['PENDING', 'APPROVED', 'DECLINED']).optional()
+});
+
+router.get('/cancellation-requests', authenticateToken, requirePermission('refunds:read'), validateQuery(requestListQuery), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const q = req.query as unknown as z.infer<typeof requestListQuery>;
+    return ApiResponse.success(res, await CancellationReviewService.list(q), 'Cancellation requests retrieved');
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/cancellation-requests/:id/approve', authenticateToken, requirePermission('refunds:write'), financialAdminRateLimiter, requireStepUp('cancellation.review'), validateParams(idParams), validateBody(cancellationApproveBodySchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await CancellationReviewService.approve({ userId: req.user!.userId, roles: req.user!.roles }, req.params.id, req.body.note ?? null, AuditService.contextFromRequest(req));
+    return ApiResponse.success(res, data, data.alreadyApproved ? 'Request was already approved' : 'Order cancelled and full refund started', 200);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/cancellation-requests/:id/decline', authenticateToken, requirePermission('refunds:write'), financialAdminRateLimiter, requireStepUp('cancellation.review'), validateParams(idParams), validateBody(cancellationDeclineBodySchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await CancellationReviewService.decline({ userId: req.user!.userId, roles: req.user!.roles }, req.params.id, req.body.note as string, AuditService.contextFromRequest(req));
+    return ApiResponse.success(res, data, data.alreadyDeclined ? 'Request was already declined' : 'Request declined', 200);
   } catch (err) {
     next(err);
   }

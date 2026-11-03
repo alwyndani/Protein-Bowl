@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SRC = join(__dirname, '..');
@@ -96,9 +96,11 @@ describe('P7D security: nothing secret or authoritative lives in the browser cod
   });
 
   it('the fake diet-plan "payment" is gone and is not part of the P7D commerce path', () => {
-    const legacy = readFileSync(join(SRC, 'components/customer/CheckoutModal.tsx'), 'utf8');
+    const legacyPath = join(SRC, 'components/customer/CheckoutModal.tsx');
+    const legacy = existsSync(legacyPath) ? readFileSync(legacyPath, 'utf8') : ''; // deleted or an empty stub
     expect(legacy).not.toMatch(/anjali@okaxis|setUpiId|upiId|setPaymentMethod|paymentStatus:\s*'paid'|confetti|Processing Payment Gateway/);
-    expect(legacy).toContain('diet-plan-payment-unavailable');
+    expect(legacy).not.toMatch(/useState|onOrderSuccess|React\.FC/); // the flow is REMOVED: the file is an empty stub awaiting deletion
+    expect(readFileSync(join(SRC, 'App.tsx'), 'utf8')).not.toMatch(/(?<![A-Za-z])CheckoutModal\b|checkoutModalOpen/);
     for (const rel of P7D_FILES) expect(readFileSync(join(SRC, rel), 'utf8'), rel).not.toMatch(/from\s+['"][^'"]*\/CheckoutModal['"]|DirectGuestOrderModal/);
   });
 

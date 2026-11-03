@@ -188,6 +188,8 @@ export interface CustomerOrder {
   timeline?: TimelineEntry[];
   cancellation?: { state: CancellationState; allowed: boolean };
   refund?: { state: RefundState };
+  /** Staff-reviewed cancellation of a paid order the kitchen has started (server-derived; absent when not applicable). */
+  cancellationRequest?: { state: 'REQUESTABLE' | 'REQUESTED' | 'DECLINED'; declinedReason?: string | null };
   payment?: { state: PaymentState; canStartPayment: boolean };
   delivery?: { state: DeliveryState; attemptNumber: number; maxAttempts: number };
 }

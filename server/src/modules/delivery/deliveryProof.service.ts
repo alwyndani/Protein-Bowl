@@ -1,3 +1,4 @@
+/* B2a: driver verification removed; SUPER_ADMIN is the only verifier. */
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { Prisma, RoleEnum } from '@prisma/client';
 import { z } from 'zod';
@@ -8,7 +9,7 @@ import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { OrderTransitionService } from '../order/orderTransition.service.js';
 import { lockOrder } from '../payment/paymentOps.js';
 import { sanitizeNote } from '../refund/cancellationPolicy.js';
-import { DeliveryOrderNotVisible, DeliveryService, DriverCaller } from './delivery.service.js';
+import { DeliveryService } from './delivery.service.js';
 import { archiveFailedAttempt } from './deliveryAttemptArchive.js';
 
 /**
@@ -125,6 +126,9 @@ async function lockExistingProof(tx: Tx, orderId: string) {
 const ELIGIBLE = (o: { orderType: string; paymentMethod: string | null; paymentStatus: string; status: string }) =>
   o.orderType === 'DIRECT' && o.paymentMethod === 'ONLINE' && o.paymentStatus === 'PAID' && o.status === 'DISPATCHED';
 
+/** B2a: only a SUPER_ADMIN verifies a delivery code (the DELIVERY driver path was removed). */
+type VerifyOperator = { kind: 'ADMIN'; userId: string; roles: readonly RoleEnum[] };
+
 type VerifyOutcome =
   | { kind: 'OK'; changed: boolean; orderNumber: string; deliveredAt: Date }
   | { kind: 'ERROR'; error: AppError };
@@ -225,36 +229,38 @@ export class DeliveryProofService {
     });
   }
 
-  // ------------------------------------------------------------------------------------------------ driver
+  // ------------------------------------------------------------------------------------------------ SUPER_ADMIN
   /**
-   * Normal completion. `receivedAt` is when the request ARRIVED (before any lock wait): a code submitted before a concurrent regeneration
-   * committed is a stale code, not a guess against the new one, so it is answered DELIVERY_CODE_CHANGED and NOT counted.
-   * Wrong attempts are committed (counter / lock / block) and the safe error is thrown only AFTER the transaction commits.
+   * Role simplification: a SUPER_ADMIN who operates the delivery enters the code the customer gives them. It is the single decision tree (one
+   * implementation: attempt window, lock cycles, block, stale-code protection, PAID/DISPATCHED/IN_TRANSIT gates) and the proof records verifiedByUserId.
    */
-  public static async verifyDelivery(orderId: string, rawCode: string, caller: DriverCaller, receivedAt: Date, context?: AuditContext) {
+  public static async verifyAsAdmin(orderId: string, rawCode: string, admin: { userId: string; roles: readonly RoleEnum[] }, receivedAt: Date, context?: AuditContext) {
+    return this.verifyAs(orderId, rawCode, { kind: 'ADMIN', userId: admin.userId, roles: admin.roles }, receivedAt, context);
+  }
+
+  private static async verifyAs(orderId: string, rawCode: string, op: VerifyOperator, receivedAt: Date, context?: AuditContext) {
     const code = normalizeCode(rawCode);
     if (!code) throw new AppError('Enter the 6-digit delivery code', 422, 'INVALID_DELIVERY_CODE_FORMAT');
-    const roles = [RoleEnum.DELIVERY];
+    const userId = op.userId;
+    const roles: readonly RoleEnum[] = op.roles;
+    const operatorPayload = { operatorUserId: op.userId };
 
     let outcome: VerifyOutcome;
     try {
       outcome = await prisma.$transaction(async (tx): Promise<VerifyOutcome> => {
         const order = await DeliveryService.lockAndLoad(tx, orderId);
-        const visible =
-          !!order &&
-          order.orderType === 'DIRECT' &&
-          order.paymentMethod === 'ONLINE' &&
-          !!order.kitchenBranchId &&
-          caller.branchIds.includes(order.kitchenBranchId) &&
-          order.delivery?.driverId === caller.employeeProfileId;
-        if (!visible || !order) throw new DeliveryOrderNotVisible(!!order, 'write');
+        if (!order) throw new AppError('Order not found', 404, 'ORDER_NOT_FOUND');
+        if (order.orderType !== 'DIRECT' || order.paymentMethod !== 'ONLINE' || !order.kitchenBranchId) throw new AppError('This order is not eligible for delivery', 409, 'ORDER_NOT_OPERATIONALLY_ELIGIBLE');
+        if (order.delivery?.driverId) throw new AppError('This delivery is owned by a driver. Take it over first.', 409, 'DELIVERY_OWNED_BY_DRIVER');
+        if (!order.delivery?.operatedByUserId) throw new AppError('This delivery has not been started by an administrator', 409, 'DELIVERY_NOT_OPERATED');
 
         const proofRow = await lockExistingProof(tx, orderId);
         const err = (message: string, status: number, codeName: string): VerifyOutcome => ({ kind: 'ERROR', error: new AppError(message, status, codeName) });
 
         if (order.status === 'DELIVERED') {
           if (!proofRow) return err('This order has already been delivered', 409, 'ALREADY_DELIVERED');
-          const replay = proofRow.method === 'PIN' && proofRow.verifiedByEmployeeId === caller.employeeProfileId && !!proofRow.codeHash && hashesMatch(proofRow.codeHash, hashCode(orderId, proofRow.codeVersion, code));
+          const sameVerifier = proofRow.verifiedByUserId === userId;
+          const replay = proofRow.method === 'PIN' && sameVerifier && !!proofRow.codeHash && hashesMatch(proofRow.codeHash, hashCode(orderId, proofRow.codeVersion, code));
           return replay ? { kind: 'OK', changed: false, orderNumber: order.orderNumber, deliveredAt: proofRow.verifiedAt! } : err('This order has already been delivered', 409, 'ALREADY_DELIVERED');
         }
         if (order.status !== 'DISPATCHED') return err('Only an order that is out for delivery can be completed', 409, 'ORDER_NOT_DISPATCHED');
@@ -289,8 +295,8 @@ export class DeliveryProofService {
             }
           }
           await tx.deliveryProof.update({ where: { orderId }, data: { failedAttempts: failed, lockCycles: cycles, lockedUntil, ...(blockedAt ? { blockedAt } : {}) } });
-          const actor = { userId: caller.userId, roles };
-          await AuditService.record({ actor, action: 'DELIVERY_VERIFY_FAILED', entity: 'Order', entityId: orderId, payload: { orderNumber: order.orderNumber, driverEmployeeId: caller.employeeProfileId }, context }, tx);
+          const actor = { userId, roles };
+          await AuditService.record({ actor, action: 'DELIVERY_VERIFY_FAILED', entity: 'Order', entityId: orderId, payload: { orderNumber: order.orderNumber, ...operatorPayload }, context }, tx);
           if (result === 'LOCKED' || result === 'BLOCKED') {
             await AuditService.record({ actor, action: 'DELIVERY_VERIFY_LOCKED', entity: 'Order', entityId: orderId, payload: { orderNumber: order.orderNumber, lockCycle: cycles }, context }, tx);
           }
@@ -307,25 +313,31 @@ export class DeliveryProofService {
         // ---- correct code: complete atomically (proof evidence, assignment, order transition, audit)
         await tx.deliveryProof.update({
           where: { orderId },
-          data: { verifiedAt: now, method: 'PIN', verifiedByEmployeeId: caller.employeeProfileId, previousAssignmentStatus: assignment.status, failedAttempts: 0 }
+          data: {
+            verifiedAt: now,
+            method: 'PIN',
+            verifiedByUserId: userId,
+            previousAssignmentStatus: assignment.status,
+            failedAttempts: 0
+          }
         });
         const completed = await tx.deliveryAssignment.updateMany({
-          where: { id: assignment.id, driverId: caller.employeeProfileId, status: 'IN_TRANSIT' },
+          where: { id: assignment.id, driverId: null, operatedByUserId: { not: null }, status: 'IN_TRANSIT' },
           data: { status: 'DELIVERED', deliveryTime: now }
         });
         if (completed.count !== 1) throw new AppError('The delivery assignment changed. Please refresh.', 409, 'ORDER_STATE_CONFLICT');
         await OrderTransitionService.transition(
-          { orderId, to: 'DELIVERED', actor: { kind: 'PROOF', method: 'PIN', proofId: proofRow.id, userId: caller.userId, roles }, context },
+          { orderId, to: 'DELIVERED', actor: { kind: 'PROOF', method: 'PIN', proofId: proofRow.id, userId, roles }, context },
           tx
         );
         await AuditService.record(
-          { actor: { userId: caller.userId, roles }, action: 'DELIVERY_VERIFIED', entity: 'Order', entityId: orderId, payload: { orderNumber: order.orderNumber, method: 'PIN', driverEmployeeId: caller.employeeProfileId }, context },
+          { actor: { userId, roles }, action: 'DELIVERY_VERIFIED', entity: 'Order', entityId: orderId, payload: { orderNumber: order.orderNumber, method: 'PIN', ...operatorPayload }, context },
           tx
         );
         return { kind: 'OK', changed: true, orderNumber: order.orderNumber, deliveredAt: now };
       });
     } catch (err) {
-      return DeliveryService.denyAudit(err, caller, 'verify-delivery', orderId, context);
+      throw err;
     }
 
     if (outcome.kind === 'ERROR') throw outcome.error; // thrown only AFTER the transaction (and any counter change) committed

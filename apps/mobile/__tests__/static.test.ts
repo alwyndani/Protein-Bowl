@@ -93,7 +93,9 @@ describe('P11A static guards (production mobile source)', () => {
   it('P11B boundary: the commerce API is EXACTLY the approved endpoint set - no payment, verify, cancel, refund, delivery-code, Mess, diet or health request', () => {
     // P11C-2 step 3: the payment-attempt endpoints are allowed in EXACTLY one module (the payment API); everything else stays forbidden.
     expect(offenders(/payment-attempts|\/verify\b/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/payments/paymentApi.ts']);
-    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
+    // Customer cancellation / refund status / Delivery Code endpoints exist in EXACTLY one module (src/orders/orderActionsApi.ts).
+    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code/i).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/orders/orderActionsApi.ts']);
+    expect(offenders(/handover-code|\/mess\b|\/diets?\b|\/kds\b|\/admin\b|\/staff\b/i)).toEqual([]);
     expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i)).toEqual([]);
     expect(offenders(/expo-screen-capture/)).toEqual([]);
     const api = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/api.ts')!.s;

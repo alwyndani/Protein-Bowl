@@ -192,6 +192,8 @@ export interface ApiOrder {
   cancellation?: { state: CancellationState; allowed: boolean };
   /** P7C (server-derived): refund state, separate from the order and payment states. */
   refund?: { state: RefundState };
+  /** Staff-reviewed cancellation (server-derived) for a paid order the kitchen has started. REQUESTABLE = the customer may ask; nothing is promised. */
+  cancellationRequest?: { state: 'REQUESTABLE' | 'REQUESTED' | 'DECLINED'; declinedReason?: string | null };
   /** P7D-G1 (server-derived): payment summary. canStartPayment is AUTHORITATIVE: the UI may disable more, never enable. */
   payment?: PaymentSummary;
   /** P9C (server-derived label, NOT an order status): present once the order was dispatched (or cancelled as undeliverable). Never carries reasons, notes or driver data. */

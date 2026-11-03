@@ -6,19 +6,14 @@ import type { UserRole } from '../types';
  * SUPER_ADMIN has its own workspace and is NOT allowed the MD dashboard (and vice versa).
  */
 const BACKEND_ROLES_FOR_UI_ROLE: Record<UserRole, readonly string[]> = {
-  // MESS_CUSTOMER is LEGACY: such a session is presented as a normal customer (no separate Mess workspace exists any more)
-  customer: ['CUSTOMER', 'MESS_CUSTOMER'],
+  // Exactly the six approved roles. A retired role (for example MESS_CUSTOMER) never authorizes anything: the API refuses such an account
+  // (403 NO_APPROVED_ROLE) before any UI is shown.
+  customer: ['CUSTOMER'],
   super_admin: ['SUPER_ADMIN'],
-  md: ['MD'],
   nutritionist: ['NUTRITIONIST'],
   trainer: ['TRAINER'],
   chef: ['CHEF'],
-  procurement: ['PROCUREMENT'],
-  delivery: ['DELIVERY'],
-  pos: ['POS'],
-  bakery_fmcg: ['BAKERY_FMCG'],
-  tepache_erp: ['TEPACHE_ERP'],
-  swiggy_zomato: ['SWIGGY_ZOMATO']
+  procurement: ['PROCUREMENT']
 };
 
 /** Customer-facing views have their own login guards in the app shell. */
@@ -33,5 +28,6 @@ export function isUiRoleAllowed(uiRole: UserRole, backendRoles: readonly string[
   if (isDev) return true;
   if (PUBLIC_UI_ROLES.includes(uiRole)) return true;
   const sessionRoles = backendRoles ?? [];
-  return BACKEND_ROLES_FOR_UI_ROLE[uiRole].some((r) => sessionRoles.includes(r));
+  // An unknown / retired UI role string (for example from stale state) is never presented.
+  return (BACKEND_ROLES_FOR_UI_ROLE[uiRole] ?? []).some((r) => sessionRoles.includes(r));
 }

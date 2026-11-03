@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CustomerProfile, BloodTestResults, ActivityLevel, HealthGoal } from '../../types';
 import { calculateHealthMetrics } from '../../utils/healthCalculator';
 import { CustomerService } from '../../services/customerService';
+import { triToSelect, selectToTri } from '../../utils/healthProfile';
 import { 
   User, Activity, Stethoscope, Droplets, Apple, Scale, Clock, AlertTriangle, 
   Sparkles, CheckCircle2, Edit3, Save, RotateCcw, ShieldAlert, Heart, Calendar,
@@ -28,6 +29,42 @@ interface HealthHistoryLog {
   foodPreference: string;
 }
 
+const NP = 'Not provided';
+const cm = (v: number | undefined, unit = 'cm') => (v ? `${v} ${unit}` : NP);
+
+/**
+ * A Yes/No question that may be UNANSWERED. Shows "Not provided" when unanswered and (while editing) a "Choose…" option; nothing is chosen for the
+ * customer. A saved answer cannot be turned back into "unanswered" (the server keeps what it has for an omitted field), so "Choose…" is offered only
+ * while there is no saved answer.
+ */
+const AnswerField: React.FC<{
+  label: string;
+  testId: string;
+  editing: boolean;
+  saved: boolean | undefined;
+  value: boolean | undefined;
+  onChange: (v: boolean | undefined) => void;
+  labels?: [string, string];
+}> = ({ label, testId, editing, saved, value, onChange, labels = ['No', 'Yes'] }) => (
+  <div>
+    <label htmlFor={testId} className="text-stone-400 block mb-1">{label}</label>
+    {editing ? (
+      <select
+        id={testId}
+        value={triToSelect(value ?? null)}
+        onChange={(e) => onChange(selectToTri(e.target.value) ?? undefined)}
+        className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
+      >
+        {saved === undefined && <option value="">Choose…</option>}
+        <option value="no">{labels[0]}</option>
+        <option value="yes">{labels[1]}</option>
+      </select>
+    ) : (
+      <strong className="text-white">{value === undefined ? NP : value ? labels[1] : labels[0]}</strong>
+    )}
+  </div>
+);
+
 export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onUpdateProfile }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [showFormulas, setShowFormulas] = useState(false);
@@ -36,21 +73,10 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
   const [editedProfile, setEditedProfile] = useState<CustomerProfile>({ ...profile });
 
   // History state keeping previous values
-  const [historyLogs, setHistoryLogs] = useState<HealthHistoryLog[]>([
-    {
-      id: 'h1',
-      timestamp: '01 Jul 2026, 09:15 AM (Initial)',
-      weightKg: profile.weightKg || 70.0,
-      heightCm: profile.heightCm || 165,
-      bmi: profile.bmi || 25.7,
-      bmr: profile.bmr || 1420,
-      tdee: profile.tdee || 1950,
-      targetCalories: profile.targetCalories || 1650,
-      goal: profile.goal || 'weight_loss',
-      activityLevel: profile.activityLevel || 'moderate',
-      foodPreference: profile.foodPreference || 'Non-Vegetarian'
-    }
-  ]);
+  // Changes saved during this visit only (the server keeps no history yet). Nothing is invented as a starting row.
+  const [historyLogs, setHistoryLogs] = useState<HealthHistoryLog[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   // Blood test warning check
   const bloodTests = editedProfile.bloodTestResults || {};
@@ -58,21 +84,28 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
     (val) => val === undefined || val === null || val === 0 || isNaN(val as number)
   );
 
-  // Auto-calculated metrics live computation
+  // Metrics are shown and saved only when calculated from values the customer entered. The placeholders below keep the calculator well-defined
+  // while they are missing, but are never displayed (see metricsReady).
+  const metricsReady = (editedProfile.gender === 'male' || editedProfile.gender === 'female') && !!(editedProfile.age && editedProfile.heightCm && editedProfile.weightKg); // "other": not available yet
   const calculated = calculateHealthMetrics({
-    weightKg: editedProfile.weightKg || 68,
-    heightCm: editedProfile.heightCm || 165,
-    age: editedProfile.age || 28,
-    gender: editedProfile.gender || 'female',
-    activityLevel: editedProfile.activityLevel || 'moderate',
-    goal: editedProfile.goal || 'weight_loss',
-    hasExercise: editedProfile.hasExercise ?? true
+    weightKg: editedProfile.weightKg,
+    heightCm: editedProfile.heightCm,
+    age: editedProfile.age,
+    gender: editedProfile.gender ?? 'other',
+    activityLevel: editedProfile.activityLevel,
+    goal: editedProfile.goal,
+    hasExercise: editedProfile.hasExercise === true // unanswered adds nothing to the water requirement
   });
 
-  const handleSave = () => {
-    confetti({ particleCount: 50, spread: 60 });
-    
-    // Save current values to history BEFORE updating
+  const handleSave = async () => {
+    if (saving) return;
+    // The metrics below are computed from these; with a value missing they would be computed from invented defaults, so refuse to save.
+    if (!editedProfile.weightKg || !editedProfile.heightCm || !editedProfile.age || !editedProfile.gender) {
+      setSaveError('Enter your weight, height, age and gender before saving.');
+      return;
+    }
+    setSaveError(null);
+
     const newLog: HealthHistoryLog = {
       id: Date.now().toString(),
       timestamp: new Date().toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
@@ -86,8 +119,6 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
       activityLevel: editedProfile.activityLevel,
       foodPreference: editedProfile.foodPreference
     };
-
-    setHistoryLogs([newLog, ...historyLogs]);
 
     const finalProfile: CustomerProfile = {
       ...editedProfile,
@@ -109,19 +140,26 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
       calorieDeficitSurplus: calculated.calorieDeficitSurplus
     };
 
-    if (onUpdateProfile) {
-      onUpdateProfile(finalProfile);
-    }
-
-    CustomerService.updateMyProfile(finalProfile).then((res) => {
-      if (res.success && res.data && onUpdateProfile) {
-        onUpdateProfile(res.data);
+    setSaving(true);
+    try {
+      // The mobile number travels only when the customer changed it; a refusal is shown, never swallowed.
+      const phoneChanged = (editedProfile.phone ?? '').trim() !== (profile.phone ?? '').trim();
+      const res = await CustomerService.updateMyProfile(finalProfile, { phone: phoneChanged });
+      if (!res.success || !res.data) {
+        if (res.error === 'PHONE_IN_USE') setSaveError('That mobile number is already registered to another account. Your other changes were not saved.');
+        else if (res.httpStatus === 422 && /phone/i.test(res.message ?? '')) setSaveError('Enter a valid mobile number (8–15 digits, optional leading +). Nothing was saved.');
+        else setSaveError('Your changes could not be saved. Please try again.');
+        return;
       }
-    }).catch((_err) => {
-      // Retain optimistic UI state if offline
-    });
-
-    setIsEditing(false);
+      onUpdateProfile?.(res.data);
+      setHistoryLogs((logs) => [newLog, ...logs]);
+      confetti({ particleCount: 50, spread: 60 });
+      setIsEditing(false);
+    } catch {
+      setSaveError('Your changes could not be saved. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDownloadHistory = () => {
@@ -215,7 +253,8 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
 
           <button
             onClick={handleDownloadHistory}
-            className="px-3.5 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl border border-stone-700 flex items-center gap-1.5 transition-all"
+            disabled={historyLogs.length === 0}
+            className="px-3.5 py-2 disabled:opacity-50 bg-stone-800 hover:bg-stone-700 text-stone-200 text-xs font-bold rounded-xl border border-stone-700 flex items-center gap-1.5 transition-all"
             title="Download Health History as CSV"
           >
             <Download className="w-4 h-4 text-emerald-400" />
@@ -231,9 +270,10 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <span>Edit Health Data</span>
             </button>
           ) : (
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              {saveError && <p role="alert" className="text-xs font-bold text-rose-300 max-w-[16rem]">{saveError}</p>}
               <button
-                onClick={() => { setEditedProfile({ ...profile }); setIsEditing(false); }}
+                onClick={() => { setEditedProfile({ ...profile }); setSaveError(null); setIsEditing(false); }}
                 className="px-3 py-2 bg-stone-700 text-white font-bold text-xs rounded-xl flex items-center gap-1"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -241,10 +281,11 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               </button>
               <button
                 onClick={handleSave}
-                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5"
+                disabled={saving}
+                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-stone-950 font-bold text-xs rounded-xl shadow-md flex items-center gap-1.5"
               >
                 <Save className="w-4 h-4" />
-                <span>Save Changes</span>
+                <span>{saving ? 'Saving…' : 'Save Changes'}</span>
               </button>
             </div>
           )}
@@ -331,6 +372,10 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           </span>
         </div>
 
+        {!metricsReady && (
+          <p className="text-xs font-bold text-stone-400">{editedProfile.gender === 'other' ? 'Calorie and macro figures are not available for this selection yet.' : 'Enter your gender, age, height and weight to see your calculated metrics.'}</p>
+        )}
+        {metricsReady && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
           <div className="bg-stone-800/80 p-3 rounded-2xl border border-stone-700">
             <span className="text-[10px] uppercase text-stone-400 block font-bold">BMI</span>
@@ -368,6 +413,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
             <span className="block text-[10px] text-stone-400 mt-0.5">Ideal Wt: {calculated.idealBodyWeightKg} kg</span>
           </div>
         </div>
+        )}
       </div>
 
       {/* Blood Test Warning Alert Banner (If skipped) */}
@@ -431,10 +477,11 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
             <div>
               <label className="text-stone-300 block mb-1">Gender</label>
               <select
-                value={editedProfile.gender || 'female'}
-                onChange={(e) => setEditedProfile({ ...editedProfile, gender: e.target.value as any })}
+                value={editedProfile.gender || ''}
+                onChange={(e) => setEditedProfile({ ...editedProfile, gender: (e.target.value || undefined) as CustomerProfile['gender'] })}
                 className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
               >
+                <option value="">Choose…</option>
                 <option value="female">Female</option>
                 <option value="male">Male</option>
                 <option value="other">Other</option>
@@ -462,7 +509,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <label className="text-stone-300 block mb-1">Target Weight (kg)</label>
               <input
                 type="number"
-                value={editedProfile.targetWeightKg || 58}
+                value={editedProfile.targetWeightKg || ''}
                 onChange={(e) => setEditedProfile({ ...editedProfile, targetWeightKg: Number(e.target.value) })}
                 className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
               />
@@ -471,7 +518,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <label className="text-stone-300 block mb-1">Occupation</label>
               <input
                 type="text"
-                value={editedProfile.occupation || 'IT Professional'}
+                value={editedProfile.occupation || ''}
                 onChange={(e) => setEditedProfile({ ...editedProfile, occupation: e.target.value })}
                 className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
               />
@@ -480,7 +527,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <label className="text-stone-300 block mb-1">Work Schedule</label>
               <input
                 type="text"
-                value={editedProfile.workSchedule || 'Flexible Hours'}
+                value={editedProfile.workSchedule || ''}
                 onChange={(e) => setEditedProfile({ ...editedProfile, workSchedule: e.target.value })}
                 className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
               />
@@ -489,7 +536,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <label className="text-stone-300 block mb-1">Sleep Duration (hrs)</label>
               <input
                 type="number"
-                value={editedProfile.sleepDuration || 7}
+                value={editedProfile.sleepDuration || ''}
                 onChange={(e) => setEditedProfile({ ...editedProfile, sleepDuration: Number(e.target.value) })}
                 className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
               />
@@ -499,13 +546,13 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               <div className="flex gap-1">
                 <input
                   type="time"
-                  value={editedProfile.wakeUpTime || '06:30'}
+                  value={editedProfile.wakeUpTime || ''}
                   onChange={(e) => setEditedProfile({ ...editedProfile, wakeUpTime: e.target.value })}
                   className="w-1/2 p-1.5 bg-stone-950 border border-stone-800 rounded-xl text-white"
                 />
                 <input
                   type="time"
-                  value={editedProfile.bedTime || '23:00'}
+                  value={editedProfile.bedTime || ''}
                   onChange={(e) => setEditedProfile({ ...editedProfile, bedTime: e.target.value })}
                   className="w-1/2 p-1.5 bg-stone-950 border border-stone-800 rounded-xl text-white"
                 />
@@ -517,13 +564,13 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
             <div><span className="text-stone-400 block">Full Name:</span> <strong className="text-white">{editedProfile.name}</strong></div>
             <div><span className="text-stone-400 block">Mobile:</span> <strong className="text-white">{editedProfile.phone}</strong></div>
             <div><span className="text-stone-400 block">Email:</span> <strong className="text-white">{editedProfile.email}</strong></div>
-            <div><span className="text-stone-400 block">DOB / Age:</span> <strong className="text-white">{editedProfile.dob} ({editedProfile.age} yrs)</strong></div>
-            <div><span className="text-stone-400 block">Gender:</span> <strong className="text-white capitalize">{editedProfile.gender || 'Female'}</strong></div>
-            <div><span className="text-stone-400 block">Height / Weight:</span> <strong className="text-white">{editedProfile.heightCm} cm / {editedProfile.weightKg} kg</strong></div>
-            <div><span className="text-stone-400 block">Target Weight:</span> <strong className="text-emerald-400 font-bold">{editedProfile.targetWeightKg || 58} kg</strong></div>
-            <div><span className="text-stone-400 block">Occupation:</span> <strong className="text-white">{editedProfile.occupation || 'IT Professional'}</strong></div>
-            <div><span className="text-stone-400 block">Work Schedule:</span> <strong className="text-white">{editedProfile.workSchedule || 'Flexible Hours'}</strong></div>
-            <div><span className="text-stone-400 block">Sleep Schedule:</span> <strong className="text-white">{editedProfile.sleepDuration || 7} hrs/day ({editedProfile.wakeUpTime || '06:30'} - {editedProfile.bedTime || '23:00'})</strong></div>
+            <div><span className="text-stone-400 block">DOB / Age:</span> <strong className="text-white">{editedProfile.dob ? `${editedProfile.dob}${editedProfile.age ? ` (${editedProfile.age} yrs)` : ''}` : NP}</strong></div>
+            <div><span className="text-stone-400 block">Gender:</span> <strong className="text-white capitalize">{editedProfile.gender || 'Not provided'}</strong></div>
+            <div><span className="text-stone-400 block">Height / Weight:</span> <strong className="text-white">{editedProfile.heightCm && editedProfile.weightKg ? `${editedProfile.heightCm} cm / ${editedProfile.weightKg} kg` : NP}</strong></div>
+            <div><span className="text-stone-400 block">Target Weight:</span> <strong className="text-emerald-400 font-bold">{editedProfile.targetWeightKg ? `${editedProfile.targetWeightKg} kg` : NP}</strong></div>
+            <div><span className="text-stone-400 block">Occupation:</span> <strong className="text-white">{editedProfile.occupation || NP}</strong></div>
+            <div><span className="text-stone-400 block">Work Schedule:</span> <strong className="text-white">{editedProfile.workSchedule || NP}</strong></div>
+            <div><span className="text-stone-400 block">Sleep Schedule:</span> <strong className="text-white">{editedProfile.sleepDuration ? `${editedProfile.sleepDuration} hrs/day` : NP}{editedProfile.wakeUpTime && editedProfile.bedTime ? ` (${editedProfile.wakeUpTime} - ${editedProfile.bedTime})` : ''}</strong></div>
           </div>
         )}
       </div>
@@ -538,27 +585,27 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 text-xs">
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Muscle Mass</span>
-            <strong className="text-emerald-400 font-extrabold text-sm">{editedProfile.muscleMassKg || 24.5} kg</strong>
+            <strong className="text-emerald-400 font-extrabold text-sm">{cm(editedProfile.muscleMassKg, 'kg')}</strong>
           </div>
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Waist</span>
-            <strong className="text-white font-extrabold text-sm">{editedProfile.circumferences?.waistCm || 81} cm</strong>
+            <strong className="text-white font-extrabold text-sm">{cm(editedProfile.circumferences?.waistCm)}</strong>
           </div>
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Hip</span>
-            <strong className="text-white font-extrabold text-sm">{editedProfile.circumferences?.hipCm || 98} cm</strong>
+            <strong className="text-white font-extrabold text-sm">{cm(editedProfile.circumferences?.hipCm)}</strong>
           </div>
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Chest</span>
-            <strong className="text-white font-extrabold text-sm">{editedProfile.circumferences?.chestCm || 88} cm</strong>
+            <strong className="text-white font-extrabold text-sm">{cm(editedProfile.circumferences?.chestCm)}</strong>
           </div>
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Neck</span>
-            <strong className="text-white font-extrabold text-sm">{editedProfile.circumferences?.neckCm || 34} cm</strong>
+            <strong className="text-white font-extrabold text-sm">{cm(editedProfile.circumferences?.neckCm)}</strong>
           </div>
           <div className="bg-stone-950 p-3 rounded-2xl border border-stone-800">
             <span className="text-stone-400 block text-[10px] font-bold uppercase">Arms (L/R)</span>
-            <strong className="text-white font-extrabold text-xs">{editedProfile.limbCircumferences?.leftArmCm || 28} / {editedProfile.limbCircumferences?.rightArmCm || 28.5} cm</strong>
+            <strong className="text-white font-extrabold text-xs">{editedProfile.limbCircumferences?.leftArmCm || editedProfile.limbCircumferences?.rightArmCm ? `${editedProfile.limbCircumferences?.leftArmCm ?? '—'} / ${editedProfile.limbCircumferences?.rightArmCm ?? '—'} cm` : NP}</strong>
           </div>
         </div>
       </div>
@@ -574,7 +621,8 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           <div>
             <span className="text-stone-400 text-xs block mb-1.5 font-bold">Selected Goals:</span>
             <div className="flex flex-wrap gap-1.5">
-              {(editedProfile.primaryGoals || ['Weight Loss', 'Fat Loss', 'Improve Gut Health']).map((g) => (
+              {(editedProfile.primaryGoals ?? []).length === 0 && <span className="text-xs text-stone-400">{NP}</span>}
+              {(editedProfile.primaryGoals ?? []).map((g) => (
                 <span key={g} className="px-3 py-1 bg-amber-400/20 text-amber-300 font-bold rounded-full text-xs border border-amber-400/30">
                   ✓ {g}
                 </span>
@@ -583,13 +631,55 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-2">
-            <div><span className="text-stone-400 block">Activity Level:</span> <strong className="text-white capitalize">{editedProfile.activityLevel}</strong></div>
-            <div><span className="text-stone-400 block">Daily Step Target:</span> <strong className="text-white">{editedProfile.dailyStepCount || 8500} steps</strong></div>
-            <div><span className="text-stone-400 block">Workout Frequency:</span> <strong className="text-white">{editedProfile.workoutFrequency || '3–4 Days'}</strong></div>
-            <div><span className="text-stone-400 block">Session Duration:</span> <strong className="text-white">{editedProfile.workoutDuration || 45} mins</strong></div>
+            <div><span className="text-stone-400 block">Activity Level:</span> <strong className="text-white capitalize">{editedProfile.heightCm && editedProfile.weightKg ? editedProfile.activityLevel : NP /* the blank profile's placeholder level is not the customer's data */}</strong></div>
+            <div><span className="text-stone-400 block">Daily Step Target:</span> <strong className="text-white">{editedProfile.dailyStepCount ? `${editedProfile.dailyStepCount} steps` : NP}</strong></div>
+            <div><span className="text-stone-400 block">Workout Frequency:</span> <strong className="text-white">{editedProfile.workoutFrequency || NP}</strong></div>
+            <div><span className="text-stone-400 block">Session Duration:</span> <strong className="text-white">{editedProfile.workoutDuration ? `${editedProfile.workoutDuration} mins` : NP}</strong></div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-2">
+            <AnswerField
+              label="Do you exercise regularly?"
+              testId="hp-has-exercise"
+              editing={isEditing}
+              saved={profile.hasExercise}
+              value={editedProfile.hasExercise}
+              onChange={(v) => setEditedProfile({ ...editedProfile, hasExercise: v })}
+            />
           </div>
         </div>
       </div>
+
+      {/* Women-only questions: shown for female profiles. Each is answered only by the customer; unanswered stays unanswered (never "No"). */}
+      {editedProfile.gender === 'female' && (
+        <div className="bg-stone-900 rounded-3xl p-6 border border-stone-800 shadow-xl space-y-4 text-white" data-testid="womens-health">
+          <h3 className="text-sm font-extrabold text-white uppercase tracking-wider flex items-center gap-2 border-b border-stone-800 pb-3">
+            <Heart className="w-4 h-4 text-pink-400" />
+            <span>Women&apos;s Health (optional)</span>
+          </h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+            <AnswerField label="Pregnant?" testId="hp-pregnant" editing={isEditing} saved={profile.isPregnant} value={editedProfile.isPregnant} onChange={(v) => setEditedProfile({ ...editedProfile, isPregnant: v })} />
+            <AnswerField label="Breastfeeding?" testId="hp-breastfeeding" editing={isEditing} saved={profile.isBreastfeeding} value={editedProfile.isBreastfeeding} onChange={(v) => setEditedProfile({ ...editedProfile, isBreastfeeding: v })} />
+            <AnswerField label="Menopause?" testId="hp-menopause" editing={isEditing} saved={profile.isMenopause} value={editedProfile.isMenopause} onChange={(v) => setEditedProfile({ ...editedProfile, isMenopause: v })} />
+            <div>
+              <label htmlFor="hp-cycle" className="text-stone-400 block mb-1">Menstrual cycle</label>
+              {isEditing ? (
+                <select
+                  id="hp-cycle"
+                  value={editedProfile.menstrualCycle ?? ''}
+                  onChange={(e) => setEditedProfile({ ...editedProfile, menstrualCycle: (e.target.value || undefined) as CustomerProfile['menstrualCycle'] })}
+                  className="w-full p-2 bg-stone-950 border border-stone-800 rounded-xl text-white"
+                >
+                  {profile.menstrualCycle === undefined && <option value="">Choose…</option>}
+                  <option value="Regular">Regular</option>
+                  <option value="Irregular">Irregular</option>
+                </select>
+              ) : (
+                <strong className="text-white">{editedProfile.menstrualCycle ?? NP}</strong>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Section 4: Clinical Medical, Medications & Blood Test Results */}
       <div className="bg-stone-900 rounded-3xl p-6 border border-stone-800 shadow-xl space-y-4 text-white">
@@ -602,7 +692,8 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           <div>
             <span className="text-stone-400 block mb-1 font-bold">Medical Conditions:</span>
             <div className="flex flex-wrap gap-1.5">
-              {(editedProfile.medicalConditions || ['PCOS']).map((mc) => (
+              {(editedProfile.medicalConditions ?? []).length === 0 && <span className="text-stone-400">{NP}</span>}
+              {(editedProfile.medicalConditions ?? []).map((mc) => (
                 <span key={mc} className="px-2.5 py-1 bg-rose-500/20 text-rose-300 font-bold rounded-lg border border-rose-500/30">
                   {mc}
                 </span>
@@ -613,7 +704,7 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           <div>
             <span className="text-stone-400 block mb-1 font-bold">Current Medications:</span>
             <div className="p-2.5 bg-stone-950 rounded-xl border border-stone-800 font-medium text-stone-200">
-              {editedProfile.currentMedications || 'None'}
+              {editedProfile.currentMedications || NP}
             </div>
           </div>
         </div>
@@ -654,14 +745,15 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           <div>
             <span className="text-stone-400 block mb-1 font-bold">Food Preference:</span>
             <span className="px-3 py-1.5 bg-emerald-500/20 text-emerald-300 font-bold rounded-xl border border-emerald-500/30 inline-block">
-              {editedProfile.foodPreference || 'Non-Vegetarian'}
+              {editedProfile.foodPreference || NP}
             </span>
           </div>
 
           <div>
             <span className="text-stone-400 block mb-1 font-bold">Allergies:</span>
             <div className="flex flex-wrap gap-1.5">
-              {(editedProfile.allergies || ['Peanuts']).map((al) => (
+              {(editedProfile.allergies ?? []).length === 0 && <span className="text-stone-400">{NP}</span>}
+              {(editedProfile.allergies ?? []).map((al) => (
                 <span key={al} className="px-2.5 py-1 bg-amber-500/20 text-amber-300 font-bold rounded-lg border border-amber-500/30">
                   ⚠️ {al}
                 </span>
@@ -672,7 +764,8 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
           <div>
             <span className="text-stone-400 block mb-1 font-bold">Disliked Foods:</span>
             <div className="flex flex-wrap gap-1.5">
-              {(editedProfile.foodDislikes || ['Mushroom']).map((fd) => (
+              {(editedProfile.foodDislikes ?? []).length === 0 && <span className="text-stone-400">{NP}</span>}
+              {(editedProfile.foodDislikes ?? []).map((fd) => (
                 <span key={fd} className="px-2.5 py-1 bg-stone-950 text-stone-300 font-medium rounded-lg border border-stone-800">
                   ✕ {fd}
                 </span>
@@ -726,6 +819,9 @@ export const HealthProfileTab: React.FC<HealthProfileTabProps> = ({ profile, onU
               ))}
             </tbody>
           </table>
+          {historyLogs.length === 0 && (
+            <p className="text-xs text-stone-400 py-3">No changes saved in this visit yet.</p>
+          )}
         </div>
       </div>
 

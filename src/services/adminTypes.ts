@@ -82,8 +82,9 @@ export interface UpdateStaffInput {
  * setup link (which embeds the token) and the UI holds it in transient component state - never in storage.
  */
 export interface InvitationHandoff {
-  deliveryMode: 'manual';
-  sentByEmail: false;
+  deliveryMode: 'manual' | 'email';
+  /** True only when the mail provider accepted the message. */
+  sentByEmail: boolean;
   expiresAt: string;
   setupLink: string;
   note: string;

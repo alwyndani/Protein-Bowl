@@ -274,10 +274,21 @@ describe('P11B addresses', () => {
     expect(await screen.findByText('Enter the first line of the address.')).toBeTruthy();
     expect(screen.getByText('Enter the city.')).toBeTruthy();
     expect(screen.getByText('Enter the postal code.')).toBeTruthy();
+    // the label and the state start EMPTY and are required: nothing is prefilled with Home / Kerala
+    expect(screen.getByText('Enter a label for this address, for example Home.')).toBeTruthy();
+    expect(screen.getByText('Enter the state.')).toBeTruthy();
+    expect(screen.getByLabelText('Label (for example Home)').props.value).toBe('');
+    expect(screen.getByLabelText('State').props.value).toBe('');
     expect(b.log.some((r) => r.method === 'POST' && r.path === '/customers/me/addresses')).toBe(false); // nothing was posted
     fireEvent.changeText(screen.getByLabelText('Address line 1'), '12 Beach Road');
     fireEvent.changeText(screen.getByLabelText('City'), 'Kochi');
     fireEvent.changeText(screen.getByLabelText('Postal code'), '682001');
+    press('Save address');
+    // still refused while the label and state are empty (the customer must type them)
+    expect(await screen.findByText('Enter the state.')).toBeTruthy();
+    expect(b.log.some((r) => r.method === 'POST' && r.path === '/customers/me/addresses')).toBe(false);
+    fireEvent.changeText(screen.getByLabelText('Label (for example Home)'), 'Home');
+    fireEvent.changeText(screen.getByLabelText('State'), 'Kerala');
     press('Save address');
     expect(await screen.findByText(/12 Beach Road, Kochi, Kerala, 682001/)).toBeTruthy();
     const post = b.log.find((r) => r.method === 'POST' && r.path === '/customers/me/addresses')!;
@@ -324,6 +335,8 @@ describe('P11B addresses', () => {
     fireEvent.changeText(await screen.findByLabelText('Address line 1'), '12 Beach Road');
     fireEvent.changeText(screen.getByLabelText('City'), 'Kochi');
     fireEvent.changeText(screen.getByLabelText('Postal code'), '682001');
+    fireEvent.changeText(screen.getByLabelText('Label (for example Home)'), 'Home');
+    fireEvent.changeText(screen.getByLabelText('State'), 'Kerala');
     b.failNext('/customers/me/addresses', 'network');
     press('Save address');
     expect(await screen.findByText(/not saved/)).toBeTruthy();
@@ -336,6 +349,8 @@ describe('P11B addresses', () => {
     fireEvent.changeText(await screen.findByLabelText('Address line 1'), '12 Beach Road');
     fireEvent.changeText(screen.getByLabelText('City'), 'Kochi');
     fireEvent.changeText(screen.getByLabelText('Postal code'), '682001');
+    fireEvent.changeText(screen.getByLabelText('Label (for example Home)'), 'Home');
+    fireEvent.changeText(screen.getByLabelText('State'), 'Kerala');
     press('Save address');
     await waitFor(() => expect(b.log.some((r) => r.method === 'POST' && r.path === '/customers/me/addresses')).toBe(true));
     const body = b.log.find((r) => r.method === 'POST' && r.path === '/customers/me/addresses')!.body;

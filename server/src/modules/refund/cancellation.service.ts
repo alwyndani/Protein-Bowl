@@ -5,7 +5,7 @@ import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { OrderTransitionService, TransitionActor } from '../order/orderTransition.service.js';
 import { MESS_ORDER_TYPE } from '../order/orderStatus.js';
 import { Tx, lockOrder, lockProviderPaymentById, lockSession } from '../payment/paymentOps.js';
-import { ADMIN_CANCELLABLE_STATES, CUSTOMER_CANCELLABLE_STATES, UNDELIVERABLE_REFUND_REASON_CODE } from './cancellationPolicy.js';
+import { ADMIN_CANCELLABLE_STATES, CUSTOMER_CANCELLABLE_STATES, REVIEWABLE_CANCELLATION_STATES, UNDELIVERABLE_REFUND_REASON_CODE } from './cancellationPolicy.js';
 import { RefundService } from './refund.service.js';
 import { LIVE_REFUND_STATUSES, REFUND_TRIGGER } from './refundStatus.js';
 import { RefundViewService } from './refundView.service.js';
@@ -35,6 +35,8 @@ interface CancelCommand {
   mess?: MessCancelHooks;
   /** P9C: set only by cancelUndeliverableInTx. Replaces the state allow-list with DISPATCHED (verified again by OrderTransitionService). */
   undeliverable?: { attemptNumber: number };
+  /** Set only by cancelReviewedInTx (CancellationReviewService): the APPROVED staff-review request that allows a paid ACCEPTED/PREPARING/READY order to be cancelled. */
+  reviewed?: { requestId: string };
   context?: AuditContext;
 }
 
@@ -110,6 +112,30 @@ export class CancellationService {
     });
   }
 
+  // ================================================================================================ staff-reviewed cancellation (called ONLY by CancellationReviewService)
+  /**
+   * Cancels a PAID order that the kitchen already accepted/started, inside the CALLER's transaction (which has locked the order and flipped the
+   * request to APPROVED). Creates the FULL refund intent like every other cancellation; the provider is contacted only after the caller commits
+   * (RefundService.kick), and the reconciliation worker guarantees submission.
+   */
+  public static async cancelReviewedInTx(
+    tx: Tx,
+    admin: { userId: string; roles: readonly RoleEnum[] },
+    orderId: string,
+    request: { id: string; reasonCode: string; note: string | null },
+    context?: AuditContext
+  ): Promise<CancelResult> {
+    return await this.cancelTx(tx, {
+      orderId,
+      actor: { kind: 'USER', userId: admin.userId, roles: admin.roles, isGlobal: true },
+      byCustomer: false,
+      reasonCode: request.reasonCode,
+      note: request.note,
+      reviewed: { requestId: request.id },
+      context
+    });
+  }
+
   // ================================================================================================ core
   private static async cancel(cmd: CancelCommand): Promise<CancelResult> {
     const result = await prisma.$transaction(async (tx) => await this.cancelTx(tx, cmd), { maxWait: 10000, timeout: 20000 });
@@ -137,7 +163,8 @@ export class CancellationService {
     if (cmd.mess ? order.orderType !== MESS_ORDER_TYPE : order.orderType !== 'DIRECT') throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
     if (cmd.mess && cmd.undeliverable) throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
 
-    const allowedStates: readonly string[] = cmd.undeliverable ? ['DISPATCHED'] : cmd.byCustomer ? CUSTOMER_CANCELLABLE_STATES : ADMIN_CANCELLABLE_STATES;
+    if (cmd.reviewed && (cmd.mess || cmd.undeliverable || cmd.byCustomer || order.paymentStatus !== 'PAID')) throw new AppError('This order cannot be cancelled here', 409, 'CANCELLATION_NOT_ALLOWED');
+    const allowedStates: readonly string[] = cmd.reviewed ? REVIEWABLE_CANCELLATION_STATES : cmd.undeliverable ? ['DISPATCHED'] : cmd.byCustomer ? CUSTOMER_CANCELLABLE_STATES : ADMIN_CANCELLABLE_STATES;
     if (!allowedStates.includes(order.status)) {
       if (!cmd.byCustomer && (order.status === 'PREPARING' || order.status === 'READY')) {
         throw new AppError('Cancellation of an order that is already being prepared is not supported yet', 409, 'CANCELLATION_STATE_NOT_SUPPORTED');
@@ -147,7 +174,7 @@ export class CancellationService {
 
     // The kitchen must not have started physical work on it (kitchen/delivery side effects belong to P8/P9).
     const kot = await tx.kitchenOrderTicket.findUnique({ where: { orderId: order.id }, select: { status: true } });
-    if (kot && kot.status !== 'QUEUED') throw new AppError('The kitchen has already started this order', 409, 'CANCELLATION_STATE_NOT_SUPPORTED');
+    if (kot && kot.status !== 'QUEUED' && !cmd.reviewed) throw new AppError('The kitchen has already started this order', 409, 'CANCELLATION_STATE_NOT_SUPPORTED');
 
     let refundId: string | undefined;
     let sessionsClosed = 0;
@@ -192,7 +219,7 @@ export class CancellationService {
       tx
     );
 
-    await OrderTransitionService.transition({ orderId: order.id, to: 'CANCELLED', actor: cmd.actor, reason: cmd.reasonCode, refundIntentId: refundId, deliveryUndeliverable: cmd.undeliverable, context: cmd.context }, tx);
+    await OrderTransitionService.transition({ orderId: order.id, to: 'CANCELLED', actor: cmd.actor, reason: cmd.reasonCode, refundIntentId: refundId, cancellationReviewId: cmd.reviewed?.requestId, deliveryUndeliverable: cmd.undeliverable, context: cmd.context }, tx);
     if (cmd.mess) await cmd.mess.finish(tx);
     return { changed: true, orderId: order.id, orderNumber: order.orderNumber, refundId: refundId ?? null };
   }

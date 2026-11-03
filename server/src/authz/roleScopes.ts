@@ -1,4 +1,5 @@
 import { RoleEnum } from '@prisma/client';
+import { RETIRED_ROLES } from './approvedRoles.js';
 
 /**
  * Central role -> scope catalogue (static on purpose: no DB permission engine yet).
@@ -58,4 +59,4 @@ export function hasMixedIdentity(roles: readonly RoleEnum[]): boolean {
 }
 
 /** Roles that may never be granted through ordinary application APIs (initial/emergency SUPER_ADMIN uses the P6B bootstrap). */
-export const NON_ASSIGNABLE_ROLES: readonly RoleEnum[] = [RoleEnum.SUPER_ADMIN, RoleEnum.CUSTOMER, RoleEnum.MESS_CUSTOMER];
+export const NON_ASSIGNABLE_ROLES: readonly RoleEnum[] = [RoleEnum.SUPER_ADMIN, RoleEnum.CUSTOMER, ...(RETIRED_ROLES as readonly RoleEnum[])];

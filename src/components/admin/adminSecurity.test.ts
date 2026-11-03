@@ -62,16 +62,19 @@ describe('SUPER_ADMIN and MD are separate roles in the web client', () => {
     expect(mapBackendRoleToUserRole(['SUPER_ADMIN', 'MD'])).toBe('super_admin');
   });
 
-  it('MD still maps to md and ordinary roles are unaffected', () => {
-    expect(mapBackendRoleToUserRole(['MD'])).toBe('md');
+  it('a retired role (MD) maps to no workspace (customer default; the backend refuses it) and ordinary roles are unaffected', () => {
+    expect(mapBackendRoleToUserRole(['MD'])).toBe('customer');
+    for (const retired of ['DELIVERY', 'POS', 'BAKERY_FMCG', 'TEPACHE_ERP', 'SWIGGY_ZOMATO']) expect(mapBackendRoleToUserRole([retired]), retired).toBe('customer');
     expect(mapBackendRoleToUserRole(['CHEF'])).toBe('chef');
     expect(mapBackendRoleToUserRole(['CUSTOMER'])).toBe('customer');
   });
 
-  it('App renders the Admin workspace only for super_admin and keeps the MD dashboard on md only', () => {
+  it('App renders the Admin workspace only for super_admin and renders no dashboard for any retired role', () => {
     const app = read(join(__dirname, '..', '..', 'App.tsx'));
     expect(app).toMatch(/currentRole === 'super_admin' && <AdminWorkspace \/>/);
-    expect(app).toMatch(/currentRole === 'md' && \(/);
-    expect(app).not.toMatch(/currentRole === 'md' \|\| currentRole === 'super_admin'|currentRole === 'super_admin' \|\| currentRole === 'md'/);
+    for (const retired of ['md', 'pos', 'delivery', 'bakery_fmcg', 'tepache_erp', 'swiggy_zomato']) {
+      expect(app, retired).not.toMatch(new RegExp(`currentRole === '${retired}'`));
+    }
+    expect(app).not.toMatch(/MDDashboard|POSDashboard|BakeryFMCGDashboard|TepacheBreweryDashboard|SwiggyZomatoAggregatorPortal/);
   });
 });

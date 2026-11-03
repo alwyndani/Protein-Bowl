@@ -3,8 +3,7 @@ import type {
   DeliveryBranchRef,
   DeliveryMonitor,
   DeliveryMonitorOrder,
-  DeliveryOwnedOrder,
-  DriverQueue
+  DeliveryOwnedOrder
 } from '../services/deliveryTypes';
 
 export const DB_A: DeliveryBranchRef = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', code: 'kochi', name: 'Kochi Central' };
@@ -47,17 +46,6 @@ export function outOrder(over: Partial<DeliveryOwnedOrder> = {}): DeliveryOwnedO
   return ownedOrder({ status: 'DISPATCHED', assignment: { state: 'IN_TRANSIT', pickupTime: '2026-10-11T09:05:00.000Z', issueReported: false, attemptNumber: 1, maxAttempts: 3 }, proof: { state: 'READY_FOR_VERIFICATION', lockedUntil: null }, ...over });
 }
 
-export function driverQueue(sections: { available?: DeliveryAreaOrder[]; mine?: DeliveryOwnedOrder[]; out?: DeliveryOwnedOrder[] } = {}, over: Partial<DriverQueue> = {}): DriverQueue {
-  const mk = <T,>(items: T[] = []) => ({ total: items.length, truncated: false, items });
-  return {
-    serverTime: '2026-10-11T09:10:00.000Z',
-    sectionLimit: 100,
-    sections: { available: mk(sections.available), mine: mk(sections.mine), outForDelivery: mk(sections.out) },
-    branches: [DB_A],
-    selectedBranchIds: [DB_A.id],
-    ...over
-  };
-}
 
 export function monitorOrder(over: Partial<DeliveryMonitorOrder> = {}): DeliveryMonitorOrder {
   const base = areaOrder();

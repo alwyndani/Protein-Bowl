@@ -3,6 +3,7 @@ import request from 'supertest';
 import path from 'path';
 import { execSync } from 'child_process';
 import { PrismaClient, RoleEnum } from '@prisma/client';
+import { ADMIN_URL, urlOf } from './migrationDb.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -12,8 +13,7 @@ import jwt from 'jsonwebtoken';
  */
 const SERVER_DIR = path.resolve(__dirname, '../..');
 const DB_NAME = `protein_bowl_p6b_iso_${Date.now()}`;
-const ADMIN_URL = 'postgresql://postgres:postgres@localhost:5432/postgres?schema=public';
-const SCRATCH_URL = `postgresql://postgres:postgres@localhost:5432/${DB_NAME}?schema=public`;
+const SCRATCH_URL = urlOf(DB_NAME);
 const SECRET = 'test_access_secret_key_1234567890_super_secret';
 
 const BOOTSTRAP_PASSWORD = 'Initial#Quiet-Harbor-2026!';

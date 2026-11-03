@@ -1,4 +1,4 @@
-import { ApiClient } from './apiClient';
+import { ApiClient, ApiRequestError } from './apiClient';
 import { RecipeItem } from '../types';
 
 export interface RecipeQueryParams {
@@ -27,6 +27,24 @@ export interface PaginatedRecipeResponse {
   totalPages: number;
 }
 
+/** The server's recipe write contract (server/src/modules/recipe/recipe.validator.ts): note title / proteinGrams / carbsGrams / fatGrams / fiberGrams. */
+export interface RecipeWritePayload {
+  title: string;
+  category: string;
+  servingSize: string;
+  servingGrams: number;
+  calories: number;
+  proteinGrams: number;
+  carbsGrams: number;
+  fatGrams: number;
+  fiberGrams: number;
+  dietaryTag: string;
+  cuisine: string;
+  ingredientsList: Array<{ name: string; quantity: number; unit: string }>;
+  prepSteps: string[];
+  image?: string;
+}
+
 export class RecipeService {
   /**
    * Fetch public published recipes with filtering and pagination
@@ -48,7 +66,8 @@ export class RecipeService {
     const queryString = query.toString();
     const endpoint = `/recipes${queryString ? `?${queryString}` : ''}`;
     const response = await ApiClient.request(endpoint);
-    
+    if (!response.success) throw new ApiRequestError(response.message || 'Request failed', response.error || 'REQUEST_FAILED', response.httpStatus);
+
     return {
       items: response.data || [],
       recipes: response.data || [],
@@ -89,6 +108,7 @@ export class RecipeService {
 
     const queryString = query.toString();
     const response = await ApiClient.request(`/recipes/staff/all${queryString ? `?${queryString}` : ''}`);
+    if (!response.success) throw new ApiRequestError(response.message || 'Request failed', response.error || 'REQUEST_FAILED', response.httpStatus);
 
     return {
       items: response.data || [],
@@ -103,33 +123,26 @@ export class RecipeService {
   /**
    * Staff recipe creation (CHEF -> Draft, SUPER_ADMIN -> Published/Draft)
    */
-  public static async createRecipe(recipeData: Partial<RecipeItem>): Promise<RecipeItem> {
-    const response = await ApiClient.request('/recipes', {
-      method: 'POST',
-      body: JSON.stringify(recipeData),
-    });
-    return response.data;
+  public static async createRecipe(recipeData: RecipeWritePayload): Promise<RecipeItem> {
+    // requestData THROWS on any failure: a recipe that was not saved must never look saved.
+    return await ApiClient.requestData<RecipeItem>('/recipes', { method: 'POST', body: JSON.stringify(recipeData) });
   }
 
   /**
    * Staff recipe edit
    */
-  public static async updateRecipe(id: string, recipeData: Partial<RecipeItem>): Promise<RecipeItem> {
-    const response = await ApiClient.request(`/recipes/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(recipeData),
-    });
-    return response.data;
+  public static async updateRecipe(id: string, recipeData: Partial<RecipeWritePayload>): Promise<RecipeItem> {
+    return await ApiClient.requestData<RecipeItem>(`/recipes/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(recipeData) });
   }
 
   /**
    * SUPER_ADMIN toggle recipe publish status
    */
   public static async publishRecipe(id: string, isPublished: boolean): Promise<RecipeItem> {
-    const response = await ApiClient.request(`/recipes/${id}/publish`, {
+    // requestData throws on failure: a recipe that was not published must never look published.
+    return await ApiClient.requestData<RecipeItem>(`/recipes/${encodeURIComponent(id)}/publish`, {
       method: 'PATCH',
       body: JSON.stringify({ isPublished }),
     });
-    return response.data;
   }
 }

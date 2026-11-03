@@ -50,8 +50,9 @@ export const TRANSITION_PARTIES: Readonly<Record<string, readonly TransitionPart
   'CONFIRMED->ACCEPTED': [RoleEnum.CHEF],
   'ACCEPTED->PREPARING': [RoleEnum.CHEF],
   'PREPARING->READY': [RoleEnum.CHEF],
-  // P9A: dispatch (= the assigned driver collected the order and started delivery) is DELIVERY ONLY.
-  'READY->DISPATCHED': [RoleEnum.DELIVERY],
+  // P9A: dispatch (= the order was collected and delivery started). Role simplification: SUPER_ADMIN operates delivery itself (every admin action needs a step-up proof
+  // at the route and the order/assignment rules in DeliveryOperateService).
+  'READY->DISPATCHED': [RoleEnum.SUPER_ADMIN],
   // P9B: DELIVERED is reachable ONLY through a verified DeliveryProof (the internal 'DELIVERY_PROOF' party, never a human role): the delivery
   // service completes it after a valid Delivery Code, or after the exceptional SUPER_ADMIN override. No human role is listed here on purpose.
   'DISPATCHED->DELIVERED': ['DELIVERY_PROOF'],

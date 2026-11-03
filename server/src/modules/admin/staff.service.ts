@@ -6,6 +6,7 @@ import { AuditContext, AuditService } from '../audit/audit.service.js';
 import { InvitationService } from './invitation.service.js';
 import { getInvitationDelivery, InvitationHandoff } from './invitationDelivery.js';
 import { StaffDto, staffUserSelect, toStaffDto } from './staff.dto.js';
+import { isApprovedRole } from '../../authz/approvedRoles.js';
 import { NON_ASSIGNABLE_ROLES, STAFF_ROLES, hasMixedIdentity, isBranchScopedRole, isCustomerRole } from '../../authz/roleScopes.js';
 
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -489,6 +490,11 @@ export class StaffAdminService {
         if (row.status === 'ACTIVE') return { changed: false, staff: toStaffDto(row) };
         if (row.status === 'PENDING') {
           throw new AppError('This account is waiting for invitation acceptance; it cannot be activated manually', 409, 'INVITATION_PENDING');
+        }
+
+        // Fail closed: an account with no approved role (for example one whose retired roles were stripped) is never reactivated.
+        if (!row.roles.some((r) => isApprovedRole(r.role))) {
+          throw new AppError('This account holds no approved role and cannot be activated', 409, 'NO_ROLE_ASSIGNED');
         }
 
         // Activation must not bypass password setup: an account that was invited but never accepted has only the

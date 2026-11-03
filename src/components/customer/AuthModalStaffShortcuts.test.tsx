@@ -9,36 +9,42 @@ vi.mock('../../context/AuthContext', () => ({ useAuth: () => auth, mapBackendRol
 
 const profile = { id: 'c', name: '', email: '', phone: '' } as never;
 
-async function renderStaffLogin(dev: boolean) {
+async function renderLogin(dev: boolean, mode: 'employee_login' | 'signin' | 'signup') {
   vi.resetModules();
   vi.stubEnv('DEV', dev);
   const { AuthModal } = await import('./AuthModal');
-  return render(<AuthModal isOpen onClose={vi.fn()} onSuccessLogin={vi.fn()} initialProfile={profile} initialMode="employee_login" />);
+  return render(<AuthModal {...({ isOpen: true, onClose: vi.fn(), onSuccessLogin: vi.fn(), onProfileLoaded: vi.fn(), initialProfile: profile, initialMode: mode } as unknown as React.ComponentProps<typeof AuthModal>)} />);
 }
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe('staff quick-select shortcuts are development-only (P9A pre-commit security verification)', () => {
-  it('PRODUCTION: no quick-select heading, department tabs, staff cards, prefilled email or password; only the manual sign-in form', async () => {
-    await renderStaffLogin(false);
-    expect(screen.queryByText(/quick select/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/1-click/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Kerala Mess & Hostels|Central Kitchen|Aggregators|Management & POS/ })).not.toBeInTheDocument();
-    expect(screen.queryByText(/proteinbowl\.in|nutrifitkitchen\.in/)).not.toBeInTheDocument();
-    const email = screen.getByPlaceholderText('Employee ID or work email') as HTMLInputElement;
-    expect(email.value).toBe('');
-    expect((document.querySelector('input[type=password]') as HTMLInputElement).value).toBe('');
-  });
+describe('no fake credentials, preset accounts or shortcut logins in ANY build (development included)', () => {
+  for (const dev of [true, false]) {
+    it(`DEV=${dev}: the staff form has only empty manual fields: no quick-select, no preset cards, no prefilled email or password`, async () => {
+      await renderLogin(dev, 'employee_login');
+      expect(screen.queryByText(/quick select/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/1-click/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Kerala Mess & Hostels|Central Kitchen|Aggregators|Management & POS/ })).not.toBeInTheDocument();
+      expect(document.body.textContent).not.toMatch(/proteinbowl\.in|nutrifitkitchen\.in|Password123/);
+      const email = screen.getByPlaceholderText('Employee ID or work email') as HTMLInputElement;
+      expect(email.value).toBe('');
+      expect((document.querySelector('input[type=password]') as HTMLInputElement).value).toBe('');
+    });
 
-  it('DEVELOPMENT: the shortcuts exist (proves the production test above is meaningful)', async () => {
-    await renderStaffLogin(true);
-    expect(screen.getByText(/quick select/i)).toBeInTheDocument();
-  });
+    it(`DEV=${dev}: the customer sign-in and sign-up forms show no social sign-in buttons`, async () => {
+      for (const mode of ['signin', 'signup'] as const) {
+        const { unmount } = await renderLogin(dev, mode);
+        expect(screen.queryByText(/Google SSO/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Apple ID/)).not.toBeInTheDocument();
+        unmount();
+      }
+    });
+  }
 
-  it('the shortcut data and the hard-coded seed password are reachable only behind the DEV flag (static)', () => {
+  it('the source carries no credential literal, preset staff list, quick-login handler or social-auth stand-in (static)', () => {
     const src = readFileSync(join(__dirname, 'AuthModal.tsx'), 'utf8');
-    expect(src).toContain('const EMPLOYEE_PRESETS = IS_DEV ? ALL_EMPLOYEE_PRESETS : [];');
-    expect(src).toMatch(/handleQuickEmployeeLogin[\s\S]{0,120}if \(!IS_DEV\) return;/);
-    expect(src).toMatch(/\{IS_DEV && \(\s*<div>[\s\S]{0,200}Quick Select Staff Account/);
+    for (const forbidden of [/Password123/, /SocialAuthPassword/, /EMPLOYEE_PRESETS/, /handleQuickEmployeeLogin/, /handleSocialAuth/, /@proteinbowl\.in/, /@nutrifitkitchen\.in/, /IS_DEV/]) {
+      expect(src, String(forbidden)).not.toMatch(forbidden);
+    }
   });
 });

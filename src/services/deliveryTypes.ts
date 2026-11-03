@@ -51,19 +51,6 @@ export interface DeliverySection<T> {
   items: T[];
 }
 
-export interface DriverQueue {
-  serverTime: string;
-  sectionLimit: number;
-  sections: {
-    available: DeliverySection<DeliveryAreaOrder>;
-    mine: DeliverySection<DeliveryOwnedOrder>;
-    outForDelivery: DeliverySection<DeliveryOwnedOrder>;
-  };
-  /** The branches the SERVER authorized for this account (the only ones the selector may offer). */
-  branches: DeliveryBranchRef[];
-  selectedBranchIds: string[];
-}
-
 export const FAILURE_REASONS = [
   { code: 'CUSTOMER_UNAVAILABLE', label: 'Customer not available' },
   { code: 'CUSTOMER_UNREACHABLE', label: 'Customer not reachable' },
@@ -73,23 +60,13 @@ export const FAILURE_REASONS = [
 ] as const;
 export type FailureReasonCode = (typeof FAILURE_REASONS)[number]['code'];
 
-export interface FailureReportInput {
-  reasonCode: FailureReasonCode;
-  note?: string;
-}
-
-export type DriverAction = 'claim' | 'dispatch' | 'resume';
-
-export interface DriverActionResult {
-  changed: boolean;
-  order: DeliveryOwnedOrder;
-}
-
 // ---- SUPER_ADMIN / MD monitor
 export interface DeliveryMonitorOrder extends DeliveryAreaOrder {
   assignment: {
     state: AssignmentState | null;
     driver: { employeeId: string; employeeCode: string; fullName: string } | null;
+    /** Role simplification: the live job is operated by a SUPER_ADMIN (no driver). Older servers omit it. */
+    operator?: 'ADMIN' | null;
     pickupTime: string | null;
     attemptNumber: number;
   };
@@ -113,35 +90,6 @@ export interface DeliveryMonitor {
   };
   branch: DeliveryBranchRef;
   readOnly: boolean;
-}
-
-export interface AssignableDriver {
-  employeeId: string;
-  employeeCode: string;
-  fullName: string;
-}
-
-export interface AssignmentInput {
-  /** null = unassign */
-  driverEmployeeId: string | null;
-  /** The driver this screen showed (null = unclaimed). A mismatch is a 409 instead of an overwrite. */
-  expectedDriverId: string | null;
-  reason: string;
-}
-
-export interface AssignmentResult {
-  changed: boolean;
-  orderId: string;
-  orderNumber: string;
-  action: 'ASSIGNED' | 'REASSIGNED' | 'UNASSIGNED' | 'NONE';
-  previousDriverId: string | null;
-  driverEmployeeId: string | null;
-}
-
-// ---- Delivery Code (P9B)
-export interface VerifyDeliveryResult {
-  changed: boolean;
-  order: { id: string; orderNumber: string; status: string; deliveredAt: string };
 }
 
 export const OVERRIDE_REASONS = [

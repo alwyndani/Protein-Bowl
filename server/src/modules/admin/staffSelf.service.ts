@@ -2,18 +2,19 @@ import { RoleEnum } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { ROLE_PERMISSIONS, Permission } from '../../authz/permissions.js';
-import { ROLE_SCOPE, STAFF_ROLES } from '../../authz/roleScopes.js';
+import { ROLE_SCOPE, NON_ASSIGNABLE_ROLES } from '../../authz/roleScopes.js';
+import { APPROVED_STAFF_ROLES } from '../../authz/approvedRoles.js';
 import { staffUserSelect, toStaffDto } from './staff.dto.js';
 
 /** Descriptive catalogue for UIs (e.g. the future Super Admin workspace). Informational only - the backend authorizes every call. */
 export function getPermissionCatalogue() {
   return {
     note: 'Descriptive only. Authorization is always enforced by the backend, never by the client.',
-    roles: STAFF_ROLES.map((role) => ({
+    roles: (APPROVED_STAFF_ROLES as readonly RoleEnum[]).map((role) => ({
       role,
       scope: ROLE_SCOPE[role],
       permissions: (ROLE_PERMISSIONS[role] ?? []) as readonly Permission[],
-      assignableThroughAdminApi: role !== RoleEnum.SUPER_ADMIN
+      assignableThroughAdminApi: !NON_ASSIGNABLE_ROLES.includes(role)
     }))
   };
 }

@@ -329,7 +329,8 @@ describe('P7A order status catalogue', () => {
   it('confirmation is a SYSTEM-only edge, kitchen edges are CHEF-only (P8), dispatch is DELIVERY-only and DELIVERED has no party yet (P9A)', () => {
     expect(TRANSITION_PARTIES['PENDING->CONFIRMED']).toEqual(['SYSTEM']);
     expect(TRANSITION_PARTIES['PREPARING->READY']).toEqual([RoleEnum.CHEF]);
-    expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
+    expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.SUPER_ADMIN]); // B2a: the SUPER_ADMIN operator only
+    expect(TRANSITION_PARTIES['READY->DISPATCHED']).not.toContain(RoleEnum.DELIVERY); // the retired driver role is explicitly rejected
     expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']);
     // MD is read-only: it appears on no edge
     expect(Object.values(TRANSITION_PARTIES).flat()).not.toContain(RoleEnum.MD);
@@ -409,11 +410,7 @@ describe('P7A order numbers', () => {
     for (let i = 0; i < 200; i++) expect(generateOrderNumber().slice(10)).not.toMatch(/[01OILU]/); // suffix only; the date part is digits
   });
 
-  it('are unique across a large sample (CSPRNG suffix)', () => {
-    const seen = new Set<string>();
-    for (let i = 0; i < 2000; i++) seen.add(generateOrderNumber());
-    expect(seen.size).toBe(2000);
-  });
+  // Uniqueness: the statistical 2000-sample check was replaced by deterministic generator tests in p7a.orderNumber.unit.test.ts; the production guarantee is the UNIQUE index + retry (p7a.test.ts 34 / 35).
 
   it('the generator can be replaced in tests (deterministic collision tests)', () => {
     setOrderNumberGenerator(() => 'PB-FIXED-000001');

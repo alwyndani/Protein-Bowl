@@ -1,21 +1,23 @@
-import React, { useState } from 'react';
-import { CustomerProfile, PlanType, DietaryPreference, RecipeItem, DietPlanRequest } from '../../types';
-import { ALL_RECIPES } from '../../data/recipeDatabase';
-import { calculateMDCostEngine } from '../../utils/costEngine';
-import { Calendar, Utensils, Sparkles, Check, ChevronRight, ShieldCheck, Heart, Sliders, ArrowRight, AlertCircle, Receipt } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { CustomerProfile, PlanType, DietaryPreference, DietPlanRequest } from '../../types';
+import { Calendar, Utensils, Sparkles, Check, ChevronRight, ShieldCheck, Heart, Sliders, ArrowRight, AlertCircle } from 'lucide-react';
 import { DietService } from '../../services/dietService';
+import { RecipeService } from '../../services/recipeService';
+import { mapCustomerRequests } from '../../utils/dietMapping';
 import confetti from 'canvas-confetti';
 
 interface DietPlanBuilderProps {
   profile: CustomerProfile;
   onSubmitRequest: (request: DietPlanRequest) => void;
-  onOpenMenuModal: (recipe: RecipeItem) => void;
 }
 
+/**
+ * Diet plan REQUEST. It sends the customer's preferences to a nutritionist and shows no price: diet plans have no priced purchase flow yet,
+ * and a client-side calculation must never be presented (or sent) as a price. Dish categories come from the real recipe catalogue.
+ */
 export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
   profile,
-  onSubmitRequest,
-  onOpenMenuModal
+  onSubmitRequest
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
@@ -31,18 +33,25 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
   const [addonSlots, setAddonSlots] = useState<string[]>(['4:00 PM Afternoon Snack/Salad']);
   
   // Preferred Dish Categories shortlist
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([
-    'Choice of Chicken – Air Fried',
-    'Choice of Salads – Non-Veg',
-    'Kerala Breakfast',
-    'Choice of Quinoa'
-  ]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
   const [allergiesExclusions, setAllergiesExclusions] = useState<string>(
     `${profile.allergies.join(', ')} | Conditions: ${profile.medicalConditions.join(', ')}`
   );
 
-  const availableCategories = Array.from(new Set(ALL_RECIPES.map((r) => r.category)));
+  // Real catalogue categories (published recipes only). If the catalogue cannot be loaded the list is simply empty: nothing is invented.
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    RecipeService.getCategories()
+      .then((rows) => {
+        if (!cancelled) setAvailableCategories(rows.map((r) => r.category));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const toggleCategory = (cat: string) => {
     if (selectedCategories.includes(cat)) {
@@ -60,13 +69,6 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
     }
   };
 
-  const pricing = calculateMDCostEngine(
-    planType === '1meal' ? 1 : planType === '2meal' ? 2 : 3,
-    durationDays,
-    dietaryPreference,
-    addonSlots.length
-  );
-
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -75,8 +77,9 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
     setErrorMessage(null);
 
     try {
+      // No price is sent: the server never trusts (and the product has no) client-calculated diet pricing.
       const response = await DietService.submitRequest({
-        goal: profile.goal || 'Weight Loss & Lean Muscle',
+        goal: profile.goal,
         notes: allergiesExclusions,
         planType,
         durationDays,
@@ -87,40 +90,16 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
         allergiesExclusions,
         customQuery: profile.customQuery,
         addonSlots,
-        preferredCategories: selectedCategories,
-        calculatedPrice: pricing.totalPayable
+        preferredCategories: selectedCategories
       });
 
-      confetti({ particleCount: 80, spread: 80 });
-
-      if (response && response.data) {
-        onSubmitRequest(response.data);
-      } else {
-        const fallbackReq: DietPlanRequest = {
-          id: `req-${Date.now().toString().slice(-4)}`,
-          customerId: profile.id,
-          customerName: profile.name,
-          customerEmail: profile.email,
-          customerPhone: profile.phone,
-          bmi: profile.bmi,
-          goal: profile.goal,
-          targetCalories: profile.targetCalories,
-          planType,
-          durationDays,
-          preferredCategories: selectedCategories,
-          dietaryPreference,
-          cuisinePreference,
-          grainPreference,
-          spiceLevel,
-          allergiesExclusions,
-          customQuery: profile.customQuery,
-          addonSlots,
-          status: 'pending_review',
-          calculatedPrice: pricing.totalPayable,
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-        onSubmitRequest(fallbackReq);
+      // Success only when the server accepted and returned the saved request: a missing answer must never look like a submitted request.
+      if (!response || !response.success || !response.data) {
+        throw new Error('We could not submit your request. Please try again.');
       }
+      confetti({ particleCount: 80, spread: 80 });
+      const saved = mapCustomerRequests([response.data], profile)[0];
+      onSubmitRequest(saved);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to submit diet request. Please try again.');
     } finally {
@@ -348,7 +327,7 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
           {/* Add-on Slots Selector */}
           <div>
             <h3 className="text-base font-extrabold text-white mb-1">Attach Add-ons to Designated Time Slots</h3>
-            <p className="text-xs text-stone-400 mb-3">Attach fresh salads, cold-pressed juices, or protein snacks (₹99 / slot / day)</p>
+            <p className="text-xs text-stone-400 mb-3">Ask for fresh salads, cold-pressed juices, or protein snacks in these time slots (your nutritionist will confirm what is possible)</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
                 '11:00 AM Morning Snack/Salad',
@@ -439,43 +418,12 @@ export const DietPlanBuilder: React.FC<DietPlanBuilderProps> = ({
             <div>
               <h4 className="font-extrabold text-white text-base">Send Request to Dietician Team</h4>
               <p className="text-xs text-stone-300 mt-1 leading-relaxed">
-                Once submitted, our Chief Nutritionist will review your BMI ({profile.bmi}), goal ({profile.goal}), macro target ({profile.targetCalories} kcal), and chosen preferences to assemble a day-by-day customized plan. You will receive the plan in your login for review & approval before paying!
+                Once submitted, our Chief Nutritionist will review your BMI ({profile.bmi}), goal ({profile.goal}), macro target ({profile.targetCalories} kcal), and chosen preferences to assemble a day-by-day customized plan. You will receive the plan in your account for review. Nothing is charged by submitting this request.
               </p>
             </div>
           </div>
 
-          {/* MD Cost Engine Price Calculation Summary Box */}
-          <div className="bg-gradient-to-br from-emerald-950 to-emerald-900 text-white rounded-2xl p-5 border border-emerald-500/40 space-y-3">
-            <div className="flex items-center justify-between border-b border-emerald-800/80 pb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-                <Receipt className="w-4 h-4 text-amber-400" /> MD Cost Engine Auto-Calculated Package Pricing
-              </span>
-              <span className="text-[10px] bg-amber-400/20 text-amber-300 font-extrabold px-2.5 py-0.5 rounded-full border border-amber-400/30">
-                {pricing.discountPercentage}% Savings Applied
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div>
-                <span className="text-emerald-300 text-[10px] uppercase font-bold block">Base Daily Cost</span>
-                <strong className="text-white text-sm">₹{pricing.dailyBaseCost} / day</strong>
-              </div>
-              <div>
-                <span className="text-emerald-300 text-[10px] uppercase font-bold block">Add-ons ({addonSlots.length})</span>
-                <strong className="text-white text-sm">₹{pricing.dailyAddonCost} / day</strong>
-              </div>
-              <div>
-                <span className="text-emerald-300 text-[10px] uppercase font-bold block">Package Discount</span>
-                <strong className="text-amber-300 text-sm">-₹{pricing.discountAmount.toLocaleString()}</strong>
-              </div>
-              <div>
-                <span className="text-emerald-300 text-[10px] uppercase font-bold block">Estimated Total</span>
-                <strong className="text-amber-300 text-lg font-black">₹{pricing.totalPayable.toLocaleString()}</strong>
-              </div>
-            </div>
-          </div>
-
-          {/* Summary Box */}
+          {/* Summary Box (no price: diet plans have no priced purchase flow) */}
           <div className="bg-stone-950 rounded-2xl p-5 border border-stone-800 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-stone-400">Subscription Request Overview</h4>
 

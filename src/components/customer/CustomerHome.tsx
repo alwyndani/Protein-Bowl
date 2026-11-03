@@ -3,8 +3,7 @@ import { RecipeItem, CustomerProfile } from '../../types';
 import { useCart } from '../../context/CartContext';
 import { formatInr } from '../../utils/money';
 import type { AddToCartHandler } from './StorefrontProduct';
-import { INITIAL_COMBO_OFFERS } from '../../data/mockData';
-import { ALL_RECIPES } from '../../data/recipeDatabase';
+import { usePublishedRecipes } from '../../hooks/usePublishedRecipes';
 import { matchCategoryToRecipe } from '../../utils/categoryFilter';
 import { LogoMark } from '../common/LogoMark';
 import { CinematicHeroAnimation } from './CinematicHeroAnimation';
@@ -46,19 +45,25 @@ interface CustomerHomeProps {
 }
 
 export const CHEF_MENU_12_CATEGORIES = [
-  { id: 'Choice of Rice', title: 'Choice of Rice', icon: '🍚', count: '6 Dishes', desc: 'Kerala Matta, Organic White & Brown Rice' },
-  { id: 'Flavored Rice', title: 'Flavored Rice', icon: '🌿', count: '5 Dishes', desc: 'Lemon Herb, Garlic Butter & Spiced Rice' },
-  { id: 'Choice of Chicken – Air Fried', title: 'Air-Fried Chicken', icon: '🍗', count: '12 Dishes', desc: 'Lean Lemon Garlic & Pepper Chicken' },
-  { id: 'Lunch Accomplishments – Kerala', title: 'Kerala Accompaniments', icon: '🍛', count: '8 Dishes', desc: 'Beetroot Thoran, Aviyal & Mezhukkupuratti' },
-  { id: 'Choice of Fish', title: 'Choice of Fish', icon: '🐟', count: '5 Dishes', desc: 'Grilled Sear Fish & Coastal Curry Bowls' },
-  { id: 'Choice of Salads – Veg', title: 'Veg Salads', icon: '🥗', count: '7 Dishes', desc: 'Greek Feta, Garden Fresh & Sprouts' },
-  { id: 'Choice of Salads – Non-Veg', title: 'Non-Veg Salads', icon: '🥑', count: '6 Dishes', desc: 'High-Protein Avocado Chicken & Egg' },
-  { id: 'Choice of Quinoa', title: 'Choice of Quinoa', icon: '🌾', count: '5 Dishes', desc: 'Organic Tri-Color Quinoa Bowls' },
-  { id: 'Choice of Egg', title: 'Choice of Egg', icon: '🍳', count: '8 Dishes', desc: 'Spinach Omelette & Scrambled Egg Bowls' },
-  { id: 'Choice of Oatmeal', title: 'Choice of Oatmeal', icon: '🥣', count: '5 Dishes', desc: 'Apple Cinnamon & Peanut Butter Oats' },
-  { id: 'Yogurt Bowls', title: 'Yogurt Bowls', icon: '🫐', count: '6 Dishes', desc: 'Mocha Protein & Berry Parfaits' },
-  { id: 'Desserts, Snacks & Bites', title: 'Desserts & Beverages', icon: '🍮', count: '8 Dishes', desc: 'Protein Brownies & Cold-Pressed Juices' },
+  { id: 'Choice of Rice', title: 'Choice of Rice', icon: '🍚', desc: 'Kerala Matta, Organic White & Brown Rice' },
+  { id: 'Flavored Rice', title: 'Flavored Rice', icon: '🌿', desc: 'Lemon Herb, Garlic Butter & Spiced Rice' },
+  { id: 'Choice of Chicken – Air Fried', title: 'Air-Fried Chicken', icon: '🍗', desc: 'Lean Lemon Garlic & Pepper Chicken' },
+  { id: 'Lunch Accomplishments – Kerala', title: 'Kerala Accompaniments', icon: '🍛', desc: 'Beetroot Thoran, Aviyal & Mezhukkupuratti' },
+  { id: 'Choice of Fish', title: 'Choice of Fish', icon: '🐟', desc: 'Grilled Sear Fish & Coastal Curry Bowls' },
+  { id: 'Choice of Salads – Veg', title: 'Veg Salads', icon: '🥗', desc: 'Greek Feta, Garden Fresh & Sprouts' },
+  { id: 'Choice of Salads – Non-Veg', title: 'Non-Veg Salads', icon: '🥑', desc: 'High-Protein Avocado Chicken & Egg' },
+  { id: 'Choice of Quinoa', title: 'Choice of Quinoa', icon: '🌾', desc: 'Organic Tri-Color Quinoa Bowls' },
+  { id: 'Choice of Egg', title: 'Choice of Egg', icon: '🍳', desc: 'Spinach Omelette & Scrambled Egg Bowls' },
+  { id: 'Choice of Oatmeal', title: 'Choice of Oatmeal', icon: '🥣', desc: 'Apple Cinnamon & Peanut Butter Oats' },
+  { id: 'Yogurt Bowls', title: 'Yogurt Bowls', icon: '🫐', desc: 'Mocha Protein & Berry Parfaits' },
+  { id: 'Desserts, Snacks & Bites', title: 'Desserts & Beverages', icon: '🍮', desc: 'Protein Brownies & Cold-Pressed Juices' },
 ];
+
+/** "N Dishes" for a category, counted from the published recipes actually loaded (never a fixed number). */
+export const dishCount = (recipes: RecipeItem[], categoryId: string): string => {
+  const n = recipes.filter((r) => matchCategoryToRecipe(categoryId, r)).length;
+  return `${n} ${n === 1 ? 'Dish' : 'Dishes'}`;
+};
 
 export const CustomerHome: React.FC<CustomerHomeProps> = ({
   onSelectTab,
@@ -77,7 +82,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 }) => {
   const [selectedMenuCategory, setSelectedMenuCategory] = useState<string>('Choice of Chicken – Air Fried');
 
-  const filteredRecipes = ALL_RECIPES.filter((r) => matchCategoryToRecipe(selectedMenuCategory, r));
+  const published = usePublishedRecipes();
+  const filteredRecipes = published.recipes.filter((r) => matchCategoryToRecipe(selectedMenuCategory, r));
 
   // Cart figures come from the SERVER cart (CartContext); nothing is computed locally.
   const serverCart = useCart();
@@ -232,7 +238,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                 Traditional Homestyle Kerala Meals for College Hostels & PGs
               </h2>
               <p className="text-stone-300 text-xs sm:text-sm leading-relaxed">
-                Appam with Stew, Kerala Matta Rice, Fish Curry, Sambar & Thoran cooked in central cloud kitchens using pure coconut oil. Enjoy monthly budget meal passes starting at only <strong className="text-emerald-400">₹70/meal</strong> with free home-trip meal pausing & instant refund credits.
+                Homestyle Kerala meals prepared in our kitchens and delivered to your hostel or PG service point on a meal-pass subscription. Current plans, prices and pause rules are shown in the Kerala Mess portal.
               </p>
 
               {/* Fast feature bullets */}
@@ -243,11 +249,11 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                 </div>
                 <div className="flex items-center gap-2 text-stone-200">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Insulated Crate Drop to Hostels</span>
+                  <span>Delivered to your service point</span>
                 </div>
                 <div className="flex items-center gap-2 text-stone-200">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Pause Meal when Travelling</span>
+                  <span>Pause meals before the cut-off</span>
                 </div>
               </div>
             </div>
@@ -256,8 +262,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             <div className="bg-stone-950/80 p-6 rounded-2xl border border-stone-800 space-y-4 shrink-0 lg:w-80 text-center">
               <div className="space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-wider text-stone-400">Student & PG Subscription</span>
-                <div className="text-2xl font-black text-amber-400">₹2,100 <span className="text-xs text-stone-400 font-normal">/ month (30 meals)</span></div>
-                <p className="text-[11px] text-stone-400">Or single daily meal from ₹70</p>
+                <p className="text-sm font-bold text-amber-300">See the current plans and prices</p>
+                <p className="text-[11px] text-stone-400">Prices are set by Protein Bowl and shown in the portal.</p>
               </div>
 
               <div className="space-y-2">
@@ -329,7 +335,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                   <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full ${
                     active ? 'bg-emerald-400 text-stone-950 font-black' : 'bg-stone-800 text-stone-400'
                   }`}>
-                    {cat.count}
+                    {published.status === 'ready' ? dishCount(published.recipes, cat.id) : '…'}
                   </span>
                 </div>
 
@@ -349,6 +355,16 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             );
           })}
         </div>
+
+        {published.status === 'error' && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/50 px-4 py-3 text-sm text-rose-200">
+            <span>The menu could not be loaded.</span>
+            <button type="button" onClick={published.reload} className="font-black underline">Retry</button>
+          </div>
+        )}
+        {published.status === 'ready' && filteredRecipes.length === 0 && (
+          <p className="text-sm text-stone-400">No dishes are published in this category yet.</p>
+        )}
 
         {/* Recipe Cards Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -413,72 +429,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         </div>
       </section>
 
-      {/* Subscription Plans & Combo Offers */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6 text-white">
-        <div className="text-center space-y-2">
-          <span className="text-xs font-black uppercase tracking-wider text-emerald-400 bg-emerald-500/20 px-3.5 py-1 rounded-full border border-emerald-500/30">Flexible Subscriptions</span>
-          <h2 className="text-3xl font-black text-white tracking-tight">
-            Popular Subscription Packages
-          </h2>
-          <p className="text-xs text-stone-300 max-w-md mx-auto">
-            Doorstep delivery in Kochi. Free meal swaps, pause/resume anytime.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {INITIAL_COMBO_OFFERS.map((combo) => (
-            <div
-              key={combo.id}
-              className="bg-stone-900 rounded-3xl p-6 border border-stone-800 hover:border-emerald-500 transition-all shadow-xl hover:shadow-2xl flex flex-col justify-between"
-            >
-              <div>
-                {combo.popularTag && (
-                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full mb-3 inline-block">
-                    {combo.popularTag}
-                  </span>
-                )}
-                <h3 className="text-xl font-black text-white">{combo.title}</h3>
-                <p className="text-xs text-stone-300 mt-2 leading-relaxed">{combo.subtitle}</p>
-
-                <ul className="mt-4 space-y-2.5 text-xs text-stone-300">
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Dietician Macro & BMI Review Included</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Free Same-Day Meal Swapping</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>Pause or Skip Days Anytime</span>
-                  </li>
-                </ul>
-              </div>
-
-              <div className="mt-6 pt-4 border-t border-stone-800">
-                <div className="flex items-baseline justify-between mb-4">
-                  <div>
-                    <span className="text-xs text-stone-500 line-through block">₹{Math.round(combo.price * 1.25)}</span>
-                    <span className="text-2xl font-black text-emerald-400">₹{combo.price.toLocaleString()}</span>
-                  </div>
-                  <span className="text-xs font-bold text-emerald-300 bg-emerald-950 px-2.5 py-1 rounded-lg border border-emerald-500/30">
-                    {combo.durationDays} Days Duration
-                  </span>
-                </div>
-
-                <button
-                  onClick={() => onSelectTab('plan_builder')}
-                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black py-3 rounded-xl text-xs transition-all shadow-lg hover:scale-[1.02]"
-                >
-                  Configure & Subscribe
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
+      {/* Fixed-price "combo" packages were invented marketing content with no backend behind them (and a fabricated strikethrough price): removed.
+          Real pricing comes from the server (products, Kerala Mess plans). */}
     </div>
   );
 };

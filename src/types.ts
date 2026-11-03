@@ -1,4 +1,5 @@
-export type UserRole = 'customer' | 'super_admin' | 'md' | 'nutritionist' | 'trainer' | 'chef' | 'procurement' | 'delivery' | 'pos' | 'bakery_fmcg' | 'tepache_erp' | 'swiggy_zomato';
+/** The six approved roles (UI form). Retired roles (MD, DELIVERY, POS, BAKERY_FMCG, TEPACHE_ERP, SWIGGY_ZOMATO, MESS_CUSTOMER) no longer exist in the UI. */
+export type UserRole = 'customer' | 'super_admin' | 'nutritionist' | 'trainer' | 'chef' | 'procurement';
 
 export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'athlete';
 export type HealthGoal = 'weight_loss' | 'muscle_gain' | 'maintenance' | 'wellness' | 'diabetic' | 'other';
@@ -134,6 +135,8 @@ export interface CustomerProfile {
   idealBodyWeightKg?: number;
   leanBodyMassKg?: number;
   calorieDeficitSurplus?: number; // kcal/day (+ or -)
+  /** Server verdict on the calorie/macro figures: unavailable (and those figures absent) until the date of birth and an explicit male/female sex are saved. */
+  calculation?: { available: boolean; missing: string[] };
 }
 
 export interface IngredientRequirement {
@@ -144,6 +147,8 @@ export interface IngredientRequirement {
 
 export interface RecipeItem {
   id: string;
+  /** Present on the staff catalogue only: a Chef's recipe is a draft until a Super Admin publishes it. */
+  isPublished?: boolean;
   category: string;
   name: string;
   servingSize: string;

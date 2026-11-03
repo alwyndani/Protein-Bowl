@@ -12,7 +12,7 @@ export interface MobileSession {
   refreshTokenExpiresAt: string;
 }
 
-export type SignedOutReason = 'none' | 'session_expired' | 'session_revoked' | 'account_inactive' | 'customer_only' | 'update_required' | 'storage_unavailable' | 'server_unconfirmed';
+export type SignedOutReason = 'none' | 'session_expired' | 'session_revoked' | 'account_inactive' | 'customer_only' | 'no_approved_role' | 'update_required' | 'storage_unavailable' | 'server_unconfirmed';
 
 export type AuthState =
   | { status: 'restoring' }

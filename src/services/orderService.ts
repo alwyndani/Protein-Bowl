@@ -54,6 +54,18 @@ export class OrderService {
     });
   }
 
+  /**
+   * Ask staff to cancel a PAID order the kitchen has already started. Promises nothing: it only creates a request for review.
+   * Body is ONLY the typed reason code and an optional note. Not retried automatically (the server is idempotent).
+   */
+  public static async requestCancellation(orderId: string, reasonCode: CustomerCancelReasonCode, note?: string): Promise<{ requestId: string; alreadyRequested: boolean }> {
+    const trimmed = note?.trim();
+    return await ApiClient.requestData('/orders/' + encodeURIComponent(orderId) + '/cancellation-request', {
+      method: 'POST',
+      body: JSON.stringify(trimmed ? { reasonCode, note: trimmed } : { reasonCode })
+    });
+  }
+
   /** Safe refund states for the caller's own order (needs the order id, not the order number). */
   public static async getOrderRefunds(orderId: string): Promise<OrderRefundsView> {
     return await ApiClient.requestData<OrderRefundsView>('/orders/' + encodeURIComponent(orderId) + '/refunds');

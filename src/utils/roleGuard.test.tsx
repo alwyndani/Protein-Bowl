@@ -5,7 +5,9 @@ import { isUiRoleAllowed } from './roleGuard';
 import { BrandHeader } from '../components/common/BrandHeader';
 import type { UserRole } from '../types';
 
-const STAFF_UI_ROLES: UserRole[] = ['super_admin', 'md', 'nutritionist', 'trainer', 'chef', 'procurement', 'delivery', 'pos', 'bakery_fmcg', 'tepache_erp', 'swiggy_zomato'];
+const STAFF_UI_ROLES: UserRole[] = ['super_admin', 'nutritionist', 'trainer', 'chef', 'procurement'];
+// UI role strings of the retired roles: they no longer exist in the `UserRole` type, but stale state must still never present them.
+const RETIRED_UI_ROLES = ['md', 'delivery', 'pos', 'bakery_fmcg', 'tepache_erp', 'swiggy_zomato'] as unknown as UserRole[];
 
 describe('isUiRoleAllowed (production presentation guard)', () => {
   it('development builds keep the role sandbox', () => {
@@ -23,17 +25,22 @@ describe('isUiRoleAllowed (production presentation guard)', () => {
 
   it('production: a staff session may only present the dashboard matching its own backend role', () => {
     expect(isUiRoleAllowed('chef', ['CHEF'], false)).toBe(true);
-    expect(isUiRoleAllowed('pos', ['CHEF'], false)).toBe(false);
-    expect(isUiRoleAllowed('md', ['MD'], false)).toBe(true);
-    expect(isUiRoleAllowed('delivery', ['MD'], false)).toBe(false);
+    expect(isUiRoleAllowed('procurement', ['CHEF'], false)).toBe(false);
+    expect(isUiRoleAllowed('nutritionist', ['TRAINER'], false)).toBe(false);
+    expect(isUiRoleAllowed('trainer', ['TRAINER'], false)).toBe(true);
   });
 
-  it('production: SUPER_ADMIN gets its own workspace and is NOT presented the MD dashboard (and MD never gets the admin workspace)', () => {
+  it('production: no backend role, retired or approved, presents a retired role dashboard', () => {
+    const everyBackendRole = ['CUSTOMER', 'MESS_CUSTOMER', 'CHEF', 'NUTRITIONIST', 'TRAINER', 'PROCUREMENT', 'SUPER_ADMIN', 'MD', 'DELIVERY', 'POS', 'BAKERY_FMCG', 'TEPACHE_ERP', 'SWIGGY_ZOMATO'];
+    for (const ui of RETIRED_UI_ROLES) {
+      expect(isUiRoleAllowed(ui, everyBackendRole, false), ui).toBe(false);
+    }
+  });
+
+  it('production: SUPER_ADMIN gets its own workspace and no other role gets the admin workspace', () => {
     expect(isUiRoleAllowed('super_admin', ['SUPER_ADMIN'], false)).toBe(true);
-    expect(isUiRoleAllowed('md', ['SUPER_ADMIN'], false)).toBe(false);
     expect(isUiRoleAllowed('chef', ['SUPER_ADMIN'], false)).toBe(false);
     expect(isUiRoleAllowed('super_admin', ['MD'], false)).toBe(false);
-    expect(isUiRoleAllowed('md', ['MD'], false)).toBe(true);
     for (const role of ['CUSTOMER', 'MESS_CUSTOMER', 'CHEF', 'NUTRITIONIST']) expect(isUiRoleAllowed('super_admin', [role], false)).toBe(false);
   });
 });

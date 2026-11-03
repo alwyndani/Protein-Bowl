@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { RefreshCw, Truck } from 'lucide-react';
 import { DeliveryService } from '../../services/deliveryService';
 import { DeliveryResolutionService } from '../../services/deliveryResolutionService';
-import type { AssignableDriver, DeliveryMonitorOrder, MonitorProofState, OverrideReasonCode } from '../../services/deliveryTypes';
+import type { DeliveryMonitorOrder, MonitorProofState, OverrideReasonCode } from '../../services/deliveryTypes';
 import { FAILURE_REASONS, OVERRIDE_REASONS } from '../../services/deliveryTypes';
-import type { AttemptOutcome, DeliveryAttempts, RetryReasonCode, UndeliverableReasonCode } from '../../services/deliveryResolutionTypes';
+import type { AttemptOutcome, DeliveryAttempts, UndeliverableReasonCode } from '../../services/deliveryResolutionTypes';
 import { RETRY_REASONS, UNDELIVERABLE_REASONS } from '../../services/deliveryResolutionTypes';
 import { useDeliveryMonitor } from '../../hooks/useDeliveryMonitor';
 import { useAuth } from '../../context/AuthContext';
@@ -27,10 +27,6 @@ const PROOF_LABEL: Record<MonitorProofState, string> = {
 
 const reasonLabel = (code: string) => FAILURE_REASONS.find((r) => r.code === code)?.label ?? 'Other';
 
-type Mode = 'assign' | 'reassign' | 'unassign';
-/** P9C resolution actions on a delivery whose attempt FAILED (or a retry that was arranged but not resumed yet). */
-type ResolveMode = 'RETRY_SAME_DRIVER' | 'REASSIGN_AFTER_FAILURE' | 'REASSIGN_PENDING';
-
 const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
   RETRY_SAME_DRIVER: 'Retried with the same driver',
   REASSIGNED: 'Reassigned to another driver',
@@ -38,90 +34,6 @@ const OUTCOME_LABEL: Record<AttemptOutcome, string> = {
   ADMIN_OVERRIDE_DELIVERED: 'Handover confirmed by administrator'
 };
 const dateOrDash = (iso: string | null) => (iso ? formatDate(iso) : 'time not recorded');
-
-const AssignmentDialog: React.FC<{ order: DeliveryMonitorOrder; branchId: string; mode: Mode; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, branchId, mode, onClose, onDone, onStale }) => {
-  const { withStepUp } = useStepUp();
-  const { run, pending, error, clearError } = useAdminAction();
-  const [drivers, setDrivers] = useState<AssignableDriver[] | null>(null);
-  const [driversError, setDriversError] = useState(false);
-  const [driverId, setDriverId] = useState('');
-  const [reason, setReason] = useState('');
-  const [touched, setTouched] = useState(false);
-
-  const current = order.assignment.driver;
-  const needsDriver = mode !== 'unassign';
-  const reasonOk = reason.trim().length >= 3;
-  const valid = reasonOk && (!needsDriver || !!driverId);
-
-  useEffect(() => {
-    if (!needsDriver) return;
-    let cancelled = false;
-    DeliveryService.listDrivers(branchId)
-      .then((list) => !cancelled && setDrivers(list))
-      .catch(() => !cancelled && setDriversError(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId, needsDriver]);
-
-  useEffect(() => {
-    if (error?.code && STALE_CODES.includes(error.code)) onStale();
-  }, [error, onStale]);
-
-  const options = (drivers ?? []).filter((d) => d.employeeId !== current?.employeeId);
-  const title = mode === 'assign' ? `Assign a driver to ${order.orderNumber}` : mode === 'reassign' ? `Reassign ${order.orderNumber}` : `Unassign ${order.orderNumber}`;
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setTouched(true);
-    if (!valid) return;
-    const outcome = await run(() =>
-      // expectedDriverId = the driver THIS screen showed: if someone else changed it meanwhile the server answers 409 instead of overwriting
-      withStepUp((proof) => DeliveryService.assign(order.id, { driverEmployeeId: needsDriver ? driverId : null, expectedDriverId: current?.employeeId ?? null, reason: reason.trim() }, proof))
-    );
-    if (outcome.ok) onDone(mode === 'unassign' ? `Order ${order.orderNumber} is unassigned.` : `Order ${order.orderNumber} was ${mode === 'assign' ? 'assigned' : 'reassigned'}.`);
-  };
-
-  return (
-    <Modal title={title} onClose={onClose} closeDisabled={pending}>
-      <form onSubmit={submit} className="space-y-4" noValidate>
-        <p className="text-xs text-stone-400">
-          {current ? `Currently assigned to ${current.fullName} (${current.employeeCode}).` : 'No driver has claimed this order yet.'} This only changes who delivers it: the order's status and payment are not touched. It cannot be changed once the order is out for delivery.
-        </p>
-        {needsDriver && (
-          <Field label="Driver" htmlFor="assign-driver" error={touched && !driverId ? 'Choose a driver.' : undefined}>
-            <select id="assign-driver" value={driverId} onChange={(e) => setDriverId(e.target.value)} disabled={pending || drivers === null} className={inputClass} aria-invalid={touched && !driverId}>
-              <option value="">{drivers === null && !driversError ? 'Loading drivers…' : 'Select an active driver…'}</option>
-              {options.map((d) => (
-                <option key={d.employeeId} value={d.employeeId}>
-                  {d.fullName} ({d.employeeCode})
-                </option>
-              ))}
-            </select>
-            {driversError && (
-              <p role="alert" className="text-[11px] text-red-300">
-                The drivers could not be loaded. Close this dialog and try again.
-              </p>
-            )}
-            {drivers !== null && options.length === 0 && <p className="text-[11px] text-amber-300">No other active driver is assigned to this branch.</p>}
-          </Field>
-        )}
-        <Field label="Reason" htmlFor="assign-reason" hint="Recorded in the audit log (3–200 characters)." error={touched && !reasonOk ? 'Enter a reason of at least 3 characters.' : undefined}>
-          <textarea id="assign-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={200} rows={3} disabled={pending} className={inputClass} aria-invalid={touched && !reasonOk} />
-        </Field>
-        <ErrorNotice error={error} onDismiss={clearError} />
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>
-            Cancel
-          </button>
-          <button type="submit" disabled={pending} className={primaryButton}>
-            {pending ? 'Working…' : mode === 'assign' ? 'Assign driver' : mode === 'reassign' ? 'Reassign driver' : 'Unassign'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-};
 
 /**
  * EXCEPTIONAL handover confirmation. Deliberately separate from routine delivery (which is the driver entering the customer's code):
@@ -192,106 +104,6 @@ const OverrideDialog: React.FC<{ order: DeliveryMonitorOrder; onClose: () => voi
           </button>
           <button type="submit" disabled={pending} className={dangerButton}>
             {pending ? 'Working…' : 'Confirm handover'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-};
-
-/** Retry the same driver / hand the next attempt (or a pending retry) to another driver of the SAME branch. Step-up, structured reason, expected attempt + driver. */
-const RetryDialog: React.FC<{ order: DeliveryMonitorOrder; branchId: string; mode: ResolveMode; onClose: () => void; onDone: (message: string) => void; onStale: () => void }> = ({ order, branchId, mode, onClose, onDone, onStale }) => {
-  const { withStepUp } = useStepUp();
-  const { run, pending, error, clearError } = useAdminAction();
-  const [drivers, setDrivers] = useState<AssignableDriver[] | null>(null);
-  const [driversError, setDriversError] = useState(false);
-  const [driverId, setDriverId] = useState('');
-  const [reasonCode, setReasonCode] = useState<RetryReasonCode | ''>('');
-  const [note, setNote] = useState('');
-  const [touched, setTouched] = useState(false);
-  const current = order.assignment.driver;
-  const needsDriver = mode !== 'RETRY_SAME_DRIVER';
-  const valid = !!reasonCode && (!needsDriver || !!driverId);
-
-  useEffect(() => {
-    if (!needsDriver) return;
-    let cancelled = false;
-    DeliveryService.listDrivers(branchId)
-      .then((list) => !cancelled && setDrivers(list))
-      .catch(() => !cancelled && setDriversError(true));
-    return () => {
-      cancelled = true;
-    };
-  }, [branchId, needsDriver]);
-  useEffect(() => {
-    if (error?.code && STALE_CODES.includes(error.code)) onStale();
-  }, [error, onStale]);
-
-  const options = (drivers ?? []).filter((d) => d.employeeId !== current?.employeeId);
-  const title = mode === 'RETRY_SAME_DRIVER' ? `Retry ${order.orderNumber} with the same driver` : mode === 'REASSIGN_AFTER_FAILURE' ? `Reassign ${order.orderNumber} to another driver` : `Hand the pending retry of ${order.orderNumber} to another driver`;
-  const next = order.assignment.attemptNumber + 1;
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setTouched(true);
-    if (!valid || !reasonCode || !current) return;
-    const outcome = await run(() =>
-      withStepUp((proof) =>
-        DeliveryResolutionService.retryDelivery(
-          order.id,
-          { mode: needsDriver ? 'REASSIGN' : 'SAME_DRIVER', ...(needsDriver ? { driverEmployeeId: driverId } : {}), expectedAttemptNumber: order.assignment.attemptNumber, expectedDriverId: current.employeeId, reasonCode, note },
-          proof
-        )
-      )
-    );
-    if (outcome.ok) onDone(mode === 'REASSIGN_PENDING' ? `The pending retry of ${order.orderNumber} was handed to another driver.` : `Another delivery attempt (attempt ${next}) was arranged for ${order.orderNumber}. The driver must press "Start delivery again".`);
-  };
-
-  return (
-    <Modal title={title} onClose={onClose} closeDisabled={pending}>
-      <form onSubmit={submit} className="space-y-4" noValidate>
-        <p className="text-xs text-stone-400" data-testid="retry-explainer">
-          {mode === 'REASSIGN_PENDING'
-            ? `This retry (attempt ${order.assignment.attemptNumber} of ${order.maxAttempts}) was arranged but the driver has not started it. The same attempt moves to another driver: it does not use up another attempt.`
-            : `The failed attempt is saved in the attempt history. This arranges attempt ${next} of ${order.maxAttempts}; the driver must press "Start delivery again" and the customer needs a NEW delivery code. The order's status and payment are not touched.`}
-        </p>
-        {needsDriver && (
-          <Field label="Driver (same branch)" htmlFor="retry-driver" error={touched && !driverId ? 'Choose a driver.' : undefined}>
-            <select id="retry-driver" value={driverId} onChange={(e) => setDriverId(e.target.value)} disabled={pending || drivers === null} className={inputClass} aria-invalid={touched && !driverId}>
-              <option value="">{drivers === null && !driversError ? 'Loading drivers…' : 'Select an active driver…'}</option>
-              {options.map((d) => (
-                <option key={d.employeeId} value={d.employeeId}>
-                  {d.fullName} ({d.employeeCode})
-                </option>
-              ))}
-            </select>
-            {driversError && (
-              <p role="alert" className="text-[11px] text-red-300">
-                The drivers could not be loaded. Close this dialog and try again.
-              </p>
-            )}
-          </Field>
-        )}
-        <Field label="Reason" htmlFor="retry-reason" error={touched && !reasonCode ? 'Choose a reason.' : undefined}>
-          <select id="retry-reason" value={reasonCode} onChange={(e) => setReasonCode(e.target.value as RetryReasonCode | '')} disabled={pending} className={inputClass} aria-invalid={touched && !reasonCode}>
-            <option value="">Select a reason…</option>
-            {RETRY_REASONS.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Note (optional)" htmlFor="retry-note" hint="Kept in the attempt history (up to 200 characters).">
-          <textarea id="retry-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} rows={2} disabled={pending} className={inputClass} />
-        </Field>
-        <ErrorNotice error={error} onDismiss={clearError} />
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} disabled={pending} className={secondaryButton}>
-            Cancel
-          </button>
-          <button type="submit" disabled={pending} className={primaryButton}>
-            {pending ? 'Working…' : mode === 'RETRY_SAME_DRIVER' ? 'Arrange retry' : 'Reassign driver'}
           </button>
         </div>
       </form>
@@ -421,7 +233,7 @@ const AttemptHistory: React.FC<{ orderId: string }> = ({ orderId }) => {
   );
 };
 
-const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAction: (order: DeliveryMonitorOrder, mode: Mode) => void; onOverride: (order: DeliveryMonitorOrder) => void; onResolve: (order: DeliveryMonitorOrder, mode: ResolveMode) => void; onUndeliverable: (order: DeliveryMonitorOrder) => void }> = ({ order, canAssign, onAction, onOverride, onResolve, onUndeliverable }) => {
+const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onOverride: (order: DeliveryMonitorOrder) => void; onUndeliverable: (order: DeliveryMonitorOrder) => void }> = ({ order, canAssign, onOverride, onUndeliverable }) => {
   const [history, setHistory] = useState(false);
   const failed = order.status === 'DISPATCHED' && order.assignment.state === 'FAILED';
   const showHistory = order.status === 'DISPATCHED' && (order.assignment.attemptNumber > 1 || failed || order.retryPending);
@@ -453,48 +265,15 @@ const OrderRow: React.FC<{ order: DeliveryMonitorOrder; canAssign: boolean; onAc
       </div>
       {canAssign && failed && (
         <div className="flex flex-wrap gap-2" data-testid="resolve-actions">
-          {order.canRetry && (
-            <>
-              <button type="button" onClick={() => onResolve(order, 'RETRY_SAME_DRIVER')} aria-label={`Retry ${order.orderNumber} with the same driver`} data-testid="retry-same" className={primaryButton}>
-                Retry same driver
-              </button>
-              <button type="button" onClick={() => onResolve(order, 'REASSIGN_AFTER_FAILURE')} aria-label={`Reassign ${order.orderNumber} to another driver`} data-testid="retry-reassign" className={secondaryButton}>
-                Reassign driver
-              </button>
-            </>
-          )}
           <button type="button" onClick={() => onUndeliverable(order)} aria-label={`Cancel and fully refund ${order.orderNumber}`} data-testid="undeliverable-open" className={dangerButton}>
             Cancel &amp; Full Refund
           </button>
         </div>
       )}
-      {canAssign && order.retryPending && (
-        <button type="button" onClick={() => onResolve(order, 'REASSIGN_PENDING')} aria-label={`Hand the pending retry of ${order.orderNumber} to another driver`} data-testid="retry-pending-reassign" className={secondaryButton}>
-          Reassign pending retry
-        </button>
-      )}
       {canAssign && order.status === 'DISPATCHED' && !order.retryPending && order.proofState !== 'VERIFIED' && order.proofState !== 'OVERRIDDEN' && (
         <button type="button" onClick={() => onOverride(order)} aria-label={`Exceptional handover confirmation for ${order.orderNumber}`} data-testid="override-open" className="text-xs font-bold text-stone-300 underline hover:text-white min-h-11 px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded">
           Exceptional handover confirmation…
         </button>
-      )}
-      {canAssign && order.status === 'READY' && (
-        <div className="flex flex-wrap gap-2">
-          {driver ? (
-            <>
-              <button type="button" onClick={() => onAction(order, 'reassign')} aria-label={`Reassign ${order.orderNumber}`} className={primaryButton}>
-                Reassign
-              </button>
-              <button type="button" onClick={() => onAction(order, 'unassign')} aria-label={`Unassign ${order.orderNumber}`} className={secondaryButton}>
-                Unassign
-              </button>
-            </>
-          ) : (
-            <button type="button" onClick={() => onAction(order, 'assign')} aria-label={`Assign ${order.orderNumber}`} className={primaryButton}>
-              Assign driver
-            </button>
-          )}
-        </div>
       )}
     </li>
   );
@@ -506,9 +285,7 @@ export const DeliveryMonitor: React.FC = () => {
   const auth = useAuth();
   const [branchId, setBranchId] = useState('');
   const monitor = useDeliveryMonitor({ branchId, onSessionExpired: () => void auth.logout() });
-  const [editing, setEditing] = useState<{ order: DeliveryMonitorOrder; mode: Mode } | null>(null);
   const [overriding, setOverriding] = useState<DeliveryMonitorOrder | null>(null);
-  const [resolving, setResolving] = useState<{ order: DeliveryMonitorOrder; mode: ResolveMode } | null>(null);
   const [cancelling, setCancelling] = useState<DeliveryMonitorOrder | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const data = monitor.data;
@@ -591,7 +368,7 @@ export const DeliveryMonitor: React.FC = () => {
               ) : (
                 <ul className="space-y-3" aria-label={title}>
                   {section.items.map((o) => (
-                    <OrderRow key={o.id} order={o} canAssign={canAssign} onAction={(order, mode) => setEditing({ order, mode })} onOverride={setOverriding} onResolve={(order, mode) => setResolving({ order, mode })} onUndeliverable={setCancelling} />
+                    <OrderRow key={o.id} order={o} canAssign={canAssign} onOverride={setOverriding} onUndeliverable={setCancelling} />
                   ))}
                 </ul>
               )}
@@ -605,34 +382,6 @@ export const DeliveryMonitor: React.FC = () => {
         </div>
       )}
 
-      {editing && (
-        <AssignmentDialog
-          order={editing.order}
-          branchId={branchId}
-          mode={editing.mode}
-          onClose={() => setEditing(null)}
-          onStale={() => void monitor.refresh()}
-          onDone={(message) => {
-            setNotice(message);
-            setEditing(null);
-            void monitor.refresh();
-          }}
-        />
-      )}
-      {resolving && (
-        <RetryDialog
-          order={resolving.order}
-          branchId={branchId}
-          mode={resolving.mode}
-          onClose={() => setResolving(null)}
-          onStale={() => void monitor.refresh()}
-          onDone={(message) => {
-            setNotice(message);
-            setResolving(null);
-            void monitor.refresh();
-          }}
-        />
-      )}
       {cancelling && (
         <UndeliverableDialog
           order={cancelling}

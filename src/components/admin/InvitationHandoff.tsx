@@ -24,15 +24,25 @@ export const InvitationHandoffPanel: React.FC<{ handoff: Handoff; staffLabel: st
 
   return (
     <section aria-label="Invitation hand-off" className="space-y-4">
-      <div role="alert" className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/40 rounded-2xl px-4 py-3 text-amber-100">
-        <MailX className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
-        <div className="text-sm">
-          <p className="font-black uppercase tracking-wide" data-testid="no-email-banner">
-            NO EMAIL WAS SENT
-          </p>
-          <p className="text-xs mt-1">{handoff.note}</p>
+      {handoff.sentByEmail ? (
+        <div role="status" className="flex items-start gap-3 bg-emerald-500/10 border border-emerald-500/40 rounded-2xl px-4 py-3 text-emerald-100">
+          <Check className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="text-sm">
+            <p className="font-black uppercase tracking-wide" data-testid="email-sent-banner">INVITATION EMAILED</p>
+            <p className="text-xs mt-1">{handoff.note}</p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div role="alert" className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/40 rounded-2xl px-4 py-3 text-amber-100">
+          <MailX className="w-5 h-5 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="text-sm">
+            <p className="font-black uppercase tracking-wide" data-testid="no-email-banner">
+              NO EMAIL WAS SENT
+            </p>
+            <p className="text-xs mt-1">{handoff.note}</p>
+          </div>
+        </div>
+      )}
 
       <p className="text-sm text-stone-200">
         {reissued ? 'A NEW invitation was issued for ' : 'Invitation created for '}

@@ -2,7 +2,7 @@ import { PrismaClient, RoleEnum } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { seedRecipes } from './seedRecipes.js';
 import { seedProducts } from './seedProducts.js';
-import { resolveSeedPlan } from './seedGuard.js';
+import { resolveSeedPlan, isProductionEnv } from './seedGuard.js';
 
 
 const prisma = new PrismaClient();
@@ -16,6 +16,10 @@ async function main() {
     console.log('🎉 Catalog seeding completed (no demo users created).');
     return;
   }
+
+  // Defence in depth (independent of the plan above): demo users and the documented development password can NEVER be created in production,
+  // whatever the plan says and whatever ALLOW_DEMO_SEED is set to.
+  if (isProductionEnv()) throw new Error('Refusing to create demo users: NODE_ENV is production');
 
   console.log('🌱 Seeding Protein Bowl Development Database...');
 
@@ -101,9 +105,6 @@ async function main() {
   });
 
   // Primary Staff Accounts
-  await seedStaffUser('md@nutrifitkitchen.in', RoleEnum.MD, 'EMP-MD-001', 'Dr. Rahul Varma', 'Managing Director & Founder', kochiBranch.id);
-  await seedStaffUser('md@proteinbowl.in', RoleEnum.MD, 'EMP-MD-002', 'Dr. Anoop S. / Mathew Thomas', 'Managing Director & Strategic Operations Head', kochiBranch.id);
-
   await seedStaffUser('chef.kochi@nutrifitkitchen.in', RoleEnum.CHEF, 'EMP-CHEF-001', 'Chef Suresh Kumar', 'Executive Head Chef', kochiBranch.id);
   await seedStaffUser('suresh@proteinbowl.in', RoleEnum.CHEF, 'EMP-CHEF-002', 'Chef Suresh Kumar', 'Executive Head Chef (Central Kitchen KDS)', kochiBranch.id);
   await seedStaffUser('murugan.mess@proteinbowl.in', RoleEnum.CHEF, 'EMP-CHEF-003', 'Chef Murugan K.', 'Kerala Mess Lead Chef', kochiBranch.id);
@@ -114,18 +115,7 @@ async function main() {
   await seedStaffUser('trainer@nutrifitkitchen.in', RoleEnum.TRAINER, 'EMP-TRN-001', 'Vikram Seth', 'Head Strength Coach', kochiBranch.id);
   await seedStaffUser('procurement@nutrifitkitchen.in', RoleEnum.PROCUREMENT, 'EMP-PRC-001', 'Rajesh Nair', 'Supply Chain Director', kochiBranch.id);
 
-  await seedStaffUser('delivery@nutrifitkitchen.in', RoleEnum.DELIVERY, 'EMP-DEL-001', 'Kiran V', 'Senior Fleet Lead', kochiBranch.id);
-  await seedStaffUser('kiran@proteinbowl.in', RoleEnum.DELIVERY, 'EMP-DEL-002', 'Kiran K. Das', 'Fleet Dispatch & Logistics Supervisor', kochiBranch.id);
-
-  await seedStaffUser('pos@nutrifitkitchen.in', RoleEnum.POS, 'EMP-POS-001', 'Priya Menon', 'Head POS Cashier', kochiBranch.id);
-  await seedStaffUser('pos.kochi@nutrifitkitchen.in', RoleEnum.POS, 'EMP-POS-002', 'Anjana Ramesh', 'Lead POS Cashier & Counter Manager', kochiBranch.id);
-
-  await seedStaffUser('fmcg@nutrifitkitchen.in', RoleEnum.BAKERY_FMCG, 'EMP-FMCG-001', 'Mathew Philip', 'Bakery Operations Mgr', kochiBranch.id);
-  await seedStaffUser('fmcg.distribution@nutrifitkitchen.in', RoleEnum.BAKERY_FMCG, 'EMP-FMCG-002', 'Varghese Kurian', 'Category Lead (FMCG & Bakery Foods)', kochiBranch.id);
-
-  await seedStaffUser('tepache@nutrifitkitchen.in', RoleEnum.TEPACHE_ERP, 'EMP-TEP-001', 'Master Brewer Alex', 'Brewery Telemetry Mgr', kochiBranch.id);
-  await seedStaffUser('aggregator@nutrifitkitchen.in', RoleEnum.SWIGGY_ZOMATO, 'EMP-AGG-001', 'Deepak R', 'Aggregator Dispatch Ops', kochiBranch.id);
-  await seedStaffUser('rahul.aggregators@proteinbowl.in', RoleEnum.SWIGGY_ZOMATO, 'EMP-AGG-002', 'Rahul M.', 'Swiggy & Zomato Aggregator Channel Lead', kochiBranch.id);
+  // Role simplification: only accounts with an approved role are seeded. The DELIVERY driver accounts and the other retired roles (MD, POS, BAKERY_FMCG, TEPACHE_ERP, SWIGGY_ZOMATO) are no longer created; delivery is operated by a SUPER_ADMIN.
 
   // Seed Customer Accounts
   await prisma.user.upsert({

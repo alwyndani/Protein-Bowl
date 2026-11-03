@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CustomerProfile, ActivityLevel, HealthGoal, BloodTestResults } from '../../types';
-import { calculateMDCostEngine } from '../../utils/costEngine';
-import { CustomerService } from '../../services/customerService';
+import { toPlanDuration, type PlanDurationDays } from '../../utils/planDuration';
+import { triToSelect, selectToTri } from '../../utils/healthProfile';
 import { 
   Activity, 
   HeartPulse, 
@@ -37,7 +37,7 @@ import confetti from 'canvas-confetti';
 interface HealthProfileWizardProps {
   profile?: CustomerProfile;
   initialProfile?: CustomerProfile;
-  onSaveProfile: (updatedProfile: CustomerProfile) => void;
+  onSaveProfile: (updatedProfile: CustomerProfile) => Promise<boolean>;
   onProceedToPlan?: () => void;
   onProceedToCustomerModule?: (updatedProfile: CustomerProfile) => void;
 }
@@ -56,124 +56,96 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
   >('basic');
 
   // Basic Information & Initial Entry
-  const [name, setName] = useState(profile.name || 'Anjali Ramesh');
-  const [email, setEmail] = useState(profile.email || 'anjali@example.com');
-  const [phone, setPhone] = useState(profile.phone || '+91 98765 43210');
-  const [dob, setDob] = useState(profile.dob || '1995-04-18');
-  const [gender, setGender] = useState<'female' | 'male' | 'other'>(profile.gender || 'female');
-  const [age, setAge] = useState(profile.age || 29);
+  // Identity and core measurements start empty (0 = not entered) and are required before the profile is saved: nothing is invented.
+  const [name, setName] = useState(profile.name || '');
+  const [email, setEmail] = useState(profile.email || '');
+  const [phone, setPhone] = useState(profile.phone || '');
+  const [dob, setDob] = useState(profile.dob || '');
+  const [gender, setGender] = useState<'' | 'female' | 'male' | 'other'>(profile.gender || '');
+  const [age, setAge] = useState(profile.age || 0);
 
-  const [heightCm, setHeightCm] = useState(profile.heightCm || 165);
-  const [weightKg, setWeightKg] = useState(profile.weightKg || 68);
-  const [targetWeightKg, setTargetWeightKg] = useState(profile.targetWeightKg || 58);
-  const [occupation, setOccupation] = useState(profile.occupation || 'IT Professional');
-  const [workSchedule, setWorkSchedule] = useState(profile.workSchedule || 'Flexible Hours');
-  const [sleepDuration, setSleepDuration] = useState(profile.sleepDuration || 7);
-  const [wakeUpTime, setWakeUpTime] = useState(profile.wakeUpTime || '06:30');
-  const [bedTime, setBedTime] = useState(profile.bedTime || '23:00');
+  const [heightCm, setHeightCm] = useState(profile.heightCm || 0);
+  const [weightKg, setWeightKg] = useState(profile.weightKg || 0);
+  const [targetWeightKg, setTargetWeightKg] = useState(profile.targetWeightKg || 0);
+  const [coreError, setCoreError] = useState<string | null>(null);
+  // Optional fields: empty (0 / '' / []) means the customer has not provided them. Nothing below is a suggested value.
+  const [occupation, setOccupation] = useState(profile.occupation || '');
+  const [workSchedule, setWorkSchedule] = useState(profile.workSchedule || '');
+  const [sleepDuration, setSleepDuration] = useState(profile.sleepDuration || 0);
+  const [wakeUpTime, setWakeUpTime] = useState(profile.wakeUpTime || '');
+  const [bedTime, setBedTime] = useState(profile.bedTime || '');
 
   // Tracking & Circumferences
-  const [muscleMassKg, setMuscleMassKg] = useState(profile.muscleMassKg || 24.5);
-  const [waistCm, setWaistCm] = useState(profile.circumferences?.waistCm || 81);
-  const [hipCm, setHipCm] = useState(profile.circumferences?.hipCm || 98);
-  const [chestCm, setChestCm] = useState(profile.circumferences?.chestCm || 88);
-  const [neckCm, setNeckCm] = useState(profile.circumferences?.neckCm || 34);
+  const [muscleMassKg, setMuscleMassKg] = useState(profile.muscleMassKg || 0);
+  const [waistCm, setWaistCm] = useState(profile.circumferences?.waistCm || 0);
+  const [hipCm, setHipCm] = useState(profile.circumferences?.hipCm || 0);
+  const [chestCm, setChestCm] = useState(profile.circumferences?.chestCm || 0);
+  const [neckCm, setNeckCm] = useState(profile.circumferences?.neckCm || 0);
 
-  const [leftArmCm, setLeftArmCm] = useState(profile.limbCircumferences?.leftArmCm || 28);
-  const [rightArmCm, setRightArmCm] = useState(profile.limbCircumferences?.rightArmCm || 28.5);
-  const [leftThighCm, setLeftThighCm] = useState(profile.limbCircumferences?.leftThighCm || 56);
-  const [rightThighCm, setRightThighCm] = useState(profile.limbCircumferences?.rightThighCm || 56.5);
-  const [leftCalfCm, setLeftCalfCm] = useState(profile.limbCircumferences?.leftCalfCm || 36);
-  const [rightCalfCm, setRightCalfCm] = useState(profile.limbCircumferences?.rightCalfCm || 36);
+  const [leftArmCm, setLeftArmCm] = useState(profile.limbCircumferences?.leftArmCm || 0);
+  const [rightArmCm, setRightArmCm] = useState(profile.limbCircumferences?.rightArmCm || 0);
+  const [leftThighCm, setLeftThighCm] = useState(profile.limbCircumferences?.leftThighCm || 0);
+  const [rightThighCm, setRightThighCm] = useState(profile.limbCircumferences?.rightThighCm || 0);
+  const [leftCalfCm, setLeftCalfCm] = useState(profile.limbCircumferences?.leftCalfCm || 0);
+  const [rightCalfCm, setRightCalfCm] = useState(profile.limbCircumferences?.rightCalfCm || 0);
 
   // Goals & Activity
   const [goal, setGoal] = useState<HealthGoal>(profile.goal || 'weight_loss');
-  const [primaryGoals, setPrimaryGoals] = useState<string[]>(
-    profile.primaryGoals || ['Weight Loss', 'Fat Loss', 'Improve Gut Health', 'Improve Energy Levels']
-  );
+  const [primaryGoals, setPrimaryGoals] = useState<string[]>(profile.primaryGoals || []);
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>(profile.activityLevel || 'moderate');
 
   // Exercise Details
-  const [hasExercise, setHasExercise] = useState<boolean>(profile.hasExercise ?? true);
-  const [workoutTypes, setWorkoutTypes] = useState<string[]>(profile.workoutTypes || ['Strength Training', 'Yoga', 'Walking']);
-  const [workoutFrequency, setWorkoutFrequency] = useState<string>(profile.workoutFrequency || '3–4 Days');
-  const [workoutDuration, setWorkoutDuration] = useState<number>(profile.workoutDuration || 45);
-  const [dailyStepCount, setDailyStepCount] = useState<number>(profile.dailyStepCount || 8500);
-  const [cardioSessions, setCardioSessions] = useState<number>(profile.cardioSessions || 2);
-  const [strengthSessions, setStrengthSessions] = useState<number>(profile.strengthSessions || 3);
+  const [hasExercise, setHasExercise] = useState<boolean | null>(profile.hasExercise ?? null); // unanswered until the customer chooses: never a default "Yes"
+  const [workoutTypes, setWorkoutTypes] = useState<string[]>(profile.workoutTypes || []);
+  const [workoutFrequency, setWorkoutFrequency] = useState<string>(profile.workoutFrequency || '');
+  const [workoutDuration, setWorkoutDuration] = useState<number>(profile.workoutDuration || 0);
+  const [dailyStepCount, setDailyStepCount] = useState<number>(profile.dailyStepCount || 0);
+  const [cardioSessions, setCardioSessions] = useState<number>(profile.cardioSessions || 0);
+  const [strengthSessions, setStrengthSessions] = useState<number>(profile.strengthSessions || 0);
 
-  // Medical Conditions & Medications & Supplements
-  const [medicalConditions, setMedicalConditions] = useState<string[]>(profile.medicalConditions || ['PCOS']);
-  const [currentMedications, setCurrentMedications] = useState<string>(profile.currentMedications || 'Metformin 500mg once daily');
-  const [supplements, setSupplements] = useState<string[]>(profile.supplements || ['Multivitamin', 'Vitamin D', 'Omega-3']);
+  // Medical Conditions & Medications & Supplements: clinical data is never pre-filled
+  const [medicalConditions, setMedicalConditions] = useState<string[]>(profile.medicalConditions || []);
+  const [currentMedications, setCurrentMedications] = useState<string>(profile.currentMedications || '');
+  const [supplements, setSupplements] = useState<string[]>(profile.supplements || []);
 
-  // Blood Test Results
-  const [bloodTests, setBloodTests] = useState<BloodTestResults>(profile.bloodTestResults || {
-    fastingBloodSugar: 98,
-    hbA1c: 5.6,
-    totalCholesterol: 185,
-    hdl: 52,
-    ldl: 110,
-    triglycerides: 115,
-    hemoglobin: 13.2,
-    vitaminD: 24,
-    vitaminB12: 310,
-    ferritin: 45,
-    uricAcid: 4.8,
-    creatinine: 0.8,
-    tsh: 2.4,
-    sgot: 22,
-    sgpt: 24
-  });
+  // Blood Test Results: only values the customer enters (no sample lab values)
+  const [bloodTests, setBloodTests] = useState<BloodTestResults>(profile.bloodTestResults || {});
 
   // Food Preferences & Allergies
   const [foodPreference, setFoodPreference] = useState<'Vegetarian' | 'Eggetarian' | 'Non-Vegetarian' | 'Vegan' | 'Keto' | 'High-Protein'>(
     (profile.foodPreference as any) || 'Non-Vegetarian'
   );
-  const [allergies, setAllergies] = useState<string[]>(profile.allergies || ['Peanuts']);
-  const [foodDislikes, setFoodDislikes] = useState<string[]>(profile.foodDislikes || ['Mushroom', 'Bitter Gourd']);
+  const [allergies, setAllergies] = useState<string[]>(profile.allergies || []);
+  const [foodDislikes, setFoodDislikes] = useState<string[]>(profile.foodDislikes || []);
   const [dislikeInput, setDislikeInput] = useState('');
   const [customQuery, setCustomQuery] = useState<string>(profile.customQuery || '');
 
   // Meal Structure
-  const [mealsPerDay, setMealsPerDay] = useState<number>(profile.mealsPerDay || 3);
-  const [mealTimings, setMealTimings] = useState(profile.mealTimings || {
-    breakfast: '08:30',
-    morningSnack: '11:00',
-    lunch: '13:30',
-    eveningSnack: '16:30',
-    dinner: '20:00',
-    bedtimeSnack: '22:00'
-  });
-  const [waterIntakeL, setWaterIntakeL] = useState<number>(profile.waterIntakeL || 3.0);
+  const [mealsPerDay, setMealsPerDay] = useState<number>(profile.mealsPerDay || 0);
+  const [mealTimings, setMealTimings] = useState<Record<string, string>>(profile.mealTimings || {});
+  const [waterIntakeL, setWaterIntakeL] = useState<number>(profile.waterIntakeL || 0);
 
   // Lifestyle
-  const [digestiveHealth, setDigestiveHealth] = useState<string[]>(profile.digestiveHealth || ['Good']);
-  const [smoking, setSmoking] = useState(profile.smoking || 'Never');
-  const [alcohol, setAlcohol] = useState(profile.alcohol || 'Monthly');
-  const [tobacco, setTobacco] = useState(profile.tobacco || 'Never');
-  const [stressLevel, setStressLevel] = useState<number>(profile.stressLevel || 4);
-  const [sleepQuality, setSleepQuality] = useState(profile.sleepQuality || 'Good');
+  const [digestiveHealth, setDigestiveHealth] = useState<string[]>(profile.digestiveHealth || []);
+  const [smoking, setSmoking] = useState(profile.smoking || '');
+  const [alcohol, setAlcohol] = useState(profile.alcohol || '');
+  const [tobacco, setTobacco] = useState(profile.tobacco || '');
+  const [stressLevel, setStressLevel] = useState<number>(profile.stressLevel || 0);
+  const [sleepQuality, setSleepQuality] = useState(profile.sleepQuality || '');
 
   // Women-Only Fields
-  const [isPregnant, setIsPregnant] = useState<boolean>(profile.isPregnant ?? false);
-  const [isBreastfeeding, setIsBreastfeeding] = useState<boolean>(profile.isBreastfeeding ?? false);
-  const [menstrualCycle, setMenstrualCycle] = useState<'Regular' | 'Irregular'>(profile.menstrualCycle || 'Irregular');
-  const [isMenopause, setIsMenopause] = useState<boolean>(profile.isMenopause ?? false);
+  // Women-only questions start UNANSWERED (null), never "No"; unanswered is not sent.
+  const [isPregnant, setIsPregnant] = useState<boolean | null>(profile.isPregnant ?? null);
+  const [isBreastfeeding, setIsBreastfeeding] = useState<boolean | null>(profile.isBreastfeeding ?? null);
+  const [menstrualCycle, setMenstrualCycle] = useState<'' | 'Regular' | 'Irregular'>(profile.menstrualCycle || '');
+  const [isMenopause, setIsMenopause] = useState<boolean | null>(profile.isMenopause ?? null);
 
   // Meal Plan Duration Selection
-  const [planDurationDays, setPlanDurationDays] = useState<3 | 7 | 20 | 30>(profile.planDurationDays || 30);
+  const [planDurationDays, setPlanDurationDays] = useState<PlanDurationDays>(toPlanDuration(profile.planDurationDays));
   const [planFrequency, setPlanFrequency] = useState<1 | 2 | 3>(profile.planFrequency || 3);
-  const [addonSlots, setAddonSlots] = useState<string[]>(profile.addonSlots || ['11:00 AM Snack/Salad']);
+  const [addonSlots, setAddonSlots] = useState<string[]>(profile.addonSlots || []);
 
-  // OTP Verification Flow State
-  const [showOtpModal, setShowOtpModal] = useState(false);
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpPhone, setOtpPhone] = useState(profile.phone || '+91 98765 43210');
-  const [otpCode, setOtpCode] = useState('');
-  const [otpError, setOtpError] = useState('');
 
-  const [savedNotice, setSavedNotice] = useState(false);
 
   // Options Master Arrays
   const occupationOptions = [
@@ -241,6 +213,8 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
   const isBloodTestSkipped = Object.values(bloodTests).every((val) => val === undefined || val === null || val === 0 || isNaN(val as number));
 
   // --- AUTO CALCULATIONS ---
+  // Only meaningful (and only displayed) when the customer entered every input they depend on.
+  const coreReady = (gender === 'male' || gender === 'female') && age > 0 && heightCm > 0 && weightKg > 0; // "other" has no approved calculation yet
   // 1. BMI
   const heightM = heightCm / 100;
   const bmi = Number((weightKg / (heightM * heightM)).toFixed(1));
@@ -297,7 +271,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
   const fiberGrams = Math.round((targetCalories / 1000) * 14);
 
   // 6. Water Requirement (L)
-  const waterRequirementL = Number((weightKg * 0.035 + (hasExercise ? 0.5 : 0)).toFixed(2));
+  const waterRequirementL = Number((weightKg * 0.035 + (hasExercise === true ? 0.5 : 0)).toFixed(2));
 
   // 7. Ideal Body Weight (Devine Formula)
   const heightInchesOver5ft = Math.max(0, (heightCm - 152.4) / 2.54);
@@ -317,9 +291,9 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
       ...profile,
       name,
       email,
-      phone: otpPhone || phone,
+      phone,
       dob,
-      gender,
+      gender: gender || undefined,
       age,
       heightCm,
       weightKg,
@@ -337,7 +311,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
       goal,
       primaryGoals,
       activityLevel,
-      hasExercise,
+      hasExercise: hasExercise ?? undefined, // omitted when unanswered: the server keeps whatever it has (nothing is invented)
       workoutTypes,
       workoutFrequency,
       workoutDuration,
@@ -361,10 +335,10 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
       tobacco,
       stressLevel,
       sleepQuality,
-      isPregnant,
-      isBreastfeeding,
+      isPregnant: isPregnant ?? undefined,
+      isBreastfeeding: isBreastfeeding ?? undefined,
       menstrualCycle,
-      isMenopause,
+      isMenopause: isMenopause ?? undefined,
       planDurationDays,
       planFrequency,
       addonSlots,
@@ -387,22 +361,6 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
       leanBodyMassKg,
       calorieDeficitSurplus
     };
-  };
-
-  const handleSave = async () => {
-    const updated = getUpdatedProfileObj();
-    onSaveProfile(updated);
-    setSavedNotice(true);
-    confetti({ particleCount: 50, spread: 60 });
-    try {
-      const res = await CustomerService.updateMyProfile(updated);
-      if (res.success && res.data) {
-        onSaveProfile(res.data);
-      }
-    } catch (_err) {
-      // Retain optimistic UI state
-    }
-    setTimeout(() => setSavedNotice(false), 3000);
   };
 
   return (
@@ -514,9 +472,10 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Biological Sex</label>
               <select
                 value={gender}
-                onChange={(e) => setGender(e.target.value as any)}
+                onChange={(e) => setGender(e.target.value as '' | 'female' | 'male' | 'other')}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               >
+                <option value="">Choose…</option>
                 <option value="female">Female</option>
                 <option value="male">Male</option>
                 <option value="other">Other / Prefer not to say</option>
@@ -527,7 +486,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Age (Years)</label>
               <input
                 type="number"
-                value={age}
+                value={age || ''}
                 onChange={(e) => setAge(Number(e.target.value))}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               />
@@ -540,6 +499,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 onChange={(e) => setOccupation(e.target.value)}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               >
+                <option value="">Choose…</option>
                 {occupationOptions.map((occ) => (
                   <option key={occ} value={occ}>{occ}</option>
                 ))}
@@ -553,7 +513,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Current Height (cm)</label>
               <input
                 type="number"
-                value={heightCm}
+                value={heightCm || ''}
                 onChange={(e) => setHeightCm(Number(e.target.value))}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               />
@@ -563,7 +523,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Current Weight (kg)</label>
               <input
                 type="number"
-                value={weightKg}
+                value={weightKg || ''}
                 onChange={(e) => setWeightKg(Number(e.target.value))}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               />
@@ -573,7 +533,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Target Goal Weight (kg)</label>
               <input
                 type="number"
-                value={targetWeightKg}
+                value={targetWeightKg || ''}
                 onChange={(e) => setTargetWeightKg(Number(e.target.value))}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               />
@@ -589,6 +549,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 onChange={(e) => setWorkSchedule(e.target.value)}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               >
+                <option value="">Choose…</option>
                 {workScheduleOptions.map((ws) => (
                   <option key={ws} value={ws}>{ws}</option>
                 ))}
@@ -599,7 +560,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               <label className="block text-xs font-bold text-stone-700 mb-1">Sleep Duration (Hours/day)</label>
               <input
                 type="number"
-                value={sleepDuration}
+                value={sleepDuration || ''}
                 onChange={(e) => setSleepDuration(Number(e.target.value))}
                 className="w-full p-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:border-amber-800"
               />
@@ -658,7 +619,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <label className="block text-xs font-bold text-stone-700 mb-1">Muscle Mass (kg)</label>
                 <input
                   type="number"
-                  value={muscleMassKg}
+                  value={muscleMassKg || ''}
                   onChange={(e) => setMuscleMassKg(Number(e.target.value))}
                   className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                 />
@@ -669,7 +630,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-stone-700 mb-1">Waist Circumference (cm)</label>
                   <input
                     type="number"
-                    value={waistCm}
+                    value={waistCm || ''}
                     onChange={(e) => setWaistCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                   />
@@ -679,7 +640,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-stone-700 mb-1">Hip Circumference (cm)</label>
                   <input
                     type="number"
-                    value={hipCm}
+                    value={hipCm || ''}
                     onChange={(e) => setHipCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                   />
@@ -689,7 +650,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-stone-700 mb-1">Chest Circumference (cm)</label>
                   <input
                     type="number"
-                    value={chestCm}
+                    value={chestCm || ''}
                     onChange={(e) => setChestCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                   />
@@ -699,7 +660,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-stone-700 mb-1">Neck Circumference (cm)</label>
                   <input
                     type="number"
-                    value={neckCm}
+                    value={neckCm || ''}
                     onChange={(e) => setNeckCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                   />
@@ -716,7 +677,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Left Arm (cm)</label>
                   <input
                     type="number"
-                    value={leftArmCm}
+                    value={leftArmCm || ''}
                     onChange={(e) => setLeftArmCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -726,7 +687,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Right Arm (cm)</label>
                   <input
                     type="number"
-                    value={rightArmCm}
+                    value={rightArmCm || ''}
                     onChange={(e) => setRightArmCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -736,7 +697,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Left Thigh (cm)</label>
                   <input
                     type="number"
-                    value={leftThighCm}
+                    value={leftThighCm || ''}
                     onChange={(e) => setLeftThighCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -746,7 +707,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Right Thigh (cm)</label>
                   <input
                     type="number"
-                    value={rightThighCm}
+                    value={rightThighCm || ''}
                     onChange={(e) => setRightThighCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -756,7 +717,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Left Calf (cm)</label>
                   <input
                     type="number"
-                    value={leftCalfCm}
+                    value={leftCalfCm || ''}
                     onChange={(e) => setLeftCalfCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -766,7 +727,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-amber-950 mb-1">Right Calf (cm)</label>
                   <input
                     type="number"
-                    value={rightCalfCm}
+                    value={rightCalfCm || ''}
                     onChange={(e) => setRightCalfCm(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-xs font-bold outline-none"
                   />
@@ -851,14 +812,14 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <button
                   type="button"
                   onClick={() => setHasExercise(true)}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold border ${hasExercise ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-stone-50 text-stone-700'}`}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border ${hasExercise === true ? 'bg-emerald-700 text-white border-emerald-700' : 'bg-stone-50 text-stone-700'}`}
                 >
                   Yes
                 </button>
                 <button
                   type="button"
                   onClick={() => setHasExercise(false)}
-                  className={`flex-1 py-2 rounded-xl text-xs font-bold border ${!hasExercise ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-700'}`}
+                  className={`flex-1 py-2 rounded-xl text-xs font-bold border ${hasExercise === false ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-700'}`}
                 >
                   No
                 </button>
@@ -900,6 +861,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                     onChange={(e) => setWorkoutFrequency(e.target.value)}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                   >
+                    <option value="">Choose…</option>
                     <option value="Never">Never</option>
                     <option value="1–2 Days">1–2 Days/Wk</option>
                     <option value="3–4 Days">3–4 Days/Wk</option>
@@ -911,7 +873,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-stone-700 mb-1">Workout Duration</label>
                   <select
-                    value={workoutDuration}
+                    value={workoutDuration || ''}
                     onChange={(e) => setWorkoutDuration(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                   >
@@ -928,7 +890,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   <label className="block text-xs font-bold text-stone-700 mb-1">Daily Step Count</label>
                   <input
                     type="number"
-                    value={dailyStepCount}
+                    value={dailyStepCount || ''}
                     onChange={(e) => setDailyStepCount(Number(e.target.value))}
                     className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                   />
@@ -940,14 +902,14 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                     <input
                       type="number"
                       placeholder="Strength"
-                      value={strengthSessions}
+                      value={strengthSessions || ''}
                       onChange={(e) => setStrengthSessions(Number(e.target.value))}
                       className="w-1/2 p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-center"
                     />
                     <input
                       type="number"
                       placeholder="Cardio"
-                      value={cardioSessions}
+                      value={cardioSessions || ''}
                       onChange={(e) => setCardioSessions(Number(e.target.value))}
                       className="w-1/2 p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-center"
                     />
@@ -1367,6 +1329,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   onChange={(e) => setSmoking(e.target.value as any)}
                   className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                 >
+                  <option value="">Choose…</option>
                   <option value="Never">Never</option>
                   <option value="Occasionally">Occasionally</option>
                   <option value="Daily">Daily</option>
@@ -1381,6 +1344,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   onChange={(e) => setAlcohol(e.target.value as any)}
                   className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                 >
+                  <option value="">Choose…</option>
                   <option value="Never">Never</option>
                   <option value="Monthly">Monthly</option>
                   <option value="Weekly">Weekly</option>
@@ -1395,6 +1359,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   onChange={(e) => setTobacco(e.target.value as any)}
                   className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                 >
+                  <option value="">Choose…</option>
                   <option value="Never">Never</option>
                   <option value="Occasionally">Occasionally</option>
                   <option value="Daily">Daily</option>
@@ -1408,6 +1373,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                   onChange={(e) => setSleepQuality(e.target.value as any)}
                   className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold"
                 >
+                  <option value="">Choose…</option>
                   <option value="Excellent">Excellent</option>
                   <option value="Good">Good</option>
                   <option value="Average">Average</option>
@@ -1441,10 +1407,11 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-pink-950 mb-1">Pregnant?</label>
                   <select
-                    value={isPregnant ? 'yes' : 'no'}
-                    onChange={(e) => setIsPregnant(e.target.value === 'yes')}
+                    value={triToSelect(isPregnant)}
+                    onChange={(e) => setIsPregnant(selectToTri(e.target.value))}
                     className="w-full p-2 bg-white border border-pink-300 rounded-xl text-xs font-bold"
                   >
+                    <option value="">Choose…</option>
                     <option value="no">No</option>
                     <option value="yes">Yes</option>
                   </select>
@@ -1453,10 +1420,11 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-pink-950 mb-1">Breastfeeding?</label>
                   <select
-                    value={isBreastfeeding ? 'yes' : 'no'}
-                    onChange={(e) => setIsBreastfeeding(e.target.value === 'yes')}
+                    value={triToSelect(isBreastfeeding)}
+                    onChange={(e) => setIsBreastfeeding(selectToTri(e.target.value))}
                     className="w-full p-2 bg-white border border-pink-300 rounded-xl text-xs font-bold"
                   >
+                    <option value="">Choose…</option>
                     <option value="no">No</option>
                     <option value="yes">Yes</option>
                   </select>
@@ -1469,6 +1437,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                     onChange={(e) => setMenstrualCycle(e.target.value as any)}
                     className="w-full p-2 bg-white border border-pink-300 rounded-xl text-xs font-bold"
                   >
+                    <option value="">Choose…</option>
                     <option value="Regular">Regular</option>
                     <option value="Irregular">Irregular</option>
                   </select>
@@ -1477,10 +1446,11 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-pink-950 mb-1">Menopause?</label>
                   <select
-                    value={isMenopause ? 'yes' : 'no'}
-                    onChange={(e) => setIsMenopause(e.target.value === 'yes')}
+                    value={triToSelect(isMenopause)}
+                    onChange={(e) => setIsMenopause(selectToTri(e.target.value))}
                     className="w-full p-2 bg-white border border-pink-300 rounded-xl text-xs font-bold"
                   >
+                    <option value="">Choose…</option>
                     <option value="no">No</option>
                     <option value="yes">Yes</option>
                   </select>
@@ -1518,7 +1488,15 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
             <span className="text-xs font-bold text-stone-400">Step 6 of 6</span>
           </div>
 
-          {/* COMPREHENSIVE CLINICAL PARAMETERS DISPLAY */}
+          {/* COMPREHENSIVE CLINICAL PARAMETERS DISPLAY: shown only when calculated from values the customer entered */}
+          {!coreReady && (
+            <p className="p-4 rounded-2xl bg-stone-100 border border-stone-200 text-xs font-bold text-stone-600">
+              {gender === 'other'
+                ? 'Calorie and macro figures are not available for this selection yet. Your profile can still be saved.'
+                : 'Enter your sex, age, height and weight in Basic Information to see your calculated body and macro parameters.'}
+            </p>
+          )}
+          {coreReady && (
           <div className="bg-stone-900 text-white p-6 rounded-3xl space-y-4 border border-stone-800 shadow-md">
             <div className="flex items-center justify-between border-b border-stone-800 pb-3">
               <div className="flex items-center gap-2">
@@ -1624,6 +1602,7 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
               </div>
             </div>
           </div>
+          )}
 
           {/* TAILORED MEALS DOORSTEP SUBSCRIPTION PROMPT BANNER */}
           <div className="bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 text-stone-950 p-6 sm:p-8 rounded-3xl border-2 border-amber-300 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
@@ -1635,140 +1614,36 @@ export const HealthProfileWizard: React.FC<HealthProfileWizardProps> = ({
                 Do you wish to tailored meals at your doorsteps?
               </h3>
               <p className="text-xs sm:text-sm font-bold text-stone-800 max-w-xl leading-relaxed">
-                Receive freshly prepared, chef-crafted protein bowls and diet meals delivered right to your home or office based on your calculated BMR ({bmr} kcal) and TDEE ({tdee} kcal).
+                Receive freshly prepared, chef-crafted protein bowls and diet meals delivered right to your home or office {coreReady ? `based on your calculated BMR (${bmr} kcal) and TDEE (${tdee} kcal).` : 'based on your health profile.'}
               </p>
             </div>
 
             <button
               type="button"
-              onClick={() => {
-                setOtpPhone(phone || '+91 98765 43210');
-                setOtpCode('');
-                setOtpError('');
-                setShowOtpModal(true);
+              onClick={async () => {
+                // No phone-OTP step: there is no SMS service, and a made-up verification would only pretend to protect the account.
+                if (!gender || !name.trim() || !email.trim() || !(age > 0) || !(heightCm > 0) || !(weightKg > 0) || !(targetWeightKg > 0)) {
+                  setCoreError('Please enter your name, email, sex, age, height, current weight and target weight (Basic Information) before continuing.');
+                  return;
+                }
+                setCoreError(null);
+                const updated = getUpdatedProfileObj();
+                // Continue only after the server stored the profile; the parent shows the error otherwise.
+                const saved = await onSaveProfile(updated);
+                if (!saved) return;
+                confetti({ particleCount: 80, spread: 80 });
+                if (onProceedToCustomerModule) {
+                  onProceedToCustomerModule(updated);
+                } else if (onProceedToPlan) {
+                  onProceedToPlan();
+                }
               }}
               className="w-full md:w-auto bg-stone-950 hover:bg-stone-900 text-amber-300 font-black px-8 py-4 rounded-2xl text-sm transition-all shadow-xl hover:scale-105 flex items-center justify-center gap-2 border-2 border-amber-300 shrink-0 cursor-pointer"
             >
               <span>Click Here</span>
               <ArrowRight className="w-5 h-5" />
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* MOBILE PHONE OTP VERIFICATION MODAL */}
-      {showOtpModal && (
-        <div className="fixed inset-0 z-50 bg-stone-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white text-stone-900 rounded-3xl max-w-md w-full p-6 sm:p-8 space-y-6 shadow-2xl border border-stone-200 relative">
-            <button
-              onClick={() => setShowOtpModal(false)}
-              className="absolute top-4 right-4 text-stone-400 hover:text-stone-700 p-2 rounded-full hover:bg-stone-100"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="text-center space-y-2">
-              <div className="w-12 h-12 bg-emerald-100 rounded-2xl mx-auto flex items-center justify-center text-emerald-800">
-                <Phone className="w-6 h-6 text-emerald-700" />
-              </div>
-              <h3 className="text-xl font-black text-stone-900">Mobile OTP Verification</h3>
-              <p className="text-xs text-stone-600 leading-relaxed">
-                Confirm your mobile phone number to authenticate your doorstep meal subscription and launch your customer dashboard.
-              </p>
-            </div>
-
-            {!otpSent ? (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Mobile Phone Number</label>
-                  <div className="relative">
-                    <Phone className="w-4 h-4 text-stone-400 absolute left-3 top-3.5" />
-                    <input
-                      type="tel"
-                      value={otpPhone}
-                      onChange={(e) => setOtpPhone(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold outline-none focus:border-emerald-700 text-stone-900"
-                      placeholder="+91 98765 43210"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setOtpSent(true);
-                    setOtpCode('1234');
-                  }}
-                  className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-xl text-xs transition-all shadow-md flex items-center justify-center gap-2"
-                >
-                  <span>Send OTP to Mobile Phone</span>
-                  <ArrowRight className="w-4 h-4" />
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
-                  <span className="text-xs text-emerald-900 font-bold block">
-                    OTP Code Sent to {otpPhone}
-                  </span>
-                  <span className="text-[11px] text-stone-600 font-medium">
-                    Enter verification code (Demo OTP: <strong className="font-mono text-emerald-800 font-black">1234</strong>)
-                  </span>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-stone-700 mb-1">Verification OTP</label>
-                  <input
-                    type="text"
-                    maxLength={6}
-                    value={otpCode}
-                    onChange={(e) => {
-                      setOtpCode(e.target.value);
-                      setOtpError('');
-                    }}
-                    className="w-full p-3 bg-stone-50 border border-stone-300 rounded-xl text-center text-xl font-mono font-black tracking-widest text-stone-900 outline-none focus:border-emerald-700"
-                    placeholder="1234"
-                  />
-                </div>
-
-                {otpError && (
-                  <p className="text-xs text-rose-600 font-bold text-center">{otpError}</p>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!otpCode || otpCode.length < 4) {
-                      setOtpError('Please enter the 4-digit OTP (1234)');
-                      return;
-                    }
-                    const updated = getUpdatedProfileObj();
-                    onSaveProfile(updated);
-                    confetti({ particleCount: 80, spread: 80 });
-                    setShowOtpModal(false);
-                    if (onProceedToCustomerModule) {
-                      onProceedToCustomerModule(updated);
-                    } else if (onProceedToPlan) {
-                      onProceedToPlan();
-                    }
-                  }}
-                  className="w-full bg-emerald-800 hover:bg-emerald-700 text-white font-black py-3.5 rounded-xl text-xs transition-all shadow-lg flex items-center justify-center gap-2"
-                >
-                  <Check className="w-4 h-4 text-emerald-300" />
-                  <span>Verify OTP & Launch Customer Dashboard</span>
-                </button>
-
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => setOtpSent(false)}
-                    className="text-[11px] text-stone-500 hover:text-stone-800 font-bold underline"
-                  >
-                    Change Phone Number
-                  </button>
-                </div>
-              </div>
-            )}
+            {coreError && <p role="alert" className="w-full text-xs font-bold text-rose-800 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 md:basis-full">{coreError}</p>}
           </div>
         </div>
       )}

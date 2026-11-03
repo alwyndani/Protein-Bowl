@@ -4,6 +4,7 @@ export type AuthStackParamList = {
   Welcome: undefined;
   SignIn: undefined;
   Register: undefined;
+  ForgotPassword: undefined;
 };
 
 export type AddressMode = 'select' | 'manage';

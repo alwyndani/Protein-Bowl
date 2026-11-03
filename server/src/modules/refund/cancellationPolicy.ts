@@ -14,6 +14,12 @@ export const ADMIN_CANCELLABLE_STATES = ['PENDING', 'CONFIRMED', 'ACCEPTED'] as 
 /** States where a paid-order cancellation (with refund) may pass the order-transition gate at all. */
 export const PAID_CANCELLATION_FROM_STATES = ['CONFIRMED', 'ACCEPTED'] as const;
 
+/**
+ * Staff-reviewed cancellation: for a PAID order the kitchen has already accepted/started, the customer can only REQUEST cancellation.
+ * Nothing is promised. SUPER_ADMIN approves (order cancelled + the FULL refund intent in the same transaction) or declines (nothing changes).
+ */
+export const REVIEWABLE_CANCELLATION_STATES = ['ACCEPTED', 'PREPARING', 'READY'] as const;
+
 export const CUSTOMER_REASON_CODES = ['CHANGED_MIND', 'ORDERED_BY_MISTAKE', 'WRONG_ORDER', 'DELIVERY_TOO_LATE', 'OTHER'] as const;
 export const ADMIN_REASON_CODES = ['ITEM_UNAVAILABLE', 'KITCHEN_UNAVAILABLE', 'DELIVERY_UNAVAILABLE', 'PAYMENT_ISSUE', 'OPERATIONAL_ISSUE', 'OTHER'] as const;
 
@@ -61,6 +67,12 @@ const noteSchema = z
 export const customerCancelBodySchema = z.object({ reasonCode: z.enum(CUSTOMER_REASON_CODES), note: noteSchema }).strict();
 export const adminCancelBodySchema = z.object({ reasonCode: z.enum(ADMIN_REASON_CODES), note: noteSchema }).strict();
 export const refundApprovalBodySchema = z.object({ note: noteSchema }).strict();
+export const cancellationRequestBodySchema = customerCancelBodySchema;
+export const cancellationApproveBodySchema = z.object({ note: noteSchema }).strict();
+export const cancellationDeclineBodySchema = z
+  .object({ note: noteSchema })
+  .strict()
+  .refine((b) => !!b.note && b.note.length >= 3, { message: 'A short explanation for the customer is required', path: ['note'] });
 
 export type CustomerCancelBody = z.infer<typeof customerCancelBodySchema>;
 export type AdminCancelBody = z.infer<typeof adminCancelBodySchema>;

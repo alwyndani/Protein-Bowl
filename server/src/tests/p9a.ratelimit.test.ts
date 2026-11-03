@@ -7,11 +7,11 @@ import jwt from 'jsonwebtoken';
 // Low limits must be set BEFORE the app (and its limiters) are imported. Vitest isolates modules per test file.
 process.env.RL_DELIVERY_ACTION_MAX = '2';
 process.env.RL_DELIVERY_READ_MAX = '3';
-process.env.RL_DELIVERY_ASSIGN_MAX = '1';
+process.env.RL_DELIVERY_OVERRIDE_MAX = '1'; // unrelated here; the override limiter is covered in p9b.ratelimit
 
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 
-describe('P9A - delivery rate limits (per authenticated user)', () => {
+describe('B2a - delivery rate limits that still protect active endpoints (per authenticated user)', () => {
   let app: any;
   const ts = Date.now();
   const tokens: Record<string, string> = {};
@@ -39,29 +39,32 @@ describe('P9A - delivery rate limits (per authenticated user)', () => {
     await mk('a', RoleEnum.DELIVERY);
     await mk('b', RoleEnum.DELIVERY);
     await mk('admin', RoleEnum.SUPER_ADMIN);
+    await mk('admin2', RoleEnum.SUPER_ADMIN);
   });
   afterAll(async () => {
     await prisma.$disconnect();
   });
 
-  it('driver actions are limited per user (claim / dispatch / report share a budget); another driver keeps its own', async () => {
-    const statuses: number[] = [];
-    for (let i = 0; i < 3; i++) statuses.push((await request(app).post(`/api/v1/delivery/orders/${missing}/claim`).set(auth('a')).send({})).status);
-    expect(statuses.slice(0, 2)).toEqual([404, 404]);
-    expect(statuses[2]).toBe(429);
-    expect((await request(app).post(`/api/v1/delivery/orders/${missing}/dispatch`).set(auth('b')).send({})).status).toBe(404);
+  it('the removed driver surface stays removed: every former driver route is 404 for a legacy driver token, so no driver limiter is reachable', async () => {
+    for (let i = 0; i < 4; i++) {
+      expect((await request(app).post(`/api/v1/delivery/orders/${missing}/claim`).set(auth('a')).send({})).status).toBe(404);
+      expect((await request(app).get('/api/v1/delivery/orders').set(auth('b'))).status).toBe(404);
+    }
+    expect((await request(app).put(`/api/v1/admin/orders/${missing}/delivery-assignment`).set(auth('admin')).send({})).status).toBe(404);
   });
 
-  it('queue reads have their own (more generous) per-user budget', async () => {
+  it('SUPER_ADMIN delivery operations share a per-user action budget that runs before the step-up check', async () => {
+    const op = () => request(app).post(`/api/v1/admin/delivery/orders/${missing}/dispatch`).set(auth('admin')).send({});
+    expect((await op()).status).toBe(403); // no step-up proof, but the request counted
+    expect((await op()).status).toBe(403);
+    expect((await op()).status).toBe(429); // RL_DELIVERY_ACTION_MAX = 2
+  });
+
+  it('the monitor read has its own (more generous) per-user budget', async () => {
+    const m = () => request(app).get(`/api/v1/delivery/monitor?branchId=${branchId}`).set(auth('admin2'));
     const statuses: number[] = [];
-    for (let i = 0; i < 4; i++) statuses.push((await request(app).get('/api/v1/delivery/orders').set(auth('b'))).status);
+    for (let i = 0; i < 4; i++) statuses.push((await m()).status);
     expect(statuses.slice(0, 3)).toEqual([200, 200, 200]);
-    expect(statuses[3]).toBe(429);
-  });
-
-  it('SUPER_ADMIN assignment is the tightest limiter and sits before the step-up check', async () => {
-    const put = () => request(app).put(`/api/v1/admin/orders/${missing}/delivery-assignment`).set(auth('admin')).send({});
-    expect((await put()).status).toBe(403); // no step-up proof, but the request counted
-    expect((await put()).status).toBe(429);
+    expect(statuses[3]).toBe(429); // RL_DELIVERY_READ_MAX = 3
   });
 });

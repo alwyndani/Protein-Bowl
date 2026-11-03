@@ -4,6 +4,7 @@ import App from './App.tsx';
 import { AuthProvider } from './context/AuthContext.tsx';
 import { CartProvider } from './context/CartContext.tsx';
 import { AcceptInvitePage, isAcceptInviteRoute } from './components/admin/AcceptInvitePage.tsx';
+import { ResetPasswordPage, isResetPasswordRoute } from './components/auth/ResetPasswordPage.tsx';
 import './index.css';
 
 const root = createRoot(document.getElementById('root')!);
@@ -14,6 +15,13 @@ if (isAcceptInviteRoute(window.location.pathname)) {
   root.render(
     <StrictMode>
       <AcceptInvitePage />
+    </StrictMode>
+  );
+} else if (isResetPasswordRoute(window.location.pathname)) {
+  // Public password-reset page: standalone (no app shell / auth restoration), token read from the URL fragment.
+  root.render(
+    <StrictMode>
+      <ResetPasswordPage />
     </StrictMode>
   );
 } else {

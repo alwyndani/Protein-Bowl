@@ -17,6 +17,11 @@ export interface CalculatedHealthMetrics {
   leanBodyMassKg: number;
 }
 
+export const NOT_CALCULATED: CalculatedHealthMetrics = {
+  bmi: 0, bmiCategory: 'Normal', bmr: 0, tdee: 0, maintenanceCalories: 0, targetCalories: 0, calorieDeficitSurplus: 0,
+  proteinGrams: 0, carbsGrams: 0, fatGrams: 0, fiberGrams: 0, waterRequirementL: 0, idealBodyWeightKg: 0, leanBodyMassKg: 0
+};
+
 export function calculateHealthMetrics(params: {
   weightKg: number;
   heightCm: number;
@@ -28,9 +33,14 @@ export function calculateHealthMetrics(params: {
 }): CalculatedHealthMetrics {
   const { weightKg, heightCm, age, gender, activityLevel, goal, hasExercise } = params;
 
-  const validWeight = Math.max(20, weightKg || 65);
-  const validHeight = Math.max(100, heightCm || 165);
-  const validAge = Math.max(12, age || 28);
+  // Nothing is assumed: without real weight, height and age every figure is 0 ("not calculated"), never a stand-in person's numbers.
+  if (!(weightKg > 0) || !(heightCm > 0) || !(age > 0)) return NOT_CALCULATED;
+  // Only male/female are calculable; "other" is unavailable until a calculation policy is approved (never silently the female formula).
+  if (gender !== 'male' && gender !== 'female') return NOT_CALCULATED;
+
+  const validWeight = Math.max(20, weightKg);
+  const validHeight = Math.max(100, heightCm);
+  const validAge = Math.max(12, age);
 
   // 1. BMI = Weight (kg) ÷ Height² (m²)
   const heightM = validHeight / 100;

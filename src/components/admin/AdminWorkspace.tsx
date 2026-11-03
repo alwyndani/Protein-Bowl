@@ -10,16 +10,24 @@ import { AuditLog } from './AuditLog';
 import { PermissionsView } from './PermissionsView';
 import { KitchenRouting } from './KitchenRouting';
 import { DeliveryMonitor } from './DeliveryMonitor';
+import { DeliveryOperations } from './DeliveryOperations';
 import { MessAdmin } from './MessAdmin';
+import { TrainerAssignments } from './TrainerAssignments';
+import { RecipePublishing } from './RecipePublishing';
+import { CancellationReview } from './CancellationReview';
 import { Spinner } from './adminUi';
 
-type Section = 'staff' | 'branches' | 'kitchen' | 'delivery' | 'mess' | 'audit' | 'permissions';
+type Section = 'staff' | 'cancellations' | 'recipes' | 'trainers' | 'branches' | 'kitchen' | 'delivery' | 'delivery-ops' | 'mess' | 'audit' | 'permissions';
 
 const NAV: Array<{ id: Section; label: string; icon: React.ReactNode }> = [
   { id: 'staff', label: 'Staff', icon: <Users className="w-4 h-4" aria-hidden="true" /> },
+  { id: 'cancellations', label: 'Cancellation requests', icon: <ClipboardList className="w-4 h-4" aria-hidden="true" /> },
+  { id: 'recipes', label: 'Recipe publishing', icon: <ChefHat className="w-4 h-4" aria-hidden="true" /> },
+  { id: 'trainers', label: 'Trainer assignments', icon: <Users className="w-4 h-4" aria-hidden="true" /> },
   { id: 'branches', label: 'Branches', icon: <MapPin className="w-4 h-4" aria-hidden="true" /> },
   { id: 'kitchen', label: 'Kitchen routing', icon: <ChefHat className="w-4 h-4" aria-hidden="true" /> },
   { id: 'delivery', label: 'Delivery', icon: <Truck className="w-4 h-4" aria-hidden="true" /> },
+  { id: 'delivery-ops', label: 'Delivery operations', icon: <Truck className="w-4 h-4" aria-hidden="true" /> },
   { id: 'mess', label: 'Kerala Mess', icon: <UtensilsCrossed className="w-4 h-4" aria-hidden="true" /> },
   { id: 'audit', label: 'Audit log', icon: <ClipboardList className="w-4 h-4" aria-hidden="true" /> },
   { id: 'permissions', label: 'Roles & permissions', icon: <ShieldCheck className="w-4 h-4" aria-hidden="true" /> }
@@ -91,9 +99,13 @@ const AdminShell: React.FC = () => {
 
         <main className="min-w-0">
           {section === 'staff' && (staffId ? <StaffDetail staffId={staffId} onBack={() => setStaffId(null)} /> : <StaffManagement onOpen={setStaffId} />)}
+          {section === 'cancellations' && <CancellationReview />}
+          {section === 'recipes' && <RecipePublishing />}
+          {section === 'trainers' && <TrainerAssignments />}
           {section === 'branches' && <BranchManagement />}
           {section === 'kitchen' && <KitchenRouting />}
           {section === 'delivery' && <DeliveryMonitor />}
+          {section === 'delivery-ops' && <DeliveryOperations />}
           {section === 'mess' && <MessAdmin />}
           {section === 'audit' && <AuditLog />}
           {section === 'permissions' && <PermissionsView />}
