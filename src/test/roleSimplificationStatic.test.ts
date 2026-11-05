@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { APPROVED_BACKEND_ROLES, RETIRED_BACKEND_ROLES } from '../utils/approvedRoles';
 import { approvedRolesOf } from '../../server/src/authz/approvedRoles'; // a leaf module that imports nothing, so no server code, Prisma or database is loaded
@@ -82,10 +82,16 @@ describe('web client: retired roles', () => {
   });
 });
 
-describe('delivery takeover tool: no revert, safeguards preserved', () => {
-  const script = strip(read('server', 'scripts', 'takeoverLiveDelivery.ts'));
+// The one-off takeover script is deliberately NOT in the repository (.gitignore): it is hard-coded to the development database. These source-text checks
+// therefore run wherever the file exists (the developer's machine) and are skipped, visibly, where it does not (a clean checkout such as CI). The file is read
+// lazily inside each test, never while the suite is collected, so its absence cannot fail the other guards in this file.
+const TAKEOVER_SCRIPT = join(ROOT, 'server', 'scripts', 'takeoverLiveDelivery.ts');
+
+describe.skipIf(!existsSync(TAKEOVER_SCRIPT))('delivery takeover tool: no revert, safeguards preserved', () => {
+  const source = () => strip(readFileSync(TAKEOVER_SCRIPT, 'utf8'));
 
   it('has no revert at all (there is no valid account to hand a job back to) and refuses an old --revert command line before anything else', () => {
+    const script = source();
     expect(script).not.toMatch(/runRevert|TAKEOVER_REVERTED|isEligible|REFUSED_FORMER_DRIVER/);
     expect(script).toContain("argv.includes('--revert')");
     expect(script).toContain('REVERT_REMOVED');
@@ -96,6 +102,7 @@ describe('delivery takeover tool: no revert, safeguards preserved', () => {
   });
 
   it('keeps the existing safeguards: exact target, live identity check, confirmation, new manifest, dry run first, built-in exclusion', () => {
+    const script = source();
     for (const marker of [
       "host: 'localhost'",
       'assertExactTarget',
@@ -114,11 +121,18 @@ describe('delivery takeover tool: no revert, safeguards preserved', () => {
   });
 
   it('a dry run returns before the manifest is written and before any takeover service is called', () => {
+    const script = source();
     const run = script.slice(script.indexOf('async function runTakeover'));
     const dry = run.indexOf('if (!execute)');
     expect(dry).toBeGreaterThan(-1);
     expect(dry).toBeLessThan(run.indexOf('writeManifest(manifestPath!, manifest, true)'));
     expect(dry).toBeLessThan(run.indexOf('DeliveryOperateService.takeover'));
+  });
+});
+
+describe('the one-off delivery takeover script stays out of the repository', () => {
+  it('is listed in .gitignore (it is hard-coded to the development database and must never be committed by accident)', () => {
+    expect(read('.gitignore')).toMatch(/^server\/scripts\/takeoverLiveDelivery\.ts\s*$/m);
   });
 });
 
