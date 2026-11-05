@@ -32,6 +32,23 @@ TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5432/pb_ci_test?sche
 npx vitest run src/tests/testDatabase.unit.test.ts src/tests/purchasing.unit.test.ts src/tests/invite-config.test.ts
 ```
 
+### Disposable cluster on Windows: use `127.0.0.1`, not `localhost`
+
+A throwaway cluster that listens on IPv4 only (`listen_addresses = '127.0.0.1'`, as recommended above) must be addressed as `127.0.0.1`.
+On Windows, `localhost` is tried as IPv6 `::1` first; the closed IPv6 port is refused only after about 2 s, so **every new database connection costs
+about 2 s**. Prisma's default interactive-transaction start limit (`maxWait`) is also 2 s, so any test that makes two or more callers open transactions
+at once fails with `P2028 Unable to start a transaction in the given time` (concurrent dispatch/takeover/regeneration/transition tests; they take ~2.0 s
+and return 500 instead of the expected result). The same suite passes without a single P2028 once the host is `127.0.0.1`
+(verified 2026-11-05: 84 files / 1,738 tests passed, 0 failed, 0 skipped, on a UTF8 PostgreSQL 17 cluster on port 5434).
+
+- `scripts/verify-isolated.sh`: set `PB_TEST_PG_HOST=127.0.0.1` (the script accepts `localhost` or `127.0.0.1`), together with the port variables.
+- Direct runs: put `127.0.0.1` in `TEST_DATABASE_URL`, e.g. `postgresql://postgres:<password>@127.0.0.1:5434/pb_ci_test?schema=public`.
+- Alternatively let the cluster listen on both families (`listen_addresses = '127.0.0.1,::1'`); a server listening on `[::]`, such as a normal
+  Windows service install, does not show the delay.
+
+Create such a cluster with an explicit encoding: the seed contains emoji (`prisma/seedProducts.ts`), which a Windows-default `WIN1252` cluster
+rejects (`initdb -E UTF8 --locale=English_India.1252 ...`).
+
 ## Migration suites (separate, opt-in)
 
 `*.migration.test.ts` (7 files) and `p6b.isolated.test.ts` are excluded from the default `npm test` (`vitest.config.ts`) and from
