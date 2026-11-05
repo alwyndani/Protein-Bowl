@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { assertProductionRazorpay } from './productionChecks.js';
 
 // Make sure a local .env is loaded before the configuration is validated (does not override variables already set).
 dotenv.config();
@@ -106,13 +107,20 @@ export function parsePaymentConfig(raw: Raw, nodeEnv: string): PaymentConfig {
     if (production && (url.protocol !== 'https:' || url.origin !== 'https://api.razorpay.com')) {
       throw new PaymentConfigError('RAZORPAY_API_BASE may not be overridden in production (must be https://api.razorpay.com/v1)');
     }
-    razorpay = Object.freeze({
+    const creds = {
       keyId: required(raw, 'RAZORPAY_KEY_ID'),
       keySecret: required(raw, 'RAZORPAY_KEY_SECRET'),
       webhookSecret: required(raw, 'RAZORPAY_WEBHOOK_SECRET'),
-      previousWebhookSecret: raw.RAZORPAY_WEBHOOK_SECRET_PREVIOUS?.trim() || null,
-      apiBase
-    });
+      previousWebhookSecret: raw.RAZORPAY_WEBHOOK_SECRET_PREVIOUS?.trim() || null
+    };
+    if (production) {
+      try {
+        assertProductionRazorpay(creds);
+      } catch (e) {
+        throw new PaymentConfigError((e as Error).message);
+      }
+    }
+    razorpay = Object.freeze({ ...creds, apiBase });
   }
 
   const baseSeconds = int(raw, 'PAYMENT_RETRY_BASE_SECONDS', 30, 1, 3600);

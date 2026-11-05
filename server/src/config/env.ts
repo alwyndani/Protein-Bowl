@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { assertProductionEmail, assertProductionOrigins, assertTrustProxy, looksLikePlaceholder } from './productionChecks.js';
 
 dotenv.config();
 
@@ -177,12 +178,10 @@ function assertProductionSecrets(data: z.infer<typeof envSchema>): void {
     throw new Error('In production JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values');
   }
   // Development / test / end-to-end secrets are public (they sit in the repository): a production deployment must never run on one of them.
-  if (DEV_SECRET_MARKERS.test(data.JWT_ACCESS_SECRET) || DEV_SECRET_MARKERS.test(data.JWT_REFRESH_SECRET)) {
+  if (looksLikePlaceholder(data.JWT_ACCESS_SECRET) || looksLikePlaceholder(data.JWT_REFRESH_SECRET)) {
     throw new Error('In production the JWT secrets must not be development, test or placeholder values (generate fresh random secrets)');
   }
 }
-
-const DEV_SECRET_MARKERS = /e2e-isolated|valid-only-for-this-local-run|h1-test-|test[_-](access|refresh)[_-]secret|dev(elopment)?[_-](access|refresh)|changeme|change[_-]me|your[_-]|placeholder|replace[_-]me|super_secret|0123456789|1234567890/i;
 
 function resolveEmailProvider(data: z.infer<typeof envSchema>): 'none' | 'log' | 'resend' {
   const production = data.NODE_ENV === 'production';
@@ -209,11 +208,28 @@ function resolveInviteDelivery(data: z.infer<typeof envSchema>): 'manual' | 'ema
 }
 
 assertProductionSecrets(_env.data);
+assertTrustProxy(_env.data.TRUST_PROXY, _env.data.NODE_ENV === 'production');
+
+const resolvedInviteDelivery = resolveInviteDelivery(_env.data);
+const resolvedEmailProvider = resolveEmailProvider(_env.data);
+const resolvedAllowedOrigins = resolveAllowedOrigins(_env.data);
+
+if (_env.data.NODE_ENV === 'production') {
+  // Fail fast at startup with a message that names the variable (see config/productionChecks.ts).
+  assertProductionOrigins({
+    allowedOrigins: resolvedAllowedOrigins,
+    webBaseUrl: _env.data.WEB_BASE_URL,
+    staffInviteBaseUrl: _env.data.STAFF_INVITE_BASE_URL,
+    emailProvider: resolvedEmailProvider,
+    inviteDelivery: resolvedInviteDelivery
+  });
+  assertProductionEmail({ emailProvider: resolvedEmailProvider, apiKey: _env.data.RESEND_API_KEY, from: _env.data.EMAIL_FROM });
+}
 
 export const env = {
   ..._env.data,
-  inviteDelivery: resolveInviteDelivery(_env.data),
-  emailProvider: resolveEmailProvider(_env.data),
-  allowedOrigins: resolveAllowedOrigins(_env.data),
+  inviteDelivery: resolvedInviteDelivery,
+  emailProvider: resolvedEmailProvider,
+  allowedOrigins: resolvedAllowedOrigins,
   rateLimitDisabled: _env.data.NODE_ENV !== 'production' && _env.data.RL_DISABLED === 'true'
 };

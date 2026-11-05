@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *  - production: MUST be set explicitly, and only supported values are accepted (currently only "manual")
  * Each case imports config/env.ts fresh with a controlled process.env and restores everything afterwards.
  */
-const KEYS = ['NODE_ENV', 'INVITE_DELIVERY', 'CORS_ALLOWED_ORIGINS', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'RESEND_API_KEY', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'] as const;
+const KEYS = ['NODE_ENV', 'INVITE_DELIVERY', 'CORS_ALLOWED_ORIGINS', 'EMAIL_PROVIDER', 'EMAIL_FROM', 'RESEND_API_KEY', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'WEB_BASE_URL'] as const;
 
 describe('INVITE_DELIVERY configuration', () => {
   const saved: Record<string, string | undefined> = {};
@@ -120,6 +120,9 @@ describe('INVITE_DELIVERY configuration', () => {
     process.env.EMAIL_PROVIDER = 'resend';
     process.env.RESEND_API_KEY = 're_test_key_not_real';
     process.env.EMAIL_FROM = 'Protein Bowl <no-reply@example.test>';
+    await expect(load('production', 'email')).rejects.toThrow(/WEB_BASE_URL must be set explicitly in production/); // emailed links need an explicit public address
+    vi.resetModules();
+    process.env.WEB_BASE_URL = 'https://app.example.com';
     const env = await load('production', 'email');
     expect(env.inviteDelivery).toBe('email');
     expect(env.emailProvider).toBe('resend');
