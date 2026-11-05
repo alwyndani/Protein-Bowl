@@ -4,21 +4,26 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BrandFooter } from './BrandFooter';
 
-const SOCIAL_NAMES = ['Protein Bowl on Instagram', 'Protein Bowl on Facebook', 'Protein Bowl on Twitter'];
-
 describe('BrandFooter', () => {
-  it('gives each icon-only social link an accessible name', () => {
-    render(<BrandFooter />);
-    for (const name of SOCIAL_NAMES) {
-      expect(screen.getByRole('link', { name })).toBeInTheDocument();
-    }
+  it('renders no social link or dead "#" link when no social profile is configured', () => {
+    const { container } = render(<BrandFooter />);
+    expect(screen.queryByTestId('footer-social')).not.toBeInTheDocument();
+    expect(container.querySelector('a[href="#"]')).toBeNull();
   });
 
-  it('keeps the social links as placeholder links (href "#"): the accessible names change no URL', () => {
+  it('opens the Privacy Policy and Terms of Subscription in a dialog and closes it', async () => {
+    const user = userEvent.setup();
     render(<BrandFooter />);
-    for (const name of SOCIAL_NAMES) {
-      expect(screen.getByRole('link', { name })).toHaveAttribute('href', '#');
-    }
+    await user.click(screen.getByRole('button', { name: 'Privacy Policy' }));
+    expect(screen.getByRole('dialog', { name: 'Privacy Policy' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Terms of Subscription' }));
+    const dialog = screen.getByRole('dialog', { name: 'Terms of Subscription' });
+    expect(dialog).toHaveTextContent(/paid online/i);
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('shows the staff access link only when a handler is passed, and calls it once on click', async () => {

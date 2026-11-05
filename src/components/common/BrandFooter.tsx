@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { LogoMark } from './LogoMark';
+import { LegalDialog, type LegalDocumentId } from './LegalDialog';
 import { Phone, Mail, MapPin, Instagram, Facebook, Twitter, Briefcase, Utensils, ChefHat, ShieldCheck, Key, FileText } from 'lucide-react';
 
 interface BrandFooterProps {
@@ -16,7 +17,19 @@ const CONTACT = {
   email: (import.meta.env.VITE_CONTACT_EMAIL as string | undefined)?.trim() || ''
 };
 
+/** Social profile links: set VITE_SOCIAL_INSTAGRAM / _FACEBOOK / _TWITTER to https URLs; an unset or non-https value renders no link. */
+const socialUrl = (v: unknown): string => {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return /^https:\/\//i.test(s) ? s : '';
+};
+const SOCIAL = {
+  instagram: socialUrl(import.meta.env.VITE_SOCIAL_INSTAGRAM),
+  facebook: socialUrl(import.meta.env.VITE_SOCIAL_FACEBOOK),
+  twitter: socialUrl(import.meta.env.VITE_SOCIAL_TWITTER)
+};
+
 export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuthModal, onOpenEmployeeLogin, isCustomerRole = true }) => {
+  const [legal, setLegal] = useState<LegalDocumentId | null>(null);
   return (
     <footer className="bg-emerald-950 text-stone-300 pt-12 pb-8 border-t-4 border-emerald-500">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -28,17 +41,25 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
             <p className="text-xs text-stone-400 leading-relaxed">
               Personalised nutrition plans, fresh protein meals and Kerala homestyle mess subscriptions.
             </p>
-            <div className="pt-2 flex items-center gap-3">
-              <a href="#" aria-label="Protein Bowl on Instagram" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
-                <Instagram className="w-4 h-4" />
-              </a>
-              <a href="#" aria-label="Protein Bowl on Facebook" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
-                <Facebook className="w-4 h-4" />
-              </a>
-              <a href="#" aria-label="Protein Bowl on Twitter" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
-                <Twitter className="w-4 h-4" />
-              </a>
-            </div>
+            {(SOCIAL.instagram || SOCIAL.facebook || SOCIAL.twitter) && (
+              <div className="pt-2 flex items-center gap-3" data-testid="footer-social">
+                {SOCIAL.instagram && (
+                  <a href={SOCIAL.instagram} target="_blank" rel="noopener noreferrer" aria-label="Protein Bowl on Instagram" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+                    <Instagram className="w-4 h-4" />
+                  </a>
+                )}
+                {SOCIAL.facebook && (
+                  <a href={SOCIAL.facebook} target="_blank" rel="noopener noreferrer" aria-label="Protein Bowl on Facebook" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+                    <Facebook className="w-4 h-4" />
+                  </a>
+                )}
+                {SOCIAL.twitter && (
+                  <a href={SOCIAL.twitter} target="_blank" rel="noopener noreferrer" aria-label="Protein Bowl on Twitter" className="w-9 h-9 rounded-full bg-emerald-900/80 hover:bg-emerald-700 flex items-center justify-center text-emerald-300 hover:text-white transition-all">
+                    <Twitter className="w-4 h-4" />
+                  </a>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Column 2: Contact. Real business details come from deployment configuration; nothing is shown (and nothing is invented) when unset. */}
@@ -76,8 +97,8 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
             © {new Date().getFullYear()} <span className="font-bold text-emerald-400">Protein Bowl</span>. All rights reserved. Striving for a healthier life.
           </div>
           <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-            <a href="#" className="hover:text-stone-200 transition-colors">Privacy Policy</a>
-            <a href="#" className="hover:text-stone-200 transition-colors">Terms of Subscription</a>
+            <button type="button" onClick={() => setLegal('privacy')} className="hover:text-stone-200 transition-colors">Privacy Policy</button>
+            <button type="button" onClick={() => setLegal('terms')} className="hover:text-stone-200 transition-colors">Terms of Subscription</button>
             {onOpenEmployeeLogin && (
               <a
                 href="#staff"
@@ -94,6 +115,7 @@ export const BrandFooter: React.FC<BrandFooterProps> = ({ onNavigate, onOpenAuth
           </div>
         </div>
       </div>
+      {legal && <LegalDialog document={legal} onClose={() => setLegal(null)} />}
     </footer>
   );
 };
