@@ -70,7 +70,8 @@ export const updateCustomerProfileSchema = z.object({
   activityLevel: z.string().min(1, 'Activity level is required').optional(),
 
   // Exercise
-  hasExercise: z.boolean().optional(),
+  // true / false = the customer's answer; explicit null = "unanswered" (clears a stored answer); omitted = unchanged. Anything else is a 422.
+  hasExercise: z.boolean().nullable().optional(),
   workoutTypes: z.array(z.string()).optional(),
   workoutFrequency: z.string().optional(),
   workoutDuration: z.number().optional(),

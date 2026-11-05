@@ -70,7 +70,7 @@ describe('hasExercise: never invented, answers preserved', () => {
   it('a non-boolean answer is rejected (422) and nothing changes', async () => {
     const a = await register('bad', 63);
     expect((await put(a.token, { ...FULL, hasExercise: false })).status).toBe(200);
-    for (const bad of ['yes', 1, null, 'true']) expect((await put(a.token, { ...FULL, hasExercise: bad })).status, String(bad)).toBe(422);
+    for (const bad of ['yes', 1, 'true', 0]) expect((await put(a.token, { ...FULL, hasExercise: bad })).status, String(bad)).toBe(422);
     expect((await get(a.token)).body.data.hasExercise).toBe(false);
   });
 
@@ -81,5 +81,15 @@ describe('hasExercise: never invented, answers preserved', () => {
     expect((await get(a.token)).body.data.hasExercise).toBeUndefined(); // absent = unanswered
     expect((await put(a.token, { ...FULL, hasExercise: true })).status).toBe(200);
     expect((await get(a.token)).body.data.hasExercise).toBe(true);
+  });
+
+  it.skipIf(!nullable)('(needs migration 20261101120000) an explicit null clears a stored answer back to UNANSWERED; omitting it afterwards leaves it unanswered', async () => {
+    const a = await register('clear', 66);
+    expect((await put(a.token, { ...FULL, hasExercise: true })).status).toBe(200);
+    expect((await put(a.token, { ...FULL, hasExercise: null })).status).toBe(200);
+    expect((await bio(a.email))?.hasExercise).toBeNull();
+    expect((await get(a.token)).body.data.hasExercise).toBeUndefined();
+    expect((await put(a.token, FULL)).status).toBe(200); // omitted = unchanged
+    expect((await bio(a.email))?.hasExercise).toBeNull();
   });
 });

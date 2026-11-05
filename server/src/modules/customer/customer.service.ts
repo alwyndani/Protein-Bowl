@@ -108,7 +108,8 @@ export class CustomerService {
           gender: data.gender || profile.gender,
           activityLevel: merged.activityLevel!,
           goal: merged.goal!,
-          hasExercise: data.hasExercise ?? stored?.hasExercise
+          // omitted (undefined) = unchanged; an explicit null = unanswered and must NOT fall back to the stored answer
+          hasExercise: data.hasExercise !== undefined ? data.hasExercise : stored?.hasExercise
         })
       : null;
 
