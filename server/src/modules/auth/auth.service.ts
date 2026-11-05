@@ -38,6 +38,20 @@ export class AuthService {
     throw new AppError('This app is for customer accounts only.', 403, 'CUSTOMER_APP_ONLY');
   }
 
+  /** A revoked refresh token was presented again: revoke every still-active session of the user, audit it (no token material), answer 401 TOKEN_REUSED. */
+  private static async handleRefreshReuse(userId: string, context?: AuditContext): Promise<never> {
+    await this.revokeAllRefreshTokens(userId);
+    await AuditService.recordSafe({
+      actor: { userId, roles: [] },
+      action: 'AUTH_REFRESH_TOKEN_REUSED',
+      entity: 'User',
+      entityId: userId,
+      payload: {},
+      context
+    });
+    throw new AppError('Invalid session state. Refresh token reused.', 401, 'TOKEN_REUSED');
+  }
+
   /**
    * Revoke every active refresh session of a user (used on deactivation / role change / security events).
    * Existing access tokens stop working immediately anyway (authenticateToken checks the database); this ends refresh.
@@ -242,13 +256,9 @@ export class AuthService {
       }
     });
 
-    // Re-use attack detection: If token exists but was already revoked, revoke all user tokens for security!
+    // Re-use attack detection: a token that exists but was already revoked (rotated or logged out) is being replayed: end every active session of that user.
     if (existingToken && existingToken.revokedAt) {
-      await prisma.refreshToken.updateMany({
-        where: { userId: existingToken.userId },
-        data: { revokedAt: new Date() }
-      });
-      throw new AppError('Invalid session state. Refresh token reused.', 401, 'TOKEN_REUSED');
+      await this.handleRefreshReuse(existingToken.userId, context);
     }
 
     if (!existingToken || existingToken.expiresAt < new Date()) {
@@ -304,11 +314,14 @@ export class AuthService {
 
     // P11A: revoking the old token and creating the new one is ONE transaction, so a failure between the two can never leave the
     // session without a valid refresh token (and the old token is never revoked without a successor).
-    await prisma.$transaction(async (tx) => {
-      await tx.refreshToken.update({
-        where: { id: existingToken.id },
+    // The revoke is a compare-and-set (revokedAt must still be null): of two concurrent refreshes with the same token exactly one wins; the loser
+    // is a replay, creates nothing, and ends the user's sessions below (never two live successors from one token).
+    const rotated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: existingToken.id, revokedAt: null },
         data: { revokedAt: new Date() }
       });
+      if (claimed.count !== 1) return false;
       await tx.refreshToken.create({
         data: {
           userId: user.id,
@@ -316,7 +329,11 @@ export class AuthService {
           expiresAt
         }
       });
+      return true;
     });
+    if (!rotated) {
+      await this.handleRefreshReuse(user.id, context);
+    }
 
     return {
       accessToken: newAccessToken,
