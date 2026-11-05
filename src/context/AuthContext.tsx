@@ -2,24 +2,21 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { AuthService, LoginParams, RegisterParams } from '../services/authService';
 import { ApiClient } from '../services/apiClient';
 import { UserRole } from '../types';
+import { fixedAuthErrorMessage } from '../utils/authErrors';
 
 export function mapBackendRoleToUserRole(backendRoles?: string[]): UserRole {
   if (!backendRoles || backendRoles.length === 0) return 'customer';
 
+  // Only the six approved roles map to a workspace. The backend never returns a retired role to the web (it filters them out), so a retired
+  // role name (MD, DELIVERY, POS, BAKERY_FMCG, TEPACHE_ERP, SWIGGY_ZOMATO) has no mapping and falls through to the customer default below.
   const roleMap: Record<string, UserRole> = {
     CUSTOMER: 'customer',
-    // LEGACY: a MESS_CUSTOMER session is presented as a normal customer (Kerala Mess lives inside the Customer Portal; there is no separate workspace)
+    // MESS_CUSTOMER is retired; this entry is kept only until the account-conversion decision is made (the backend already refuses such accounts).
     MESS_CUSTOMER: 'customer',
-    MD: 'md',
     CHEF: 'chef',
     NUTRITIONIST: 'nutritionist',
     TRAINER: 'trainer',
     PROCUREMENT: 'procurement',
-    DELIVERY: 'delivery',
-    POS: 'pos',
-    BAKERY_FMCG: 'bakery_fmcg',
-    TEPACHE_ERP: 'tepache_erp',
-    SWIGGY_ZOMATO: 'swiggy_zomato',
     SUPER_ADMIN: 'super_admin'
   };
 
@@ -125,7 +122,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsAuthenticated(true);
       return { success: true, roles: res.data.user.roles };
     } else {
-      const errMsg = res.message || 'Login failed. Please check your credentials.';
+      const errMsg = fixedAuthErrorMessage(res.error) || res.message || 'Login failed. Please check your credentials.';
       setError(errMsg);
       return { success: false, message: errMsg };
     }
@@ -153,7 +150,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setUser(null);
     setIsAuthenticated(false);
-    ApiClient.setAccessToken(null);
+    ApiClient.endSession();
   };
 
   return (

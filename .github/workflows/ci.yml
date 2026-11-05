@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck:web
+      - run: npx vitest run
+        env: { VITE_API_BASE_URL: 'http://127.0.0.1:9/api/v1' }
+      - run: npm run build
+
+  server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: pb_ci_test }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run: { working-directory: server }
+    env:
+      # A throwaway database inside this job's own service container: never a shared or production database.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pb_ci_test?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # the reconcile guard tests compare against a pinned historical revision (p11c2.reconcileGuard, section J)
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx tsc --noEmit -p .
+      - run: DATABASE_URL="$TEST_DATABASE_URL" npx prisma migrate deploy
+      - run: DATABASE_URL="$TEST_DATABASE_URL" npm run prisma:seed
+      - run: npx vitest run
+
+  # The migration suites create/drop their own databases as the superuser: here that is this job's own throwaway service container,
+  # published on 5433 (port 5432 is refused by the suites unless declared disposable).
+  server-migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run: { working-directory: server }
+    env:
+      PB_MIGRATION_PG_ADMIN_URL: postgresql://postgres:postgres@localhost:5433/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run test:migrations
+
+  # Proves the production image builds (nothing is pushed or run).
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t protein-bowl-api:ci server
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: apps/mobile }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: apps/mobile/package-lock.json }
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test

@@ -1,0 +1,21 @@
+# Line-ending and binary rules (repository root).
+# Every tracked text file is already LF in the index (verified with `git ls-files --eol`), so this changes no tracked file; it only stops
+# Windows checkouts from turning shell scripts and the Dockerfile into CRLF (which breaks them in Docker/CI).
+* text=auto eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.mjs text eol=lf
+
+# binary files: never normalised, never diffed as text
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.docx binary
+*.pdf binary
+*.dump binary

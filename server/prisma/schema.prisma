@@ -60,6 +60,20 @@ model User {
   messMealBatchesReadied MessMealBatch[]    @relation("MessMealBatchReadiedBy")
   messMealEvents       MessMealEvent[]
 
+  deliveryAssignmentsOperated   DeliveryAssignment[] @relation("DeliveryAssignmentOperator")
+  deliveryProofsVerifiedAsAdmin DeliveryProof[]      @relation("DeliveryProofVerifiedByUser")
+  deliveryAttemptsOperated      DeliveryAttempt[]    @relation("DeliveryAttemptOperator")
+  messRunsOperated              MessDeliveryRun[]    @relation("MessRunClaimedByUser")
+  messStopsHandedOverAsAdmin    MessDeliveryStop[]   @relation("MessStopHandedOverByUser")
+
+  trainerAssignments            TrainerAssignment[]  @relation("TrainerAssignmentTrainer")
+  trainerAssignmentsMade        TrainerAssignment[]  @relation("TrainerAssignmentBy")
+  purchaseOrdersCreated         PurchaseOrder[]      @relation("PurchaseOrderCreatedBy")
+  goodsReceiptsReceived         GoodsReceipt[]       @relation("GoodsReceiptReceivedBy")
+  passwordResetTokens           PasswordResetToken[]
+  cancellationRequestsMade      CancellationRequest[] @relation("CancellationRequestedBy")
+  cancellationRequestsDecided   CancellationRequest[] @relation("CancellationDecidedBy")
+
   @@index([email])
   @@index([phone])
   @@map("users")
@@ -141,6 +155,7 @@ model KitchenBranch {
   messMealBatches     MessMealBatch[]
   messPlans           MessSubscriptionPlan[]
   messSubscriptions   MessSubscription[]
+  purchaseOrders      PurchaseOrder[]
 
   @@map("kitchen_branches")
 }
@@ -209,6 +224,8 @@ model CustomerProfile {
   messAccount         MessAccount?
   walletAccount       WalletAccount?
   bottleReturns       BottleReturn[]
+  trainerAssignments  TrainerAssignment[]
+  workoutLogs         WorkoutLog[]
 
   @@index([referralCode])
   @@map("customer_profiles")
@@ -258,7 +275,7 @@ model HealthBiometrics {
   primaryGoals          String[]          @default([])
   activityLevel         String
 
-  hasExercise           Boolean           @default(false)
+  hasExercise           Boolean?          // NULL = the customer has not answered (it used to default to false, which turned "never answered" into "No")
   workoutTypes          String[]          @default([])
   workoutFrequency      String?
   workoutDuration       Int?
@@ -331,7 +348,9 @@ model EmployeeProfile {
 
   user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   assignedBranch      KitchenBranch?       @relation(fields: [assignedBranchId], references: [id])
-  deliveries          DeliveryAssignment[]
+  deliveries          DeliveryAssignment[] @relation("DeliveryAssignmentDriver")
+  deliveriesTakenOver DeliveryAssignment[] @relation("DeliveryAssignmentTakenOverFrom")
+  messRunsTakenOver   MessDeliveryRun[]    @relation("MessRunTakenOverFrom")
   deliveryProofsVerified DeliveryProof[]
   deliveryAttempts    DeliveryAttempt[]    @relation("DeliveryAttemptDriver")
   hrmRecord           HRMEmployee?
@@ -461,7 +480,10 @@ model WorkoutPlan {
 
   customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
   workoutDays       WorkoutDay[]
+  logs              WorkoutLog[]
 
+  @@index([customerProfileId])
+  @@index([trainerId])
   @@map("workout_plans")
 }
 
@@ -699,6 +721,7 @@ model Order {
   events                 OrderEvent[]
   providerPayments       ProviderPayment[]
   refunds                Refund[]
+  cancellationRequests   CancellationRequest[]
 
   // Idempotency keys are scoped to the customer (NULLs are distinct, so legacy/no-key rows are unaffected)
   @@unique([customerProfileId, idempotencyKey])
@@ -1203,8 +1226,179 @@ model InventoryItem {
   branch          KitchenBranch   @relation(fields: [branchId], references: [id])
   ingredient      Ingredient?     @relation(fields: [ingredientId], references: [id])
   stockMovements  StockMovement[]
+  purchaseOrderLines PurchaseOrderLine[]
 
   @@map("inventory_items")
+}
+
+/// A customer's request to cancel a PAID order the kitchen has already accepted/started (ACCEPTED, PREPARING, READY).
+/// Nothing is promised: SUPER_ADMIN reviews it. APPROVED = the order is cancelled and the FULL refund intent is created in the same transaction;
+/// DECLINED = nothing changes. At most one PENDING request per order (partial unique index in the migration).
+model CancellationRequest {
+  id                String    @id @default(uuid())
+  orderId           String
+  requestedByUserId String?
+  reasonCode        String
+  note              String?
+  status            String    @default("PENDING") // PENDING | APPROVED | DECLINED
+  decidedByUserId   String?
+  decisionNote      String?
+  decidedAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  order             Order     @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  requestedBy       User?     @relation("CancellationRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  decidedBy         User?     @relation("CancellationDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status, createdAt])
+  @@map("cancellation_requests")
+}
+
+/// Single-use, expiring password-reset token. ONLY the SHA-256 hash is stored - never the raw token.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+/// Trainer coaching relationship (SUPER_ADMIN assigns). A trainer sees/manages workout plans ONLY for customers
+/// with an ACTIVE assignment. trainerUserId is the trainer's User id (same value as WorkoutPlan.trainerId).
+model TrainerAssignment {
+  id                String          @id @default(uuid())
+  trainerUserId     String
+  customerProfileId String
+  status            String          @default("ACTIVE") // ACTIVE | ENDED
+  assignedByUserId  String?
+  assignedAt        DateTime        @default(now())
+  endedAt           DateTime?
+
+  trainer           User            @relation("TrainerAssignmentTrainer", fields: [trainerUserId], references: [id], onDelete: Restrict)
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Restrict)
+  assignedBy        User?           @relation("TrainerAssignmentBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([trainerUserId, customerProfileId])
+  @@index([customerProfileId])
+  @@map("trainer_assignments")
+}
+
+/// Customer progress entry against a workout plan day (written by the owning customer only).
+model WorkoutLog {
+  id                String          @id @default(uuid())
+  workoutPlanId     String
+  workoutDayId      String?
+  customerProfileId String
+  loggedOn          DateTime        @default(now())
+  completed         Boolean         @default(true)
+  perceivedEffort   Int?            // 1..10
+  bodyWeightKg      Decimal?        @db.Decimal(5, 2)
+  notes             String?
+
+  workoutPlan       WorkoutPlan     @relation(fields: [workoutPlanId], references: [id], onDelete: Cascade)
+  customerProfile   CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([workoutPlanId, loggedOn])
+  @@index([customerProfileId])
+  @@map("workout_logs")
+}
+
+model Supplier {
+  id            String          @id @default(uuid())
+  name          String
+  contactName   String?
+  email         String?
+  phone         String?
+  address       String?
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  purchaseOrders PurchaseOrder[]
+
+  @@index([name])
+  @@map("suppliers")
+}
+
+/// Purchase request/order: DRAFT -> ORDERED -> PARTIALLY_RECEIVED -> RECEIVED, or CANCELLED (before any receipt).
+model PurchaseOrder {
+  id              String              @id @default(uuid())
+  poNumber        String              @unique
+  branchId        String
+  supplierId      String
+  status          String              @default("DRAFT")
+  expectedOn      DateTime?
+  notes           String?
+  createdByUserId String?
+  orderedAt       DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  branch          KitchenBranch       @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  supplier        Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  createdBy       User?               @relation("PurchaseOrderCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  lines           PurchaseOrderLine[]
+  receipts        GoodsReceipt[]
+
+  @@index([branchId, status])
+  @@index([supplierId])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderLine {
+  id                String             @id @default(uuid())
+  purchaseOrderId   String
+  inventoryItemId   String
+  orderedQuantity   Float
+  receivedQuantity  Float              @default(0)
+  unitCost          Decimal            @db.Decimal(10, 2)
+
+  purchaseOrder     PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem     InventoryItem      @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  receiptLines      GoodsReceiptLine[]
+
+  @@unique([purchaseOrderId, inventoryItemId])
+  @@map("purchase_order_lines")
+}
+
+/// Append-only record of a delivery check-in; every line also writes a PURCHASE_RECEIPT StockMovement in the same transaction.
+model GoodsReceipt {
+  id               String             @id @default(uuid())
+  purchaseOrderId  String
+  receiptNumber    String             @unique
+  receivedByUserId String?
+  receivedAt       DateTime           @default(now())
+  notes            String?
+
+  purchaseOrder    PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  receivedBy       User?              @relation("GoodsReceiptReceivedBy", fields: [receivedByUserId], references: [id], onDelete: SetNull)
+  lines            GoodsReceiptLine[]
+
+  @@index([purchaseOrderId])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptLine {
+  id                  String            @id @default(uuid())
+  goodsReceiptId      String
+  purchaseOrderLineId String
+  quantity            Float
+  unitCost            Decimal           @db.Decimal(10, 2)
+
+  goodsReceipt        GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderLine   PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id], onDelete: Restrict)
+
+  @@index([purchaseOrderLineId])
+  @@map("goods_receipt_lines")
 }
 
 model StockMovement {
@@ -1239,8 +1433,13 @@ model DeliveryAssignment {
   createdAt     DateTime        @default(now())
 
   order         Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  driver        EmployeeProfile? @relation(fields: [driverId], references: [id])
+  driver        EmployeeProfile? @relation("DeliveryAssignmentDriver", fields: [driverId], references: [id])
+  operatedByUserId      String?   // role simplification: SUPER_ADMIN who currently operates this live assignment (never both a driver and an operator)
+  takenOverFromDriverId String?   // the legacy driver the work was taken over from (history is never rewritten)
+  operatedBy            User?            @relation("DeliveryAssignmentOperator", fields: [operatedByUserId], references: [id], onDelete: Restrict)
+  takenOverFrom         EmployeeProfile? @relation("DeliveryAssignmentTakenOverFrom", fields: [takenOverFromDriverId], references: [id], onDelete: Restrict)
 
+  @@index([operatedByUserId])
   @@map("delivery_assignments")
 }
 
@@ -1270,6 +1469,8 @@ model DeliveryProof {
   order      Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
   verifiedBy EmployeeProfile? @relation(fields: [verifiedByEmployeeId], references: [id], onDelete: Restrict)
   overrideBy User?            @relation("DeliveryProofOverrideBy", fields: [overrideByUserId], references: [id], onDelete: Restrict)
+  verifiedByUserId            String?   // role simplification: SUPER_ADMIN who entered a valid code (exactly one of verifiedByEmployeeId / verifiedByUserId for a PIN verification)
+  verifiedByUser User?            @relation("DeliveryProofVerifiedByUser", fields: [verifiedByUserId], references: [id], onDelete: Restrict)
 
   @@map("delivery_proofs")
 }
@@ -1298,6 +1499,8 @@ model DeliveryAttempt {
   driver     EmployeeProfile? @relation("DeliveryAttemptDriver", fields: [driverId], references: [id], onDelete: Restrict)
   branch     KitchenBranch?   @relation(fields: [branchId], references: [id], onDelete: Restrict)
   resolvedBy User             @relation("DeliveryAttemptResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: Restrict)
+  operatedByUserId     String?   // role simplification: SUPER_ADMIN operator of an admin-run attempt (null for driver-run attempts)
+  operatedBy User?            @relation("DeliveryAttemptOperator", fields: [operatedByUserId], references: [id], onDelete: Restrict)
 
   @@unique([orderId, attemptNumber])
   @@map("delivery_attempts")
@@ -1541,6 +1744,10 @@ model MessDeliveryRun {
   branch     KitchenBranch    @relation(fields: [branchId], references: [id], onDelete: Restrict)
   releasedBy User             @relation("MessDeliveryRunReleasedBy", fields: [releasedByUserId], references: [id], onDelete: Restrict)
   claimedBy  EmployeeProfile? @relation("MessRunClaimedBy", fields: [claimedByEmployeeId], references: [id], onDelete: Restrict)
+  claimedByUserId         String?   // role simplification: SUPER_ADMIN operating the run (exactly one of claimedByEmployeeId / claimedByUserId once claimed)
+  takenOverFromEmployeeId String?   // the legacy driver the run was taken over from
+  claimedByUser  User?            @relation("MessRunClaimedByUser", fields: [claimedByUserId], references: [id], onDelete: Restrict)
+  takenOverFrom  EmployeeProfile? @relation("MessRunTakenOverFrom", fields: [takenOverFromEmployeeId], references: [id], onDelete: Restrict)
   stops      MessDeliveryStop[]
 
   @@index([branchId, status])
@@ -1590,6 +1797,8 @@ model MessDeliveryStop {
   recipient          CustomerProfile? @relation("MessStopRecipient", fields: [recipientCustomerProfileId], references: [id], onDelete: Restrict)
   handedOverBy       EmployeeProfile? @relation("MessStopHandedOverBy", fields: [handedOverByEmployeeId], references: [id], onDelete: Restrict)
   overrideBy         User?            @relation("MessStopOverrideBy", fields: [overrideByUserId], references: [id], onDelete: Restrict)
+  handedOverByUserId         String?   // role simplification: SUPER_ADMIN who entered a valid handover code (exactly one of handedOverByEmployeeId / handedOverByUserId for CODE)
+  handedOverByUser   User?            @relation("MessStopHandedOverByUser", fields: [handedOverByUserId], references: [id], onDelete: Restrict)
   meals              MessMeal[]
 
   @@unique([runId, servicePointId])

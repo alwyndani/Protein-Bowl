@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { X, Search, Truck, MapPin, Loader2, AlertCircle, RefreshCw, PackageOpen } from 'lucide-react';
 import { AccessibleDialog } from '../common/AccessibleDialog';
 import { CancelOrderDialog } from './CancelOrderDialog';
+import { CancellationRequestPanel } from './CancellationRequestPanel';
 import { OrderStatusBadges } from './OrderStatusBadges';
 import { PaymentPanel } from './PaymentPanel';
 import { DeliveryCodePanel } from './DeliveryCodePanel';
@@ -269,6 +270,8 @@ export const DirectOrderTrackingModal: React.FC<DirectOrderTrackingModalProps> =
                       </button>
                     </div>
                   )}
+
+                  <CancellationRequestPanel key={`cr-${active.id}`} order={active} onOrder={updateOrder} onSessionExpired={onSessionExpired} />
 
                   {active.timeline && active.timeline.length > 0 && (
                     <ol aria-label="Order timeline" className="space-y-1 text-[11px] text-stone-400">

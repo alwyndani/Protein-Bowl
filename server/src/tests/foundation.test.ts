@@ -146,6 +146,9 @@ describe('Foundation Stabilization Test Suite', () => {
         fullName: 'Test User A Updated',
         heightCm: 175,
         weightKg: 72,
+        // Calories need the saved date of birth and gender: nothing is assumed (see profileNotCalculated.test.ts for the case without them).
+        dob: '1990-06-15',
+        gender: 'female',
         goal: 'muscle_gain',
         activityLevel: 'high',
         hasExercise: true,

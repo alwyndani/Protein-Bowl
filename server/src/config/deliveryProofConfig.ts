@@ -29,7 +29,8 @@ export interface DeliveryProofConfig {
 export function parseDeliveryProofConfig(raw: Record<string, string | undefined>, nodeEnv: string): DeliveryProofConfig {
   const value = raw.DELIVERY_PROOF_SECRET;
   if (value === undefined || value.trim() === '') {
-    if (nodeEnv === 'production') throw new DeliveryProofConfigError('DELIVERY_PROOF_SECRET must be set explicitly in production (at least 32 characters)');
+    // any spelling of "production" ("Production", " PRODUCTION ") counts: the public development fallback must never be reachable by a casing slip
+    if (nodeEnv.trim().toLowerCase() === 'production') throw new DeliveryProofConfigError('DELIVERY_PROOF_SECRET must be set explicitly in production (at least 32 characters)');
     return { secret: DEVELOPMENT_FALLBACK, secretSource: 'DEVELOPMENT_FALLBACK' };
   }
   if (value.length < DELIVERY_PROOF_SECRET_MIN_LENGTH) {

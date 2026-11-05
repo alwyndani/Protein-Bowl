@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { CustomerProfile, BloodTestResults, ActivityLevel, HealthGoal, UserRole } from '../../types';
 import { useAuth, mapBackendRoleToUserRole } from '../../context/AuthContext';
 import { CustomerService } from '../../services/customerService';
+import { PasswordResetService } from '../../services/passwordResetService';
+import { toPlanDuration, type PlanDurationDays } from '../../utils/planDuration';
+import { ApiRequestError } from '../../services/apiClient';
 import { LogoMark } from '../common/LogoMark';
 import { 
   X, Mail, Lock, Phone, User, Calendar, ShieldCheck, ArrowRight, CheckCircle2, 
@@ -10,6 +13,8 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { calculateHealthMetrics } from '../../utils/healthCalculator';
+import { isHealthProfileComplete, triToSelect, selectToTri } from '../../utils/healthProfile';
+import { isValidPhone } from '../../utils/phone';
 
 export interface EmployeeLoginData {
   id: string;
@@ -26,19 +31,20 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccessLogin: (user: CustomerProfile) => void;
   initialProfile: CustomerProfile;
-  initialMode?: 'signin' | 'signup' | 'employee_login';
+  /** Called after sign-in when the stored profile is incomplete: the parent re-opens this modal on the health step, prefilled from `profile`. */
+  onProfileLoaded: (profile: CustomerProfile) => void;
+  initialMode?: 'signin' | 'signup' | 'employee_login' | 'health_capture';
   onEmployeeLogin?: (role: UserRole, employeeData: EmployeeLoginData) => void;
 }
 
-// Demo shortcuts/prefilled credentials exist for local development only. Production builds (import.meta.env.DEV === false)
-// must never expose them. Backend authorization never depends on this flag.
-const IS_DEV = import.meta.env.DEV;
+// There are no demo shortcuts, preset accounts or prefilled credentials in ANY build (development included).
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   onSuccessLogin,
   initialProfile,
+  onProfileLoaded,
   initialMode = 'signin',
   onEmployeeLogin
 }) => {
@@ -46,13 +52,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [authError, setAuthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  const [mode, setMode] = useState<'signin' | 'signup' | 'otp' | 'forgot' | 'health_capture' | 'employee_login'>(initialMode);
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot' | 'health_capture' | 'employee_login'>(initialMode);
   
   // Employee Login State
-  const [employeeDeptFilter, setEmployeeDeptFilter] = useState<'all' | 'kerala_mess' | 'kitchen' | 'aggregators' | 'management'>('all');
   const [employeeFormData, setEmployeeFormData] = useState({
-    empIdOrEmail: IS_DEV ? 'murugan.mess@proteinbowl.in' : '',
-    securityPin: IS_DEV ? 'Password123!' : '',
+    empIdOrEmail: '',
+    securityPin: '',
     targetRole: 'chef' as UserRole,
     department: 'Kerala Mess & Hostel Ops'
   });
@@ -60,150 +65,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Auth basic fields
   const [formData, setFormData] = useState({
-    name: initialProfile?.name || (IS_DEV ? 'Anjali Ramesh' : ''),
-    email: initialProfile?.email || (IS_DEV ? 'anjali@example.com' : ''),
-    phone: initialProfile?.phone || (IS_DEV ? '+91 98765 43210' : ''),
-    dob: initialProfile?.dob || (IS_DEV ? '1995-04-18' : ''),
-    password: IS_DEV ? 'Password123!' : '',
+    // Every field starts EMPTY in development and production alike (only a stored profile can prefill name/email/phone/dob): a demo value
+    // that a developer forgets to overwrite would be saved as the customer's real data. The password is never prefilled.
+    name: initialProfile?.name || '',
+    email: initialProfile?.email || '',
+    phone: initialProfile?.phone || '',
+    dob: initialProfile?.dob || '',
+    password: '',
     otp: ''
   });
   const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotBusy, setForgotBusy] = useState(false);
+  const [forgotError, setForgotError] = useState<string | null>(null);
 
-  const ALL_EMPLOYEE_PRESETS: (EmployeeLoginData & { badge?: string; desc: string })[] = [
-    {
-      id: 'EMP-105',
-      name: 'Chef Murugan K.',
-      email: 'murugan.mess@proteinbowl.in',
-      role: 'chef',
-      department: 'kerala_mess',
-      designation: 'Kerala Mess Lead Chef (Kettles & Traditional Kitchen)',
-      badge: '🍛 Kerala Mess KDS',
-      desc: 'Steam kettle batches, traditional avial/sambar production, and kitchen dispatch.',
-      avatarBg: 'bg-amber-600'
-    },
-    {
-      id: 'EMP-106',
-      name: 'Ananthan V. Menon',
-      email: 'ananthan.mess@proteinbowl.in',
-      role: 'delivery',
-      department: 'kerala_mess',
-      designation: 'Kerala Mess Logistics & Hostel Distribution Manager',
-      badge: '📦 Hostel Distribution',
-      desc: 'Hostel crate dispatch, daily meal subscription delivery, and student passes.',
-      avatarBg: 'bg-emerald-700'
-    },
-    {
-      id: 'EMP-107',
-      name: 'Lekshmi Devi R.',
-      email: 'lekshmi@proteinbowl.in',
-      role: 'nutritionist',
-      department: 'kerala_mess',
-      designation: 'Kerala Mess Nutritional Auditor & Recipe Incharge',
-      badge: '🥗 Mess Nutrition',
-      desc: 'Homestyle Kerala dietary quality checks, macro targets, and weekly menu recipes.',
-      avatarBg: 'bg-teal-600'
-    },
-    {
-      id: 'EMP-102',
-      name: 'Chef Suresh Kumar',
-      email: 'suresh@proteinbowl.in',
-      role: 'chef',
-      department: 'kitchen',
-      designation: 'Executive Head Chef (Central Kitchen KDS)',
-      badge: '👨‍🍳 Central Kitchen',
-      desc: 'Multi-station KDS line, grill deck, macro bowls, and kitchen inventory prep.',
-      avatarBg: 'bg-orange-600'
-    },
-    {
-      id: 'EMP-SWIG',
-      name: 'Rahul M.',
-      email: 'rahul.aggregators@proteinbowl.in',
-      role: 'swiggy_zomato',
-      department: 'aggregators',
-      designation: 'Swiggy & Zomato Aggregator Channel Lead',
-      badge: '⚡ Aggregator Sync',
-      desc: 'Swiggy/Zomato live sync, stock reserve buffers, and omnichannel batch tracking.',
-      avatarBg: 'bg-orange-500'
-    },
-    {
-      id: 'EMP-MD',
-      name: 'Dr. Anoop S. / Mathew Thomas',
-      email: 'md@proteinbowl.in',
-      role: 'md',
-      department: 'management',
-      designation: 'Managing Director & Strategic Operations Head',
-      badge: '🏢 MD Executive Suite',
-      desc: 'Financial analytics, HRM & staff payroll, multi-kitchen telemetry, and governance.',
-      avatarBg: 'bg-stone-900'
-    },
-    {
-      id: 'EMP-POS',
-      name: 'Anjana Ramesh',
-      email: 'pos.kochi@nutrifitkitchen.in',
-      role: 'pos',
-      department: 'management',
-      designation: 'Lead POS Cashier & Counter Manager',
-      badge: '💰 POS Counter',
-      desc: 'Walk-in orders, barcode scanning, student token billing, and instant receipt printing.',
-      avatarBg: 'bg-indigo-600'
-    },
-    {
-      id: 'EMP-FMCG',
-      name: 'Varghese Kurian',
-      email: 'fmcg.distribution@nutrifitkitchen.in',
-      role: 'bakery_fmcg',
-      department: 'management',
-      designation: 'Category Lead (FMCG & Bakery Foods)',
-      badge: '🍞 FMCG Bakery',
-      desc: 'Artisan bakery batch tracking, FMCG dispatch challans, and retail shelf inventory.',
-      avatarBg: 'bg-amber-700'
-    },
-    {
-      id: 'EMP-104',
-      name: 'Kiran K. Das',
-      email: 'kiran@proteinbowl.in',
-      role: 'delivery',
-      department: 'management',
-      designation: 'Fleet Dispatch & Logistics Supervisor',
-      badge: '🚚 Delivery Fleet',
-      desc: 'Rider dispatch, multi-stop routing to hostels and IT parks, cold chain monitoring.',
-      avatarBg: 'bg-purple-600'
-    }
-  ];
-
-  // Development-only quick-login shortcuts (hard-coded seed password); empty in production builds.
-  const EMPLOYEE_PRESETS = IS_DEV ? ALL_EMPLOYEE_PRESETS : [];
-
-  const handleQuickEmployeeLogin = async (preset: EmployeeLoginData & { desc: string }) => {
-    if (!IS_DEV) return;
-    setAuthError(null);
-    setIsSubmitting(true);
-    const res = await auth.login({
-      email: preset.email,
-      password: 'Password123!'
-    });
-    setIsSubmitting(false);
-
-    if (res.success && res.roles) {
-      const mappedRole = mapBackendRoleToUserRole(res.roles);
-      setEmployeeLoginSuccess(`Authenticated via Backend as ${preset.name}`);
-      confetti({ particleCount: 60, spread: 70 });
-      setTimeout(() => {
-        if (onEmployeeLogin) {
-          onEmployeeLogin(mappedRole, preset);
-        }
-        onClose();
-      }, 600);
-    } else {
-      // Development-only demo fallback if offline/unseeded (IS_DEV is guaranteed here). Never operates in production.
-      setEmployeeLoginSuccess(`Demo Access: ${preset.name}`);
-      if (onEmployeeLogin) {
-        onEmployeeLogin(preset.role, preset);
-      }
-      onClose();
-    }
-  };
-
+  // Staff sign in ONLY with their own account: no preset accounts, no shortcut logins, no credentials in the source.
   const handleManualEmployeeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -240,106 +115,87 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   // Demographic & Health Data Capture State
-  const [gender, setGender] = useState<'female' | 'male' | 'other'>(initialProfile?.gender || 'female');
-  const [heightCm, setHeightCm] = useState<number>(initialProfile?.heightCm || 165);
-  const [weightKg, setWeightKg] = useState<number>(initialProfile?.weightKg || 68);
-  const [targetWeightKg, setTargetWeightKg] = useState<number>(initialProfile?.targetWeightKg || 58);
-  const [occupation, setOccupation] = useState<string>(initialProfile?.occupation || 'IT Professional');
-  const [workSchedule, setWorkSchedule] = useState<string>(initialProfile?.workSchedule || 'Flexible Hours');
-  const [sleepDuration, setSleepDuration] = useState<number>(initialProfile?.sleepDuration || 7);
-  const [wakeUpTime, setWakeUpTime] = useState<string>(initialProfile?.wakeUpTime || '06:30');
-  const [bedTime, setBedTime] = useState<string>(initialProfile?.bedTime || '23:00');
+  const [gender, setGender] = useState<'' | 'female' | 'male' | 'other'>(initialProfile?.gender || '');
+  // 0 = not entered; the profile cannot be saved until all three are (see handleCompleteHealth gate).
+  const [heightCm, setHeightCm] = useState<number>(initialProfile?.heightCm || 0);
+  const [weightKg, setWeightKg] = useState<number>(initialProfile?.weightKg || 0);
+  const [targetWeightKg, setTargetWeightKg] = useState<number>(initialProfile?.targetWeightKg || 0);
+  // Optional fields: empty (0 / '' / []) means the customer has not provided them. Nothing below is a suggested value.
+  const [occupation, setOccupation] = useState<string>(initialProfile?.occupation || '');
+  const [workSchedule, setWorkSchedule] = useState<string>(initialProfile?.workSchedule || '');
+  const [sleepDuration, setSleepDuration] = useState<number>(initialProfile?.sleepDuration || 0);
+  const [wakeUpTime, setWakeUpTime] = useState<string>(initialProfile?.wakeUpTime || '');
+  const [bedTime, setBedTime] = useState<string>(initialProfile?.bedTime || '');
 
   // Tracking & Circumferences
-  const [muscleMassKg, setMuscleMassKg] = useState<number>(initialProfile?.muscleMassKg || 24.5);
-  const [waistCm, setWaistCm] = useState<number>(initialProfile?.circumferences?.waistCm || 81);
-  const [hipCm, setHipCm] = useState<number>(initialProfile?.circumferences?.hipCm || 98);
-  const [chestCm, setChestCm] = useState<number>(initialProfile?.circumferences?.chestCm || 88);
-  const [neckCm, setNeckCm] = useState<number>(initialProfile?.circumferences?.neckCm || 34);
+  const [muscleMassKg, setMuscleMassKg] = useState<number>(initialProfile?.muscleMassKg || 0);
+  const [waistCm, setWaistCm] = useState<number>(initialProfile?.circumferences?.waistCm || 0);
+  const [hipCm, setHipCm] = useState<number>(initialProfile?.circumferences?.hipCm || 0);
+  const [chestCm, setChestCm] = useState<number>(initialProfile?.circumferences?.chestCm || 0);
+  const [neckCm, setNeckCm] = useState<number>(initialProfile?.circumferences?.neckCm || 0);
 
-  const [leftArmCm, setLeftArmCm] = useState<number>(initialProfile?.limbCircumferences?.leftArmCm || 28);
-  const [rightArmCm, setRightArmCm] = useState<number>(initialProfile?.limbCircumferences?.rightArmCm || 28.5);
-  const [leftThighCm, setLeftThighCm] = useState<number>(initialProfile?.limbCircumferences?.leftThighCm || 56);
-  const [rightThighCm, setRightThighCm] = useState<number>(initialProfile?.limbCircumferences?.rightThighCm || 56.5);
-  const [leftCalfCm, setLeftCalfCm] = useState<number>(initialProfile?.limbCircumferences?.leftCalfCm || 36);
-  const [rightCalfCm, setRightCalfCm] = useState<number>(initialProfile?.limbCircumferences?.rightCalfCm || 36);
+  const [leftArmCm, setLeftArmCm] = useState<number>(initialProfile?.limbCircumferences?.leftArmCm || 0);
+  const [rightArmCm, setRightArmCm] = useState<number>(initialProfile?.limbCircumferences?.rightArmCm || 0);
+  const [leftThighCm, setLeftThighCm] = useState<number>(initialProfile?.limbCircumferences?.leftThighCm || 0);
+  const [rightThighCm, setRightThighCm] = useState<number>(initialProfile?.limbCircumferences?.rightThighCm || 0);
+  const [leftCalfCm, setLeftCalfCm] = useState<number>(initialProfile?.limbCircumferences?.leftCalfCm || 0);
+  const [rightCalfCm, setRightCalfCm] = useState<number>(initialProfile?.limbCircumferences?.rightCalfCm || 0);
 
   // Goals & Exercise
-  const [goal, setGoal] = useState<HealthGoal>(initialProfile?.goal || 'weight_loss');
-  const [primaryGoals, setPrimaryGoals] = useState<string[]>(
-    initialProfile?.primaryGoals || ['Weight Loss', 'Fat Loss', 'Improve Gut Health', 'Improve Energy Levels']
-  );
-  const [activityLevel, setActivityLevel] = useState<ActivityLevel>(initialProfile?.activityLevel || 'moderate');
-  const [hasExercise, setHasExercise] = useState<boolean>(initialProfile?.hasExercise ?? true);
-  const [workoutTypes, setWorkoutTypes] = useState<string[]>(initialProfile?.workoutTypes || ['Strength Training', 'Yoga', 'Walking']);
-  const [workoutFrequency, setWorkoutFrequency] = useState<string>(initialProfile?.workoutFrequency || '3–4 Days');
-  const [workoutDuration, setWorkoutDuration] = useState<number>(initialProfile?.workoutDuration || 45);
-  const [dailyStepCount, setDailyStepCount] = useState<number>(initialProfile?.dailyStepCount || 8500);
-  const [cardioSessions, setCardioSessions] = useState<number>(initialProfile?.cardioSessions || 2);
-  const [strengthSessions, setStrengthSessions] = useState<number>(initialProfile?.strengthSessions || 3);
+  // Main goal, activity level and food preference are the CUSTOMER's explicit choices: nothing is preselected for a new profile. (The blank profile's
+  // 'maintenance'/'sedentary' are placeholders; goal and activity are only trusted as stored when height and weight are stored with them.)
+  const storedHealth = isHealthProfileComplete(initialProfile);
+  const [goal, setGoal] = useState<HealthGoal | ''>(storedHealth ? initialProfile.goal : '');
+  const [primaryGoals, setPrimaryGoals] = useState<string[]>(initialProfile?.primaryGoals || []);
+  const [activityLevel, setActivityLevel] = useState<ActivityLevel | ''>(storedHealth ? initialProfile.activityLevel : '');
+  const [hasExercise, setHasExercise] = useState<boolean | null>(initialProfile?.hasExercise ?? null); // unanswered until the customer chooses: never a default "Yes"
+  const [workoutTypes, setWorkoutTypes] = useState<string[]>(initialProfile?.workoutTypes || []);
+  const [workoutFrequency, setWorkoutFrequency] = useState<string>(initialProfile?.workoutFrequency || '');
+  const [workoutDuration, setWorkoutDuration] = useState<number>(initialProfile?.workoutDuration || 0);
+  const [dailyStepCount, setDailyStepCount] = useState<number>(initialProfile?.dailyStepCount || 0);
+  const [cardioSessions, setCardioSessions] = useState<number>(initialProfile?.cardioSessions || 0);
+  const [strengthSessions, setStrengthSessions] = useState<number>(initialProfile?.strengthSessions || 0);
 
-  // Medical Conditions & Medications & Supplements
-  const [medicalConditions, setMedicalConditions] = useState<string[]>(initialProfile?.medicalConditions || ['PCOS']);
-  const [currentMedications, setCurrentMedications] = useState<string>(initialProfile?.currentMedications || 'Metformin 500mg once daily');
-  const [supplements, setSupplements] = useState<string[]>(initialProfile?.supplements || ['Multivitamin', 'Vitamin D', 'Omega-3']);
+  // Medical Conditions & Medications & Supplements: clinical data is never pre-filled
+  const [medicalConditions, setMedicalConditions] = useState<string[]>(initialProfile?.medicalConditions || []);
+  const [currentMedications, setCurrentMedications] = useState<string>(initialProfile?.currentMedications || '');
+  const [supplements, setSupplements] = useState<string[]>(initialProfile?.supplements || []);
 
-  // Blood Test Results
-  const [bloodTests, setBloodTests] = useState<BloodTestResults>(initialProfile?.bloodTestResults || {
-    fastingBloodSugar: 98,
-    hbA1c: 5.6,
-    totalCholesterol: 185,
-    hdl: 52,
-    ldl: 110,
-    triglycerides: 115,
-    hemoglobin: 13.2,
-    vitaminD: 24,
-    vitaminB12: 310,
-    ferritin: 45,
-    uricAcid: 4.8,
-    creatinine: 0.8,
-    tsh: 2.4,
-    sgot: 22,
-    sgpt: 24
-  });
+  // Blood Test Results: only values the customer enters (no sample lab values)
+  const [bloodTests, setBloodTests] = useState<BloodTestResults>(initialProfile?.bloodTestResults || {});
 
   // Food Preference & Allergies & Dislikes
-  const [foodPreference, setFoodPreference] = useState<'Vegetarian' | 'Eggetarian' | 'Non-Vegetarian'>(
-    (initialProfile?.foodPreference as any) === 'Vegetarian' ? 'Vegetarian' : ((initialProfile?.foodPreference as any) === 'Eggetarian' ? 'Eggetarian' : 'Non-Vegetarian')
+  const [foodPreference, setFoodPreference] = useState<'' | 'Vegetarian' | 'Eggetarian' | 'Non-Vegetarian'>(
+    initialProfile?.foodPreference === 'Vegetarian' || initialProfile?.foodPreference === 'Eggetarian' || initialProfile?.foodPreference === 'Non-Vegetarian' ? initialProfile.foodPreference : ''
   );
-  const [allergies, setAllergies] = useState<string[]>(initialProfile?.allergies || ['Peanuts']);
-  const [foodDislikes, setFoodDislikes] = useState<string[]>(initialProfile?.foodDislikes || ['Mushroom', 'Bitter Gourd']);
+  const [allergies, setAllergies] = useState<string[]>(initialProfile?.allergies || []);
+  const [foodDislikes, setFoodDislikes] = useState<string[]>(initialProfile?.foodDislikes || []);
   const [dislikeInput, setDislikeInput] = useState('');
 
   // Meal Structure & Timings
-  const [mealsPerDay, setMealsPerDay] = useState<number>(initialProfile?.mealsPerDay || 3);
-  const [mealTimings, setMealTimings] = useState(initialProfile?.mealTimings || {
-    breakfast: '08:30',
-    morningSnack: '11:00',
-    lunch: '13:30',
-    eveningSnack: '16:30',
-    dinner: '20:00',
-    bedtimeSnack: '22:00'
-  });
-  const [waterIntakeL, setWaterIntakeL] = useState<number>(initialProfile?.waterIntakeL || 3.0);
+  const [mealsPerDay, setMealsPerDay] = useState<number>(initialProfile?.mealsPerDay || 0);
+  const [mealTimings, setMealTimings] = useState<Record<string, string>>(initialProfile?.mealTimings || {});
+  const [waterIntakeL, setWaterIntakeL] = useState<number>(initialProfile?.waterIntakeL || 0);
 
   // Lifestyle
-  const [digestiveHealth, setDigestiveHealth] = useState<string[]>(initialProfile?.digestiveHealth || ['Good']);
-  const [smoking, setSmoking] = useState(initialProfile?.smoking || 'Never');
-  const [alcohol, setAlcohol] = useState(initialProfile?.alcohol || 'Monthly');
-  const [tobacco, setTobacco] = useState(initialProfile?.tobacco || 'Never');
-  const [stressLevel, setStressLevel] = useState<number>(initialProfile?.stressLevel || 4);
-  const [sleepQuality, setSleepQuality] = useState(initialProfile?.sleepQuality || 'Good');
+  const [digestiveHealth, setDigestiveHealth] = useState<string[]>(initialProfile?.digestiveHealth || []);
+  const [smoking, setSmoking] = useState(initialProfile?.smoking || '');
+  const [alcohol, setAlcohol] = useState(initialProfile?.alcohol || '');
+  const [tobacco, setTobacco] = useState(initialProfile?.tobacco || '');
+  const [stressLevel, setStressLevel] = useState<number>(initialProfile?.stressLevel || 0);
+  const [sleepQuality, setSleepQuality] = useState(initialProfile?.sleepQuality || '');
 
   // Women-Only Fields
-  const [isPregnant, setIsPregnant] = useState<boolean>(initialProfile?.isPregnant ?? false);
-  const [isBreastfeeding, setIsBreastfeeding] = useState<boolean>(initialProfile?.isBreastfeeding ?? false);
-  const [menstrualCycle, setMenstrualCycle] = useState<'Regular' | 'Irregular'>(initialProfile?.menstrualCycle || 'Irregular');
-  const [isMenopause, setIsMenopause] = useState<boolean>(initialProfile?.isMenopause ?? false);
+  // Women-only questions start UNANSWERED (null), never "No"; an unanswered question is not sent and stays unanswered on the server.
+  const [isPregnant, setIsPregnant] = useState<boolean | null>(initialProfile?.isPregnant ?? null);
+  const [isBreastfeeding, setIsBreastfeeding] = useState<boolean | null>(initialProfile?.isBreastfeeding ?? null);
+  const [menstrualCycle, setMenstrualCycle] = useState<'' | 'Regular' | 'Irregular'>(initialProfile?.menstrualCycle || '');
+  const [isMenopause, setIsMenopause] = useState<boolean | null>(initialProfile?.isMenopause ?? null);
 
   // Meal Plan Duration Selection
-  const [planDurationDays, setPlanDurationDays] = useState<3 | 7 | 20 | 30>(initialProfile?.planDurationDays || 30);
+  const [planDurationDays, setPlanDurationDays] = useState<PlanDurationDays>(toPlanDuration(initialProfile?.planDurationDays));
   const [planFrequency, setPlanFrequency] = useState<1 | 2 | 3>(initialProfile?.planFrequency || 3);
-  const [addonSlots, setAddonSlots] = useState<string[]>(initialProfile?.addonSlots || ['11:00 AM Snack/Salad']);
+  const [addonSlots, setAddonSlots] = useState<string[]>(initialProfile?.addonSlots || []);
 
   if (!isOpen) return null;
 
@@ -411,17 +267,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   );
 
   // Compute live auto-calculated metrics
-  const birthYear = formData.dob ? new Date(formData.dob).getFullYear() : 1995;
-  const computedAge = Math.max(12, new Date().getFullYear() - birthYear);
+  // Age comes only from the date of birth the customer entered; without it nothing is calculated or shown.
+  const dobYear = formData.dob ? new Date(formData.dob).getFullYear() : NaN;
+  const computedAge = Number.isNaN(dobYear) ? 0 : Math.max(12, new Date().getFullYear() - dobYear);
+  const metricsReady = (gender === 'male' || gender === 'female') && computedAge > 0 && heightCm > 0 && weightKg > 0 && goal !== '' && activityLevel !== ''; // "other": not available yet
 
   const calculated = calculateHealthMetrics({
     weightKg,
     heightCm,
     age: computedAge,
-    gender,
-    activityLevel,
-    goal,
-    hasExercise
+    gender: gender === '' ? 'other' : gender, // never displayed or saved while gender is unchosen (metricsReady)
+    activityLevel: activityLevel || 'sedentary', // placeholders keep the call well-defined; nothing is shown or saved until both are chosen (metricsReady)
+    goal: goal || 'maintenance',
+    hasExercise: hasExercise === true // unanswered adds nothing to the water requirement
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -432,18 +290,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setMode('health_capture');
   };
 
+  // "Skip" really skips: nothing is saved (the account exists; the health profile stays empty) and the customer lands on the dashboard.
+  // The next sign-in finds the profile incomplete and shows this step again, prefilled with whatever is stored.
+  // Skipping the health step keeps what the customer already entered (date of birth, gender) and invents nothing else: no height, weight,
+  // goal or activity level is sent, so the server stores the basics only and no health profile.
+  const skipHealthCapture = async () => {
+    setAuthError(null);
+    const basics: Partial<CustomerProfile> = {};
+    if (formData.dob) basics.dob = formData.dob;
+    if (gender) basics.gender = gender;
+    let saved: CustomerProfile | undefined;
+    if (Object.keys(basics).length > 0) {
+      try {
+        const res = await CustomerService.updateMyProfile(basics);
+        if (!res.success || !res.data) throw new Error('profile not saved');
+        saved = res.data;
+      } catch {
+        setAuthError('Your date of birth and gender could not be saved. Please try again, or fill in the health step.');
+        return;
+      }
+    }
+    onSuccessLogin(saved ?? { ...initialProfile, name: formData.name, email: formData.email, phone: formData.phone });
+    onClose();
+  };
+
   const finalizeCustomerLogin = async () => {
+    if (!gender || !goal || !activityLevel || !(heightCm > 0) || !(weightKg > 0) || !(targetWeightKg > 0)) {
+      setAuthError('Please choose your gender, main goal and activity level, and enter your height, current weight and target weight to continue.');
+      return;
+    }
+    setAuthError(null);
     confetti({ particleCount: 80, spread: 70 });
-    
+
     const finalProfile: CustomerProfile = {
       ...initialProfile,
       id: initialProfile.id || 'cust_' + Date.now(),
-      name: formData.name || 'Anjali Ramesh',
-      email: formData.email || 'anjali@example.com',
-      phone: formData.phone || '+91 98765 43210',
-      dob: formData.dob || '1995-04-18',
+      name: formData.name,
+      email: formData.email,
+      phone: formData.phone || '',
+      dob: formData.dob,
       age: computedAge,
-      gender,
+      gender: gender || undefined,
       heightCm,
       weightKg,
       targetWeightKg,
@@ -457,10 +344,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       limbCircumferences: {
         leftArmCm, rightArmCm, leftThighCm, rightThighCm, leftCalfCm, rightCalfCm
       },
-      goal,
+      goal: goal as HealthGoal, // chosen explicitly (checked by the gate above)
       primaryGoals,
-      activityLevel,
-      hasExercise,
+      activityLevel: activityLevel as ActivityLevel,
+      hasExercise: hasExercise ?? undefined, // omitted when unanswered: the server keeps whatever it has (nothing is invented)
       workoutTypes,
       workoutFrequency,
       workoutDuration,
@@ -471,7 +358,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       currentMedications,
       supplements,
       bloodTestResults: bloodTests,
-      foodPreference,
+      foodPreference: foodPreference || undefined,
       allergies,
       foodDislikes,
       mealsPerDay,
@@ -483,10 +370,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       tobacco,
       stressLevel,
       sleepQuality,
-      isPregnant,
-      isBreastfeeding,
+      isPregnant: isPregnant ?? undefined,
+      isBreastfeeding: isBreastfeeding ?? undefined,
       menstrualCycle,
-      isMenopause,
+      isMenopause: isMenopause ?? undefined,
       planDurationDays,
       planFrequency,
       addonSlots,
@@ -510,61 +397,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       calorieDeficitSurplus: calculated.calorieDeficitSurplus
     };
 
+    // The account already exists at this step, so a failed save can simply be retried: never continue with a profile the server does not have.
     try {
       const res = await CustomerService.updateMyProfile(finalProfile);
-      if (res.success && res.data) {
-        onSuccessLogin(res.data);
-      } else {
-        onSuccessLogin(finalProfile);
-      }
-    } catch (_err) {
-      onSuccessLogin(finalProfile);
-    }
-    onClose();
-  };
-
-  const handleSocialAuth = async (provider: 'Google' | 'Apple') => {
-    // Placeholder social sign-in derives an account from a hard-coded shared password: development only.
-    if (!IS_DEV) {
-      setAuthError('Social sign-in is not available yet.');
+      if (!res.success || !res.data) throw new Error('profile not saved');
+      onSuccessLogin(res.data);
+    } catch {
+      setAuthError('Your health profile could not be saved. Please try again.');
       return;
     }
-    setAuthError(null);
-    setIsSubmitting(true);
-    const socialEmail = `user.${provider.toLowerCase()}@proteinbowl.in`;
-    const socialName = `${provider} User`;
-
-    // Authenticate or register real account on backend
-    let res = await auth.login({
-      email: socialEmail,
-      password: 'SocialAuthPassword123!'
-    });
-
-    if (!res.success) {
-      res = await auth.register({
-        email: socialEmail,
-        password: 'SocialAuthPassword123!',
-        fullName: socialName
-      });
-    }
-
-    setIsSubmitting(false);
-
-    if (res.success) {
-      setFormData({
-        ...formData,
-        name: socialName,
-        email: socialEmail
-      });
-      proceedToHealthCapture();
-    } else {
-      setAuthError(res.message || `${provider} authentication failed.`);
-    }
+    onClose();
   };
 
   const handleSignUpSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
+    if (!isValidPhone(formData.phone)) {
+      setAuthError('Enter a valid mobile number (8–15 digits, optional leading +).');
+      return;
+    }
     setIsSubmitting(true);
     const res = await auth.register({
       email: formData.email,
@@ -575,15 +426,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsSubmitting(false);
 
     if (res.success) {
-      setMode('otp');
+      // No phone-OTP step exists (there is no SMS service): a fake verification screen would only pretend to protect the account.
+      proceedToHealthCapture();
     } else {
       setAuthError(res.message || 'Registration failed. Please try again.');
     }
-  };
-
-  const handleVerifyOtp = (e: React.FormEvent) => {
-    e.preventDefault();
-    proceedToHealthCapture();
   };
 
   const handleSignInSubmit = async (e: React.FormEvent) => {
@@ -596,10 +443,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     });
     setIsSubmitting(false);
 
-    if (res.success) {
-      proceedToHealthCapture();
-    } else {
+    if (!res.success) {
       setAuthError(res.message || 'Invalid email or password');
+      return;
+    }
+    // Staff accounts have no customer profile: they sign in through the staff form, never through this one.
+    if (res.roles && !res.roles.includes('CUSTOMER')) {
+      await auth.logout();
+      setAuthError('This is a staff account. Please use the staff sign-in.');
+      return;
+    }
+    // Existing customers keep their stored profile: read it BEFORE deciding what to show, and never save anything on their behalf.
+    setIsSubmitting(true);
+    try {
+      const fetched = await CustomerService.getMyProfile();
+      if (!fetched.success || !fetched.data) throw new Error('profile unavailable');
+      if (isHealthProfileComplete(fetched.data)) {
+        onSuccessLogin(fetched.data); // straight to the dashboard
+        onClose();
+      } else {
+        onProfileLoaded(fetched.data); // health-capture step, prefilled with what is stored
+      }
+    } catch {
+      setAuthError('You are signed in, but your health profile could not be loaded. Please try again; nothing was changed.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -645,7 +513,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <h3 className="text-xl font-extrabold text-stone-900 mt-2">
             {mode === 'signin' && 'Welcome Back to Protein Bowl'}
             {mode === 'signup' && 'Create Your Healthy Account'}
-            {mode === 'otp' && 'Verify Mobile OTP'}
             {mode === 'forgot' && 'Account Recovery'}
             {mode === 'employee_login' && 'Employee & Kitchen Staff Portal'}
             {mode === 'health_capture' && 'Demographic & Health Data Capture'}
@@ -653,9 +520,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <p className="text-xs text-stone-500 mt-1">
             {mode === 'signin' && 'Sign in to manage your diet plans and track daily macros'}
             {mode === 'signup' && 'Join thousands striving for a healthier life'}
-            {mode === 'otp' && `Enter 4-digit code sent to ${formData.phone || '+91 98765 43210'}`}
             {mode === 'forgot' && 'Enter your email to receive password reset link'}
-            {mode === 'employee_login' && 'Sign in as Kitchen Chef, Kerala Mess Incharge, Logistics Lead, or MD Executive to access operational terminals.'}
+            {mode === 'employee_login' && 'Sign in with your staff email and password (Super Admin, Chef, Nutritionist, Trainer or Procurement).'}
             {mode === 'health_capture' && 'Step 2 of 2: Collect profile basics, initial measurements & clinical health assessment'}
           </p>
         </div>
@@ -664,7 +530,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           
           {/* API Error Alert Banner */}
           {authError && (
-            <div className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-3.5 flex items-center gap-2.5 text-red-800 text-xs font-semibold animate-fadeIn">
+            <div
+              role="alert"
+              ref={(el) => { el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }} // a message must never sit out of sight above a scrolled form
+              className="mb-4 bg-red-50 border border-red-200 rounded-2xl p-3.5 flex items-center gap-2.5 text-red-800 text-xs font-semibold animate-fadeIn"
+            >
               <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
               <span>{authError}</span>
             </div>
@@ -687,95 +557,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </div>
               )}
 
-              {/* Quick-select staff shortcuts are a development aid only: nothing (not even the heading) renders in production. */}
-              {IS_DEV && (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-black uppercase text-stone-700 tracking-wider">
-                      1. Quick Select Staff Account (1-Click Authentication)
-                    </label>
-                    <span className="text-[11px] font-bold text-amber-700">Kerala Mess & Kitchen Ready</span>
-                  </div>
-
-                  <div className="flex flex-wrap gap-1.5 pb-2">
-                    {[
-                      { id: 'all', label: 'All Departments' },
-                      { id: 'kerala_mess', label: '🍛 Kerala Mess & Hostels' },
-                      { id: 'kitchen', label: '👨‍🍳 Central Kitchen' },
-                      { id: 'aggregators', label: '⚡ Aggregators' },
-                      { id: 'management', label: '🏢 Management & POS' },
-                    ].map(tab => (
-                      <button
-                        key={tab.id}
-                        onClick={() => setEmployeeDeptFilter(tab.id as any)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
-                          employeeDeptFilter === tab.id
-                            ? 'bg-amber-900 text-white border-amber-900 shadow-xs'
-                            : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Preset Staff Cards Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
-                    {EMPLOYEE_PRESETS
-                      .filter(p => employeeDeptFilter === 'all' || p.department === employeeDeptFilter)
-                      .map((preset) => (
-                        <div
-                          key={preset.id}
-                          onClick={() => handleQuickEmployeeLogin(preset)}
-                          className={`p-3.5 rounded-2xl border transition-all cursor-pointer text-left hover:shadow-md relative overflow-hidden group ${
-                            preset.department === 'kerala_mess'
-                              ? 'bg-amber-50/50 border-amber-200 hover:border-amber-400 hover:bg-amber-50'
-                              : 'bg-white border-stone-200 hover:border-emerald-300 hover:bg-emerald-50/30'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2 mb-1.5">
-                            <div className="flex items-center gap-2.5">
-                              <div className={`w-9 h-9 rounded-xl ${preset.avatarBg || 'bg-stone-800'} text-white font-black text-xs flex items-center justify-center shrink-0 shadow-xs`}>
-                                {preset.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-1.5">
-                                  <span className="font-extrabold text-stone-900 text-xs">{preset.name}</span>
-                                  {preset.badge && (
-                                    <span className="text-[10px] font-black px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300">
-                                      {preset.badge}
-                                    </span>
-                                  )}
-                                </div>
-                                <p className="text-[11px] font-bold text-stone-600">{preset.designation}</p>
-                              </div>
-                            </div>
-
-                            <span className="text-[10px] font-black text-amber-700 group-hover:text-amber-900 flex items-center gap-0.5 shrink-0 bg-white px-2 py-0.5 rounded-lg border border-stone-200 shadow-2xs">
-                              Login <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                            </span>
-                          </div>
-
-                          <p className="text-[11px] text-stone-500 line-clamp-2 leading-relaxed mt-1">
-                            {preset.desc}
-                          </p>
-
-                          <div className="mt-2 pt-2 border-t border-stone-200/60 flex items-center justify-between text-[10px] text-stone-400 font-mono">
-                            <span>{preset.email}</span>
-                            <span className="font-bold text-stone-600">{preset.id}</span>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Manual Staff Credentials Login Form */}
+              {/* Manual Staff Credentials Login Form (the only staff sign-in: no preset accounts or prefilled credentials, in any build) */}
               <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200">
                 <div className="flex items-center gap-2 mb-3">
                   <Key className="w-4 h-4 text-amber-600" />
                   <h4 className="font-extrabold text-stone-900 text-xs uppercase tracking-wider">
-                    {IS_DEV ? '2. Or Sign In With Employee ID & Security PIN' : 'Sign in with Employee ID & Security PIN'}
+                    Sign in with your staff email and password
                   </h4>
                 </div>
 
@@ -786,7 +573,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <input
                         type="text"
                         required
-                        placeholder={IS_DEV ? 'e.g. murugan.mess@proteinbowl.in' : 'Employee ID or work email'}
+                        placeholder="Employee ID or work email"
                         value={employeeFormData.empIdOrEmail}
                         onChange={(e) => setEmployeeFormData({ ...employeeFormData, empIdOrEmail: e.target.value })}
                         className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:ring-2 focus:ring-amber-500"
@@ -815,14 +602,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         className="w-full p-2.5 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none focus:ring-2 focus:ring-amber-500"
                       >
                         <option value="chef">🍛 Kerala Mess / Central Kitchen KDS (Chef)</option>
-                        <option value="swiggy_zomato">⚡ Swiggy / Zomato Aggregator Manager</option>
-                        <option value="md">🏢 Managing Director (MD) Suite & HRM</option>
                         <option value="nutritionist">🩺 Clinical Nutrition & Diet Plans</option>
-                        <option value="pos">💰 POS Billing & Counter Terminal</option>
-                        <option value="delivery">🚚 Logistics Fleet & Dispatch</option>
+                        <option value="trainer">🏋️ Fitness & Workout Plans (Trainer)</option>
                         <option value="procurement">📦 Raw Material Procurement & Stocks</option>
-                        <option value="bakery_fmcg">🍞 FMCG Bakery & Packaged Foods</option>
-                        <option value="tepache_erp">🍍 Probiotic Tepache Brewery ERP</option>
+                        <option value="super_admin">🛡️ Super Admin (Platform & Operations)</option>
                       </select>
                     </div>
 
@@ -842,55 +625,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
           
-          {/* OTP Verification View */}
-          {mode === 'otp' && (
-            <form onSubmit={handleVerifyOtp} className="space-y-4">
-              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center">
-                <ShieldCheck className="w-8 h-8 text-emerald-600 mx-auto mb-2" />
-                <p className="text-xs text-emerald-800 font-medium">OTP Code dispatched via SMS & WhatsApp</p>
-                <div className="text-2xl font-mono font-bold tracking-widest text-emerald-900 my-2">4 8 2 1</div>
-                <p className="text-[11px] text-stone-500">(Auto-filled for instant verification demo)</p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-stone-700 mb-1">Enter Verification Code</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={4}
-                  value={formData.otp || '4821'}
-                  onChange={(e) => setFormData({ ...formData, otp: e.target.value })}
-                  className="w-full text-center tracking-widest text-xl font-bold py-3 px-4 rounded-xl border border-stone-300 text-stone-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm"
-              >
-                <span>Verify & Proceed to Demographic Health Capture</span>
-                <CheckCircle2 className="w-4 h-4" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMode('signup')}
-                className="w-full text-xs text-stone-500 hover:text-stone-800 text-center py-1"
-              >
-                Back to Registration
-              </button>
-            </form>
-          )}
-
           {/* Forgot Password View */}
           {mode === 'forgot' && (
-            <form onSubmit={(e) => { e.preventDefault(); setForgotSuccess(true); }} className="space-y-4">
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (forgotBusy) return;
+                setForgotBusy(true);
+                setForgotError(null);
+                try {
+                  await PasswordResetService.requestReset(formData.email);
+                  setForgotSuccess(true);
+                } catch (err) {
+                  setForgotError(err instanceof ApiRequestError && err.code === 'EMAIL_NOT_CONFIGURED' ? 'Password reset by email is not available right now. Please contact Protein Bowl support.' : 'We could not process that request. Please try again in a few minutes.');
+                } finally {
+                  setForgotBusy(false);
+                }
+              }}
+              className="space-y-4"
+            >
               {forgotSuccess ? (
                 <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-center space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                  <h4 className="font-bold text-emerald-900 text-sm">Reset Link Dispatched</h4>
+                  <h4 className="font-bold text-emerald-900 text-sm">Check your email</h4>
                   <p className="text-xs text-emerald-800">
-                    We sent a secure password recovery link to <strong>{formData.email}</strong>.
+                    If an account exists for <strong>{formData.email}</strong>, we have sent a password reset link. It expires soon and can be used once.
                   </p>
                   <button
                     type="button"
@@ -912,17 +671,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         name="email"
                         value={formData.email}
                         onChange={handleInputChange}
-                        placeholder="anjali@example.com"
+                        placeholder="you@example.com"
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-stone-300 text-sm text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none"
                       />
                     </div>
                   </div>
 
+                  {forgotError && <p role="alert" className="text-xs text-red-700">{forgotError}</p>}
                   <button
                     type="submit"
-                    className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl transition-all shadow-md text-sm"
+                    disabled={forgotBusy}
+                    className="w-full bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white font-bold py-3 rounded-xl transition-all shadow-md text-sm"
                   >
-                    Send Password Reset Email
+                    {forgotBusy ? 'Sending…' : 'Send Password Reset Email'}
                   </button>
 
                   <button
@@ -940,38 +701,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {/* Sign In & Sign Up Views */}
           {(mode === 'signin' || mode === 'signup') && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => handleSocialAuth('Google')}
-                  className="flex items-center justify-center gap-2 border border-stone-300 hover:bg-stone-50 rounded-xl py-2.5 px-3 text-xs font-bold text-stone-700 transition-colors shadow-2xs"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>Google SSO</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleSocialAuth('Apple')}
-                  className="flex items-center justify-center gap-2 bg-stone-900 text-white hover:bg-stone-800 rounded-xl py-2.5 px-3 text-xs font-bold transition-colors shadow-2xs"
-                >
-                  <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
-                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.32c.62-.75 1.04-1.8 0.93-2.85-.9.04-2 .6-2.64 1.35-.57.66-.97 1.73-.83 2.76 1.01.08 2.04-.51 2.54-1.26z" />
-                  </svg>
-                  <span>Apple ID</span>
-                </button>
-              </div>
-
-              <div className="relative my-2 flex items-center justify-center">
-                <div className="border-t border-stone-200 w-full" />
-                <span className="bg-white px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider relative z-10">or email</span>
-              </div>
-
+              {/* No social sign-in: no OAuth provider is configured, and the former development stand-in registered accounts with a shared fixed password. */}
               <form onSubmit={mode === 'signup' ? handleSignUpSubmit : handleSignInSubmit} className="space-y-3">
                 {mode === 'signup' && (
                   <>
@@ -985,14 +715,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           name="name"
                           value={formData.name}
                           onChange={handleInputChange}
-                          placeholder="Anjali Ramesh"
+                          placeholder="Your full name"
                           className="w-full pl-9 pr-4 py-2 rounded-xl border border-stone-300 text-sm text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none"
                         />
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-stone-700 mb-1">Mobile Number (for delivery OTP)</label>
+                      <label className="block text-xs font-bold text-stone-700 mb-1">Mobile Number</label>
                       <div className="relative">
                         <Phone className="w-4 h-4 text-stone-400 absolute left-3 top-3" />
                         <input
@@ -1001,7 +731,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           name="phone"
                           value={formData.phone}
                           onChange={handleInputChange}
-                          placeholder="+91 98765 43210"
+                          placeholder="Mobile number"
                           className="w-full pl-9 pr-4 py-2 rounded-xl border border-stone-300 text-sm text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none"
                         />
                       </div>
@@ -1030,6 +760,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           onChange={(e) => setGender(e.target.value as any)}
                           className="w-full py-2 px-3 rounded-xl border border-stone-300 text-xs font-bold text-stone-900 outline-none"
                         >
+                          <option value="">Choose…</option>
                           <option value="female">Female</option>
                           <option value="male">Male</option>
                           <option value="other">Other</option>
@@ -1049,7 +780,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       name="email"
                       value={formData.email}
                       onChange={handleInputChange}
-                      placeholder="anjali@example.com"
+                      placeholder="you@example.com"
                       className="w-full pl-9 pr-4 py-2 rounded-xl border border-stone-300 text-sm text-stone-900 focus:ring-2 focus:ring-emerald-500 outline-none"
                     />
                   </div>
@@ -1086,7 +817,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   type="submit"
                   className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3 rounded-xl transition-all shadow-md flex items-center justify-center gap-2 text-sm mt-2"
                 >
-                  <span>{mode === 'signup' ? 'Continue to Health Capture' : 'Sign In & Capture Health Data'}</span>
+                  <span>{mode === 'signup' ? 'Continue to Health Capture' : 'Sign In'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
@@ -1121,7 +852,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {mode === 'health_capture' && (
             <div className="space-y-6 animate-fadeIn">
               
-              {/* Auto-Calculated Live Banner */}
+              {/* Auto-Calculated Live Banner: only from values the customer entered */}
+              {!metricsReady && (
+                <p className="p-3 rounded-2xl bg-stone-100 border border-stone-200 text-xs font-bold text-stone-600">
+                  {gender === 'other'
+                    ? 'Calorie and macro figures are not available for this selection yet. Your profile can still be saved.'
+                    : 'Enter your date of birth, gender, height, weight, main goal and activity level to see your calculated health metrics.'}
+                </p>
+              )}
+              {metricsReady && (
               <div className="bg-emerald-950 text-white rounded-2xl p-4 shadow-md border border-emerald-800">
                 <div className="flex items-center justify-between border-b border-emerald-800 pb-2 mb-3">
                   <div className="flex items-center gap-2">
@@ -1168,6 +907,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* 1. Profile Basics & Initial Body Measurements */}
               <div className="bg-stone-50 p-4 rounded-2xl border border-stone-200 space-y-3">
@@ -1214,6 +954,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onChange={(e) => setGender(e.target.value as any)}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                     >
+                      <option value="">Choose…</option>
                       <option value="female">Female</option>
                       <option value="male">Male</option>
                       <option value="other">Other</option>
@@ -1234,7 +975,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Height (cm)</label>
                     <input
                       type="number"
-                      value={heightCm}
+                      value={heightCm || ''}
                       onChange={(e) => setHeightCm(Number(e.target.value))}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                     />
@@ -1244,7 +985,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Current Weight (kg)</label>
                     <input
                       type="number"
-                      value={weightKg}
+                      value={weightKg || ''}
                       onChange={(e) => setWeightKg(Number(e.target.value))}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                     />
@@ -1254,7 +995,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Target Weight (kg)</label>
                     <input
                       type="number"
-                      value={targetWeightKg}
+                      value={targetWeightKg || ''}
                       onChange={(e) => setTargetWeightKg(Number(e.target.value))}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold text-stone-900 outline-none"
                     />
@@ -1267,6 +1008,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onChange={(e) => setOccupation(e.target.value)}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     >
+                      <option value="">Choose…</option>
                       {occupationOptions.map((occ) => (
                         <option key={occ} value={occ}>{occ}</option>
                       ))}
@@ -1280,6 +1022,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onChange={(e) => setWorkSchedule(e.target.value)}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     >
+                      <option value="">Choose…</option>
                       {workScheduleOptions.map((ws) => (
                         <option key={ws} value={ws}>{ws}</option>
                       ))}
@@ -1290,7 +1033,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Sleep Duration (hrs/day)</label>
                     <input
                       type="number"
-                      value={sleepDuration}
+                      value={sleepDuration || ''}
                       onChange={(e) => setSleepDuration(Number(e.target.value))}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     />
@@ -1329,7 +1072,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <input
                       type="number"
                       step="0.1"
-                      value={muscleMassKg}
+                      value={muscleMassKg || ''}
                       onChange={(e) => setMuscleMassKg(Number(e.target.value))}
                       className="w-full p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-center"
                     />
@@ -1339,7 +1082,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[10px] font-bold uppercase text-amber-950 mb-0.5">Waist (cm)</label>
                     <input
                       type="number"
-                      value={waistCm}
+                      value={waistCm || ''}
                       onChange={(e) => setWaistCm(Number(e.target.value))}
                       className="w-full p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-center"
                     />
@@ -1349,7 +1092,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[10px] font-bold uppercase text-amber-950 mb-0.5">Hip (cm)</label>
                     <input
                       type="number"
-                      value={hipCm}
+                      value={hipCm || ''}
                       onChange={(e) => setHipCm(Number(e.target.value))}
                       className="w-full p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-center"
                     />
@@ -1359,7 +1102,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[10px] font-bold uppercase text-amber-950 mb-0.5">Chest (cm)</label>
                     <input
                       type="number"
-                      value={chestCm}
+                      value={chestCm || ''}
                       onChange={(e) => setChestCm(Number(e.target.value))}
                       className="w-full p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-center"
                     />
@@ -1369,7 +1112,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[10px] font-bold uppercase text-amber-950 mb-0.5">Neck (cm)</label>
                     <input
                       type="number"
-                      value={neckCm}
+                      value={neckCm || ''}
                       onChange={(e) => setNeckCm(Number(e.target.value))}
                       className="w-full p-1.5 bg-white border border-amber-300 rounded-lg text-xs font-bold text-center"
                     />
@@ -1381,14 +1124,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <input
                         type="number"
                         placeholder="L"
-                        value={leftArmCm}
+                        value={leftArmCm || ''}
                         onChange={(e) => setLeftArmCm(Number(e.target.value))}
                         className="w-1/2 p-1.5 bg-white border border-amber-300 rounded-lg text-[11px] font-bold text-center"
                       />
                       <input
                         type="number"
                         placeholder="R"
-                        value={rightArmCm}
+                        value={rightArmCm || ''}
                         onChange={(e) => setRightArmCm(Number(e.target.value))}
                         className="w-1/2 p-1.5 bg-white border border-amber-300 rounded-lg text-[11px] font-bold text-center"
                       />
@@ -1427,12 +1170,30 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
                   <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">Main Goal</label>
+                    <select
+                      value={goal}
+                      onChange={(e) => setGoal(e.target.value as HealthGoal | '')}
+                      className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
+                    >
+                      <option value="">Choose…</option>
+                      <option value="weight_loss">Weight loss</option>
+                      <option value="muscle_gain">Muscle gain</option>
+                      <option value="maintenance">Maintain weight</option>
+                      <option value="wellness">General wellness</option>
+                      <option value="diabetic">Diabetes management</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+
+                  <div>
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Activity Level</label>
                     <select
                       value={activityLevel}
-                      onChange={(e) => setActivityLevel(e.target.value as ActivityLevel)}
+                      onChange={(e) => setActivityLevel(e.target.value as ActivityLevel | '')}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     >
+                      <option value="">Choose…</option>
                       <option value="sedentary">Sedentary (Little/No Exercise)</option>
                       <option value="light">Lightly Active (1–3 Days/Wk)</option>
                       <option value="moderate">Moderately Active (3–5 Days/Wk)</option>
@@ -1447,14 +1208,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       <button
                         type="button"
                         onClick={() => setHasExercise(true)}
-                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold border ${hasExercise ? 'bg-emerald-700 text-white' : 'bg-white text-stone-700'}`}
+                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold border ${hasExercise === true ? 'bg-emerald-700 text-white' : 'bg-white text-stone-700'}`}
                       >
                         Yes
                       </button>
                       <button
                         type="button"
                         onClick={() => setHasExercise(false)}
-                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold border ${!hasExercise ? 'bg-stone-800 text-white' : 'bg-white text-stone-700'}`}
+                        className={`flex-1 py-1.5 rounded-xl text-xs font-bold border ${hasExercise === false ? 'bg-stone-800 text-white' : 'bg-white text-stone-700'}`}
                       >
                         No
                       </button>
@@ -1465,7 +1226,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <label className="block text-[11px] font-bold text-stone-700 mb-1">Daily Step Count</label>
                     <input
                       type="number"
-                      value={dailyStepCount}
+                      value={dailyStepCount || ''}
                       onChange={(e) => setDailyStepCount(Number(e.target.value))}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     />
@@ -1575,6 +1336,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onChange={(e) => setFoodPreference(e.target.value as any)}
                       className="w-full p-2 bg-white border border-stone-300 rounded-xl text-xs font-bold outline-none"
                     >
+                      <option value="">Choose…</option>
                       <option value="Non-Vegetarian">Non-Vegetarian</option>
                       <option value="Vegetarian">Vegetarian</option>
                       <option value="Eggetarian">Eggetarian</option>
@@ -1612,10 +1374,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div>
                       <label className="block text-[10px] font-bold text-pink-900 mb-0.5">Pregnant?</label>
                       <select
-                        value={isPregnant ? 'yes' : 'no'}
-                        onChange={(e) => setIsPregnant(e.target.value === 'yes')}
+                        value={triToSelect(isPregnant)}
+                        onChange={(e) => setIsPregnant(selectToTri(e.target.value))}
                         className="w-full p-1.5 bg-white border border-pink-300 rounded-lg font-bold"
                       >
+                        <option value="">Choose…</option>
                         <option value="no">No</option>
                         <option value="yes">Yes</option>
                       </select>
@@ -1624,10 +1387,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div>
                       <label className="block text-[10px] font-bold text-pink-900 mb-0.5">Breastfeeding?</label>
                       <select
-                        value={isBreastfeeding ? 'yes' : 'no'}
-                        onChange={(e) => setIsBreastfeeding(e.target.value === 'yes')}
+                        value={triToSelect(isBreastfeeding)}
+                        onChange={(e) => setIsBreastfeeding(selectToTri(e.target.value))}
                         className="w-full p-1.5 bg-white border border-pink-300 rounded-lg font-bold"
                       >
+                        <option value="">Choose…</option>
                         <option value="no">No</option>
                         <option value="yes">Yes</option>
                       </select>
@@ -1640,6 +1404,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         onChange={(e) => setMenstrualCycle(e.target.value as any)}
                         className="w-full p-1.5 bg-white border border-pink-300 rounded-lg font-bold"
                       >
+                        <option value="">Choose…</option>
                         <option value="Regular">Regular</option>
                         <option value="Irregular">Irregular</option>
                       </select>
@@ -1648,10 +1413,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <div>
                       <label className="block text-[10px] font-bold text-pink-900 mb-0.5">Menopause?</label>
                       <select
-                        value={isMenopause ? 'yes' : 'no'}
-                        onChange={(e) => setIsMenopause(e.target.value === 'yes')}
+                        value={triToSelect(isMenopause)}
+                        onChange={(e) => setIsMenopause(selectToTri(e.target.value))}
                         className="w-full p-1.5 bg-white border border-pink-300 rounded-lg font-bold"
                       >
+                        <option value="">Choose…</option>
                         <option value="no">No</option>
                         <option value="yes">Yes</option>
                       </select>
@@ -1664,7 +1430,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="flex items-center justify-between pt-4 border-t border-stone-200">
                 <button
                   type="button"
-                  onClick={finalizeCustomerLogin}
+                  onClick={skipHealthCapture}
                   className="text-stone-500 hover:text-stone-800 text-xs font-bold underline"
                 >
                   Skip & Launch Dashboard

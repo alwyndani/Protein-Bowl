@@ -129,10 +129,10 @@ describe('P11B — real backend contract for the customer mobile commerce journe
   });
 
   it('5. addresses: create / list / update / ownership; the FIRST address is NOT auto-default unless isDefault is sent (the app sends it explicitly)', async () => {
-    const plain = await request(app).post('/api/v1/customers/me/addresses').set(auth(tokenA)).send({ addressLine1: '12 Beach Road', city: 'Kochi', postalCode: '682001' });
+    const plain = await request(app).post('/api/v1/customers/me/addresses').set(auth(tokenA)).send({ title: 'Flat', addressLine1: '12 Beach Road', city: 'Kochi', state: 'Kerala', postalCode: '682001' });
     expect(plain.status).toBe(201);
     expect(plain.body.data.isDefault).toBe(false);
-    expect(plain.body.data.title).toBe('Home');
+    expect(plain.body.data.title).toBe('Flat'); // exactly what the customer sent: never a default
     expect(plain.body.data.state).toBe('Kerala');
     addressId = plain.body.data.id;
     for (const k of ['id', 'title', 'addressLine1', 'addressLine2', 'city', 'state', 'postalCode', 'isDefault']) expect(k in plain.body.data, k).toBe(true);
@@ -273,9 +273,10 @@ describe('P11B — real backend contract for the customer mobile commerce journe
     expect((await request(app).get('/api/v1/products')).status).toBe(200);
   });
 
-  it('14. KNOWN BACKEND LIMITATION (pinned, not fixed in P11B): a duplicate phone at registration is not a handled conflict', async () => {
+  it('14. a duplicate phone at registration is a clear 409 PHONE_IN_USE (was a generic 500 until the registration hardening) and creates no account', async () => {
     const res = await mobile('/register').send({ email: `p11b.dup.${ts}@proteinbowl.test`, password: PASSWORD, fullName: 'Dup Phone', phone: `+9190${String(ts).slice(-8)}` });
-    expect(res.status).toBe(500); // pre-existing web behaviour too (User.phone is UNIQUE and registration has no P2002 handling)
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('PHONE_IN_USE');
     expect(await prisma.user.count({ where: { email: `p11b.dup.${ts}@proteinbowl.test` } })).toBe(0);
   });
 });

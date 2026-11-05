@@ -5,6 +5,7 @@ import { RoleEnum } from '@prisma/client';
 import { prisma } from '../config/database.js';
 import { Permission, rolesHavePermission } from '../authz/permissions.js';
 import { isStaffRole } from '../authz/roleScopes.js';
+import { isApprovedRole } from '../authz/approvedRoles.js';
 
 declare global {
   namespace Express {
@@ -21,7 +22,9 @@ declare global {
  *  - unknown / soft-deleted / non-ACTIVE (PENDING, SUSPENDED, DEACTIVATED) accounts are rejected immediately, even with a
  *    still-valid access token;
  *  - req.user.roles is rebuilt from the CURRENT role assignments, so role changes apply on the very next request and the
- *    (possibly stale) roles claim inside the token is never used for authorization.
+ *    (possibly stale) roles claim inside the token is never used for authorization;
+ *  - only APPROVED roles reach any guard (retired role values are dropped here), and an ACTIVE account left with no approved role is
+ *    refused 403 NO_APPROVED_ROLE (fail closed).
  * Only the minimum fields are selected - never passwordHash.
  */
 export async function authenticateToken(req: Request, _res: Response, next: NextFunction) {
@@ -54,10 +57,14 @@ export async function authenticateToken(req: Request, _res: Response, next: Next
       return next(new AppError('Your session is no longer valid. Please sign in again.', 401, 'ACCOUNT_INACTIVE'));
     }
 
+    const roles = user.roles.map((r) => r.role).filter(isApprovedRole) as RoleEnum[];
+    if (roles.length === 0) {
+      return next(new AppError('Your account has no approved role. Please contact an administrator.', 403, 'NO_APPROVED_ROLE'));
+    }
     req.user = {
       userId: user.id,
       email: user.email,
-      roles: user.roles.map((r) => r.role)
+      roles
     };
     return next();
   } catch (err) {

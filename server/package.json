@@ -11,6 +11,8 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "test": "vitest run",
+    "e2e:api": "tsx scripts/startIsolatedApi.ts",
+    "test:migrations": "vitest run --config vitest.migrations.config.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
@@ -19,7 +21,9 @@
     "mess:close-day": "tsx scripts/closeMessDay.ts",
     "payments:reconcile": "tsx scripts/reconcilePayments.ts",
     "payments:recovery": "tsx scripts/paymentsRecovery.ts",
-    "payments:mock-webhook": "tsx scripts/mockPaymentWebhook.ts"
+    "payments:mock-webhook": "tsx scripts/mockPaymentWebhook.ts",
+    "payments:reconcile:prod": "tsx scripts/reconcilePaymentsProd.ts",
+    "orders:expire-unpaid": "tsx scripts/expireUnpaidOrders.ts"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

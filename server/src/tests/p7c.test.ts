@@ -341,15 +341,15 @@ describe('P7C — cancellation, full refunds, refund webhooks and reconciliation
       expect(await orderOf(p.order.id)).toMatchObject({ status: 'CONFIRMED' });
     });
 
-    it('15. refund visibility: SUPER_ADMIN and MD read (read-only); CHEF, DELIVERY, customers and anonymous cannot', async () => {
+    it('15. refund visibility: SUPER_ADMIN reads (read-only here); the retired MD role, CHEF, DELIVERY, customers and anonymous cannot', async () => {
       const c = await cancelPaid();
-      for (const label of ['admin', 'md']) {
+      for (const label of ['admin']) {
         const list = await request(app).get('/api/v1/admin/refunds?pageSize=100').set(bearer(who[label].token));
         expect(list.status, label).toBe(200);
         expect(list.body.data.items.some((i: { id: string }) => i.id === c.refund.id)).toBe(true);
         expect((await request(app).get(`/api/v1/admin/refunds/${c.refund.id}`).set(bearer(who[label].token))).status, label).toBe(200);
       }
-      for (const label of ['chef', 'driver', 'custA']) {
+      for (const label of ['md', 'chef', 'driver', 'custA']) {
         expect((await request(app).get('/api/v1/admin/refunds').set(bearer(who[label].token))).status, label).toBe(403);
         expect((await request(app).get(`/api/v1/admin/refunds/${c.refund.id}`).set(bearer(who[label].token))).status, label).toBe(403);
       }
@@ -1658,7 +1658,7 @@ describe('P7C — cancellation, full refunds, refund webhooks and reconciliation
       expect(list.body.data.review).toHaveProperty('refundsInReview');
       const text = JSON.stringify(list.body);
       expect(text).not.toMatch(/lockedBy|lockedUntil|nextAttemptAt|signature|payload/);
-      const review = await request(app).get('/api/v1/admin/refunds?reviewOnly=true&pageSize=100').set(bearer(who.md.token));
+      const review = await request(app).get('/api/v1/admin/refunds?reviewOnly=true&pageSize=100').set(bearer(who.admin.token));
       expect(review.status).toBe(200);
       expect(review.body.data.items.every((i: { status: string; reviewFlag: string | null }) => ['REVIEW', 'UNKNOWN'].includes(i.status) || i.reviewFlag)).toBe(true);
     });

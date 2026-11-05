@@ -1,7 +1,22 @@
 import React, { useState } from 'react';
 import { DietPlanRequest, RecipeItem, DayPlan, DayMealSlot, MealSlotItem, CustomerProfile } from '../../types';
-import { ALL_RECIPES } from '../../data/recipeDatabase';
-import { 
+import { useStaffRecipes } from '../../hooks/useStaffRecipes';
+import {
+  incompleteItemCount,
+  INVALID_PORTION_MESSAGE,
+  incompleteSummary,
+  isItemComplete,
+  itemFromLegacySlot,
+  itemFromRecipe,
+  missingParts,
+  parsePortionInput,
+  planIncompleteCount,
+  portionRatioLabel,
+  recalculateDayTotals,
+  sumKnown,
+  withPortion
+} from './nutritionPlan';
+import {
   Stethoscope, 
   Sparkles, 
   CheckCircle2, 
@@ -45,6 +60,8 @@ interface NutritionistDashboardProps {
   customerProfile?: CustomerProfile;
   onUpdatePlan: (updatedReq: DietPlanRequest) => void;
   onOpenMenuModal: (recipe: RecipeItem) => void;
+  /** Called when the nutritionist picks a patient (and for the initially shown one) so the container can load that patient's health profile. */
+  onSelectRequest?: (requestId: string) => void;
 }
 
 // 5 Meal Timings definition
@@ -67,113 +84,29 @@ export const SEVEN_DAYS = [
   { dayNumber: 7, dayName: 'Sunday', short: 'Sun' },
 ] as const;
 
-const RECIPE_MAP = new Map(ALL_RECIPES.map((r) => [r.id, r]));
-
 // Helper to generate clean multi-item 7-day Monday to Sunday plan
 export function generateInitial7DayPlan(): DayPlan[] {
-  const defaultTimingRecipes: Record<string, string[][]> = {
-    breakfast: [
-      ['eg-3', 'ob-1'], // Monday: Spinach Omelette + Oats
-      ['eg-1', 'ob-2'], // Tuesday: Scrambled Eggs + Berry Parfait
-      ['ob-1', 'yo-12'],// Wednesday
-      ['eg-3', 'ob-2'], // Thursday
-      ['eg-1', 'ob-1'], // Friday
-      ['ob-2', 'yo-12'],// Saturday
-      ['eg-3', 'ob-1']  // Sunday
-    ],
-    morning_snack: [
-      ['yo-12'], ['yo-1'], ['yo-2'], ['yo-12'], ['yo-1'], ['yo-2'], ['yo-12']
-    ],
-    lunch: [
-      ['kl-2', 'sl-6'], // Monday: Kerala Matta Rice + Greek Salad
-      ['qb-1', 'cg-1'], // Tuesday: Quinoa Bowl + Chicken Grill
-      ['cg-1', 'sl-2'], // Wednesday
-      ['kl-2', 'cg-1'], // Thursday
-      ['qb-1', 'sl-6'], // Friday
-      ['kl-2', 'cg-1'], // Saturday
-      ['qb-1', 'sl-2']  // Sunday
-    ],
-    evening_snack: [
-      ['ds-10'], ['ds-1'], ['yo-12'], ['ds-10'], ['ds-1'], ['yo-12'], ['ds-10']
-    ],
-    dinner: [
-      ['sl-6', 'cg-1'], ['cg-1', 'sl-2'], ['sl-6', 'ds-10'], ['sl-2', 'cg-1'], ['sl-6', 'cg-1'], ['cg-1', 'sl-2'], ['sl-6', 'cg-1']
-    ]
-  };
-
-  return SEVEN_DAYS.map((dayObj, dayIdx) => {
-    const meals: DayMealSlot[] = FIVE_MEAL_TIMINGS.map((timing) => {
-      const recipeIds = defaultTimingRecipes[timing.key]?.[dayIdx] || ['cg-1'];
-      
-      const items: MealSlotItem[] = recipeIds.map((rId, itemIdx) => {
-        const recipe = RECIPE_MAP.get(rId) || ALL_RECIPES[0];
-        const portionGrams = recipe.servingGrams || 200;
-        return {
-          id: `item-${dayObj.dayNumber}-${timing.key}-${itemIdx}-${Math.random().toString(36).substr(2, 4)}`,
-          recipeId: recipe.id,
-          recipeName: recipe.name,
-          portionSize: `${portionGrams}g (1 Portion)`,
-          portionGrams: portionGrams,
-          calories: recipe.calories,
-          protein: recipe.protein,
-          carbs: recipe.carbs,
-          fat: recipe.fat,
-          customizationNote: itemIdx === 0 ? 'Customized for patient: Low oil, extra herbs.' : ''
-        };
-      });
-
-      let defaultRemarks = '';
-      if (timing.key === 'breakfast') {
-        defaultRemarks = 'Drink 1 glass of warm lemon chia water 15 minutes before breakfast.';
-      } else if (timing.key === 'morning_snack') {
-        defaultRemarks = 'Chew slowly; stay hydrated.';
-      } else if (timing.key === 'lunch') {
-        defaultRemarks = 'Take 10-minute slow walk post-lunch.';
-      } else if (timing.key === 'evening_snack') {
-        defaultRemarks = 'Green tea or herbal infusion with no added refined sugar.';
-      } else if (timing.key === 'dinner') {
-        defaultRemarks = 'Finish dinner at least 2.5 hours before bedtime.';
-      }
-
-      return {
-        mealType: timing.key,
-        timingLabel: timing.label,
-        items,
-        slotRemarks: defaultRemarks
-      };
-    });
-
-    let totalCalories = 0;
-    let totalProtein = 0;
-    let totalCarbs = 0;
-    let totalFat = 0;
-
-    meals.forEach((slot) => {
-      slot.items?.forEach((item) => {
-        totalCalories += item.calories || 0;
-        totalProtein += item.protein || 0;
-        totalCarbs += item.carbs || 0;
-        totalFat += item.fat || 0;
-      });
-    });
-
-    return {
-      dayNumber: dayObj.dayNumber,
-      dayName: dayObj.dayName,
-      meals,
-      totalCalories,
-      totalProtein: Math.round(totalProtein),
-      totalCarbs: Math.round(totalCarbs),
-      totalFat: Math.round(totalFat)
-    };
-  });
+  // An EMPTY week: the nutritionist chooses every dish for this client. No canned menu, remarks or "customized for patient" notes are pre-filled.
+  return SEVEN_DAYS.map((dayObj) => ({
+    dayNumber: dayObj.dayNumber,
+    dayName: dayObj.dayName,
+    meals: FIVE_MEAL_TIMINGS.map((timing) => ({ mealType: timing.key, timingLabel: timing.label, items: [], slotRemarks: '' })),
+    totalCalories: 0,
+    totalProtein: 0,
+    totalCarbs: 0,
+    totalFat: 0
+  }));
 }
+
+/** Clinical values are shown exactly as recorded; a missing value is "Not provided", never a made-up default. */
+const show = (v: number | string | null | undefined, unit = ''): string => (v === undefined || v === null || v === '' ? 'Not provided' : `${v}${unit}`);
 
 export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
   requests,
   customerProfile,
   onUpdatePlan,
-  onOpenMenuModal
+  onOpenMenuModal,
+  onSelectRequest
 }) => {
   const [selectedReqId, setSelectedReqId] = useState<string>(requests[0]?.id || '');
   const activeRequest = requests.find((r) => r.id === selectedReqId) || requests[0];
@@ -185,44 +118,43 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
   const [weeklyPlan, setWeeklyPlan] = useState<DayPlan[]>(() => {
     if (activeRequest?.dayWisePlan && activeRequest.dayWisePlan.length >= 7) {
       // Ensure items array exists on slots for older data structures
-      return activeRequest.dayWisePlan.map((d) => ({
-        ...d,
-        meals: d.meals.map((m) => {
+      return activeRequest.dayWisePlan.map((d) => {
+        const meals = d.meals.map((m) => {
           if (!m.items || m.items.length === 0) {
-            const recipe = RECIPE_MAP.get(m.recipeId || '') || ALL_RECIPES[0];
-            return {
-              ...m,
-              items: [{
-                id: `item-${d.dayNumber}-${m.mealType}-0`,
-                recipeId: recipe.id,
-                recipeName: recipe.name,
-                portionSize: `${m.customPortionGrams || 200}g`,
-                portionGrams: m.customPortionGrams || 200,
-                calories: m.calories || recipe.calories,
-                protein: m.protein || recipe.protein,
-                carbs: m.carbs || recipe.carbs,
-                fat: m.fat || recipe.fat,
-                customizationNote: 'Patient custom note: Low sodium.'
-              }],
-              slotRemarks: m.mealType === 'breakfast' ? 'Drink warm water before breakfast' : ''
-            };
+            // A slot whose dish is unknown stays empty: no other recipe is substituted. A recorded single-dish slot keeps ITS OWN recorded values;
+            // anything it did not record stays missing ("Not provided"), never 0 and never a default portion.
+            if (!m.recipeId || !m.recipeName) return { ...m, items: [], slotRemarks: m.slotRemarks ?? '' };
+            return { ...m, items: [itemFromLegacySlot(`item-${d.dayNumber}-${m.mealType}-0`, m)], slotRemarks: '' };
           }
           return m;
-        })
-      }));
+        });
+        // Day totals are always recomputed from the values that exist (a stored total may have counted values that are no longer assumed).
+        return recalculateDayTotals({ ...d, meals });
+      });
     }
     return generateInitial7DayPlan();
   });
 
   // Dietitian comment box input
   const [dieticianNoteInput, setDieticianNoteInput] = useState<string>(
-    activeRequest?.dieticianNotes || 'Clinical Summary: PCOS & Metabolic Care. Focus on low-GI carbohydrates, high fiber, and gut-soothing herbal teas.'
+    activeRequest?.dieticianNotes || ''
   );
 
   // Modal / Dish Picker state
   const [addingDishTarget, setAddingDishTarget] = useState<{ dayNumber: number; timingKey: string } | null>(null);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  // Portion boxes: what was typed while it is empty or invalid, and the validation message of an invalid entry (per dish id).
+  const [portionDraft, setPortionDraft] = useState<Record<string, string>>({});
+  const [portionErrors, setPortionErrors] = useState<Record<string, string>>({});
+  const hasPortionErrors = Object.keys(portionErrors).length > 0;
+  const [manualTarget, setManualTarget] = useState('');
+  const hasCalculatedTarget = (activeRequest?.targetCalories ?? 0) > 0;
   const [recipeSearch, setRecipeSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  // The dish picker reads the published recipes from the server (staff catalogue); there is no static list.
+  const { recipes: catalogue, status: recipeStatus, reload: reloadRecipes } = useStaffRecipes();
+  const RECIPE_MAP = new Map(catalogue.map((r) => [r.id, r]));
 
   if (!activeRequest) {
     return (
@@ -232,52 +164,35 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
     );
   }
 
-  // Calculate day totals
-  const recalculateDayTotals = (day: DayPlan): DayPlan => {
-    let cal = 0;
-    let p = 0;
-    let c = 0;
-    let f = 0;
-
-    day.meals.forEach((slot) => {
-      slot.items?.forEach((item) => {
-        cal += item.calories || 0;
-        p += item.protein || 0;
-        c += item.carbs || 0;
-        f += item.fat || 0;
-      });
-    });
-
-    return {
-      ...day,
-      totalCalories: Math.round(cal),
-      totalProtein: Math.round(p),
-      totalCarbs: Math.round(c),
-      totalFat: Math.round(f)
-    };
+  // Portion-box bookkeeping must never outlive its dish (a stale error would block publishing a plan that no longer has that dish).
+  const forgetPortion = (itemId: string) => {
+    setPortionDraft(({ [itemId]: _d, ...rest }) => rest);
+    setPortionErrors(({ [itemId]: _e, ...rest }) => rest);
+  };
+  const resetPortions = () => {
+    setPortionDraft({});
+    setPortionErrors({});
   };
 
-  // Add a new menu item to a timing slot
+  // Add a new menu item to a timing slot (day totals: see nutritionPlan.recalculateDayTotals; only values that exist are added up)
   const handleAddDishToSlot = (dayNumber: number, timingKey: string, recipe: RecipeItem) => {
-    const portionGrams = recipe.servingGrams || 200;
-    const newItem: MealSlotItem = {
-      id: `item-${dayNumber}-${timingKey}-${Date.now()}`,
-      recipeId: recipe.id,
-      recipeName: recipe.name,
-      portionSize: `${portionGrams}g (1 Portion)`,
-      portionGrams: portionGrams,
-      calories: recipe.calories,
-      protein: recipe.protein,
-      carbs: recipe.carbs,
-      fat: recipe.fat,
-      customizationNote: ''
-    };
+    const newItem: MealSlotItem = itemFromRecipe(`item-${dayNumber}-${timingKey}-${Date.now()}`, recipe);
 
     const updatedPlan = weeklyPlan.map((d) => {
       if (d.dayNumber === dayNumber) {
         const updatedMeals = d.meals.map((m) => {
           if (m.mealType === timingKey) {
             const currentItems = m.items || [];
+            // Re-selecting a dish whose recorded values are incomplete restores it from the catalogue (it replaces that dish; no duplicate).
+            const stale = currentItems.findIndex((it) => it.recipeId === recipe.id && !isItemComplete(it));
+            if (stale >= 0) {
+              const old = currentItems[stale];
+              forgetPortion(old.id);
+              // A portion the nutritionist already set is kept; the values are rescaled to it from the catalogue.
+              const base = typeof old.portionGrams === 'number' && old.portionGrams > 0 ? withPortion(newItem, old.portionGrams, recipe) : newItem;
+              const restored = { ...base, id: old.id, customizationNote: old.customizationNote ?? '' };
+              return { ...m, items: currentItems.map((it, i) => (i === stale ? restored : it)) };
+            }
             return {
               ...m,
               items: [...currentItems, newItem]
@@ -296,6 +211,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
 
   // Remove a dish item from timing slot
   const handleRemoveDishItem = (dayNumber: number, timingKey: string, itemId: string) => {
+    forgetPortion(itemId);
     const updatedPlan = weeklyPlan.map((d) => {
       if (d.dayNumber === dayNumber) {
         const updatedMeals = d.meals.map((m) => {
@@ -316,36 +232,14 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
     setWeeklyPlan(updatedPlan);
   };
 
-  // Change Portion Size (Grams) for an item -> automatically updates macros
-  const handleUpdatePortion = (dayNumber: number, timingKey: string, itemId: string, newGrams: number) => {
-    const validGrams = Math.max(10, newGrams);
+  // Change Portion Size (Grams) for an item -> the values are recalculated from the dish's immutable basis (see nutritionPlan.withPortion).
+  // `validGrams` null = the field was cleared: the portion becomes "Not provided". Nothing the nutritionist typed is replaced by another number.
+  const applyPortion = (dayNumber: number, timingKey: string, itemId: string, validGrams: number | null) => {
     const updatedPlan = weeklyPlan.map((d) => {
       if (d.dayNumber === dayNumber) {
         const updatedMeals = d.meals.map((m) => {
           if (m.mealType === timingKey) {
-            const updatedItems = (m.items || []).map((it) => {
-              if (it.id === itemId) {
-                const recipe = RECIPE_MAP.get(it.recipeId);
-                const baseGrams = recipe?.servingGrams || 200;
-                const ratio = validGrams / baseGrams;
-
-                const cal = recipe ? Math.round(recipe.calories * ratio) : Math.round((it.calories / (it.portionGrams || 200)) * validGrams);
-                const p = recipe ? Math.round(recipe.protein * ratio) : Math.round((it.protein / (it.portionGrams || 200)) * validGrams);
-                const c = recipe ? Math.round(recipe.carbs * ratio) : Math.round((it.carbs / (it.portionGrams || 200)) * validGrams);
-                const f = recipe ? Math.round(recipe.fat * ratio) : Math.round((it.fat / (it.portionGrams || 200)) * validGrams);
-
-                return {
-                  ...it,
-                  portionGrams: validGrams,
-                  portionSize: `${validGrams}g (${(validGrams / baseGrams).toFixed(1)} portion)`,
-                  calories: cal,
-                  protein: p,
-                  carbs: c,
-                  fat: f
-                };
-              }
-              return it;
-            });
+            const updatedItems = (m.items || []).map((it) => (it.id === itemId ? withPortion(it, validGrams, RECIPE_MAP.get(it.recipeId)) : it));
             return { ...m, items: updatedItems };
           }
           return m;
@@ -356,6 +250,26 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
     });
 
     setWeeklyPlan(updatedPlan);
+  };
+
+  // What the nutritionist typed in the portion box. An empty box clears the portion; anything that is not a number greater than 0 is REJECTED with a
+  // message (the dish keeps its last valid portion and the box keeps what was typed) - the value is never silently turned into another number.
+  const handlePortionInput = (dayNumber: number, timingKey: string, itemId: string, raw: string) => {
+    const parsed = parsePortionInput(raw);
+    const { [itemId]: _gone, ...otherErrors } = portionErrors;
+    if (parsed.kind === 'ok') {
+      setPortionDraft(({ [itemId]: _d, ...rest }) => rest);
+      setPortionErrors(otherErrors);
+      applyPortion(dayNumber, timingKey, itemId, parsed.grams);
+      return;
+    }
+    setPortionDraft((d) => ({ ...d, [itemId]: raw }));
+    if (parsed.kind === 'empty') {
+      setPortionErrors(otherErrors);
+      applyPortion(dayNumber, timingKey, itemId, null);
+      return;
+    }
+    setPortionErrors({ ...portionErrors, [itemId]: INVALID_PORTION_MESSAGE });
   };
 
   // Update Customization Note per dish for patient
@@ -402,9 +316,8 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
 
   // Auto Fill Week
   const handleAutoFillWeek = () => {
-    const freshPlan = generateInitial7DayPlan();
-    setWeeklyPlan(freshPlan);
-    confetti({ particleCount: 50, spread: 60 });
+    resetPortions();
+    setWeeklyPlan(generateInitial7DayPlan()); // clears the week: the nutritionist chooses every dish
   };
 
   // Copy Monday plan to Tuesday-Sunday
@@ -425,61 +338,90 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
       });
     });
 
+    resetPortions();
     setWeeklyPlan(clonedPlan);
     confetti({ particleCount: 40, spread: 50 });
   };
 
   // Send completed plan to client via real API
   const handleSendToClient = async () => {
-    confetti({ particleCount: 80, spread: 90 });
+    if (publishing) return;
+    setPublishError(null);
+
+    // Nothing is assumed: every day needs real dishes. The calorie target is the client's CALCULATED target, or, when it could not be calculated
+    // (date of birth / gender missing, or "other"), a figure the nutritionist types in on purpose. It is never defaulted or taken from the plan's dishes.
+    const day1 = weeklyPlan[0];
+    const everyDayHasMeals = weeklyPlan.length > 0 && weeklyPlan.every((d) => d.meals.some((m) => (m.items || []).length > 0));
+    if (!everyDayHasMeals || !day1) {
+      setPublishError('Add at least one dish to every day of the plan before sending it to the client.');
+      return;
+    }
+    // A dish with a missing nutrition value or portion size is never sent (and never sent as 0 or a default portion): the nutritionist completes it first.
+    if (hasPortionErrors) {
+      setPublishError(INVALID_PORTION_MESSAGE + ' Correct the highlighted portion size before sending the plan.');
+      return;
+    }
+    const incomplete = planIncompleteCount(weeklyPlan);
+    if (incomplete > 0) {
+      setPublishError(`${incompleteSummary(incomplete)}. Select each dish again from the catalogue (or enter its portion size) before sending the plan.`);
+      return;
+    }
+    const typed = Number(manualTarget);
+    const targetCalories = hasCalculatedTarget ? activeRequest.targetCalories : typed;
+    if (!hasCalculatedTarget && (!manualTarget.trim() || !Number.isInteger(typed) || typed < 500 || typed > 10000)) {
+      setPublishError("The client's calorie target could not be calculated. Enter the daily calorie target you have decided (500–10000 kcal) before sending the plan.");
+      return;
+    }
+    setPublishing(true);
 
     try {
       if (activeRequest && activeRequest.id) {
-        // Calculate day 1 totals to send as target summary
-        const day1 = weeklyPlan[0] || generateInitial7DayPlan()[0];
-        
-        await DietService.publishDietPlan({
+        const published = await DietService.publishDietPlan({
           requestId: activeRequest.id,
           name: `Custom Diet Plan (${activeRequest.customerName || 'Client'})`,
-          targetCalories: activeRequest.targetCalories || day1.totalCalories || 1700,
-          proteinGrams: day1.totalProtein || 120,
-          carbsGrams: day1.totalCarbs || 160,
-          fatGrams: day1.totalFat || 45,
-          internalClinicalNotes: 'Clinical Internal Summary: PCOS & Metabolic Care. Low GI carbs & low sodium.',
+          targetCalories,
+          proteinGrams: day1.totalProtein,
+          carbsGrams: day1.totalCarbs,
+          fatGrams: day1.totalFat,
           customerVisibleNotes: dieticianNoteInput,
           days: weeklyPlan.map((d) => ({
             dayNumber: d.dayNumber,
             dayName: d.dayName,
             notes: `Day ${d.dayNumber} - ${d.totalCalories} kcal`,
             meals: d.meals.flatMap((m) =>
-              (m.items || []).map((item) => ({
+              (m.items || []).filter(isItemComplete).map((item) => ({
                 mealType: m.mealType,
                 timingLabel: m.timingLabel,
                 recipeId: item.recipeId,
                 recipeName: item.recipeName,
-                portionGrams: item.portionGrams || 200,
+                portionGrams: item.portionGrams,
                 portionSize: item.portionSize,
-                calories: item.calories || 200,
-                protein: item.protein || 20,
-                carbs: item.carbs || 25,
-                fat: item.fat || 5,
+                calories: item.calories,
+                protein: item.protein,
+                carbs: item.carbs,
+                fat: item.fat,
                 customizationNote: item.customizationNote,
                 slotRemarks: m.slotRemarks
               }))
             )
           }))
         });
+        if (!published.success) throw new Error(published.message || 'The plan could not be published.');
       }
     } catch (err) {
-      console.error('Publish diet plan API error:', err);
+      // Never show "plan sent" unless the server accepted it.
+      setPublishError(err instanceof Error && err.message ? err.message : 'The plan could not be published. Please try again.');
+      setPublishing(false);
+      return;
     }
+    confetti({ particleCount: 80, spread: 90 });
+    setPublishing(false);
 
     const updatedReq: DietPlanRequest = {
       ...activeRequest,
       status: 'plan_ready',
       dieticianNotes: dieticianNoteInput,
-      dayWisePlan: weeklyPlan,
-      calculatedPrice: activeRequest.durationDays === 30 ? 14999 : activeRequest.durationDays === 20 ? 9999 : 4499
+      dayWisePlan: weeklyPlan
     };
 
     onUpdatePlan(updatedReq);
@@ -522,13 +464,14 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
   };
 
   // Filtered recipes for modal
-  const filteredRecipes = ALL_RECIPES.filter((r) => {
-    const matchesSearch = r.name.toLowerCase().includes(recipeSearch.toLowerCase()) || r.cuisine.toLowerCase().includes(recipeSearch.toLowerCase());
+  const filteredRecipes = catalogue.filter((r) => {
+    const q = recipeSearch.toLowerCase();
+    const matchesSearch = (r.name || '').toLowerCase().includes(q) || (r.cuisine || '').toLowerCase().includes(q);
     const matchesCategory = categoryFilter === 'All' || r.category === categoryFilter;
     return matchesSearch && matchesCategory;
   });
 
-  const allCategories = ['All', ...Array.from(new Set(ALL_RECIPES.map((r) => r.category)))];
+  const allCategories = ['All', ...Array.from(new Set(catalogue.map((r) => r.category)))];
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-8 animate-fadeIn">
@@ -580,6 +523,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                   key={req.id}
                   onClick={() => {
                     setSelectedReqId(req.id);
+                    onSelectRequest?.(req.id);
                     if (req.dayWisePlan && req.dayWisePlan.length >= 7) {
                       setWeeklyPlan(req.dayWisePlan);
                     } else {
@@ -647,7 +591,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
               <div className="flex items-center gap-3">
                 <div className="bg-stone-50 p-3 rounded-2xl border border-stone-200 text-center min-w-[120px]">
                   <span className="text-[10px] font-bold text-stone-400 uppercase block">Calorie Target</span>
-                  <span className="text-xl font-black text-teal-900">{activeRequest.targetCalories} kcal</span>
+                  <span className="text-xl font-black text-teal-900">{hasCalculatedTarget ? `${activeRequest.targetCalories} kcal` : 'Not calculated'}</span>
                 </div>
 
                 <div className="bg-stone-50 p-3 rounded-2xl border border-stone-200 text-center min-w-[100px]">
@@ -705,33 +649,33 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-center">
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Height</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.heightCm || 165} cm</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.heightCm, ' cm')}</strong>
                 </div>
 
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Current Weight</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.weightKg || 68} kg</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.weightKg, ' kg')}</strong>
                 </div>
 
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Target Weight</span>
-                  <strong className="text-base font-black text-teal-900">{customerProfile?.targetWeightKg || 58} kg</strong>
+                  <strong className="text-base font-black text-teal-900">{show(customerProfile?.targetWeightKg, ' kg')}</strong>
                 </div>
 
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">BMI Score</span>
-                  <strong className="text-base font-black text-amber-900">{activeRequest.bmi || 25.0}</strong>
-                  <span className="text-[9px] block text-stone-500 font-bold">{customerProfile?.bmiCategory || 'Overweight'}</span>
+                  <strong className="text-base font-black text-amber-900">{show(activeRequest.bmi)}</strong>
+                  <span className="text-[9px] block text-stone-500 font-bold">{show(customerProfile?.bmiCategory)}</span>
                 </div>
 
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">BMR Rate</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.bmr || 1420} kcal</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.bmr, ' kcal')}</strong>
                 </div>
 
                 <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Maintenance TDEE</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.maintenanceCalories || 2200} kcal</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.maintenanceCalories, ' kcal')}</strong>
                 </div>
               </div>
 
@@ -739,17 +683,17 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                 <div className="bg-teal-50 p-4 rounded-2xl border border-teal-200 flex justify-between items-center">
                   <div>
                     <span className="text-[10px] text-teal-800 font-bold uppercase block">Target Calorie Deficit</span>
-                    <strong className="text-base font-black text-teal-950">{activeRequest.targetCalories} kcal/day</strong>
+                    <strong className="text-base font-black text-teal-950">{hasCalculatedTarget ? `${activeRequest.targetCalories} kcal/day` : 'Not calculated'}</strong>
                   </div>
                   <span className="text-xs font-bold text-teal-900 bg-teal-200/90 px-2.5 py-1 rounded-xl">
-                    {customerProfile?.calorieDeficitSurplus || -500} kcal Deficit
+                    {show(customerProfile?.calorieDeficitSurplus, ' kcal vs maintenance')}
                   </span>
                 </div>
 
                 <div className="bg-blue-50 p-4 rounded-2xl border border-blue-200 flex justify-between items-center">
                   <div>
                     <span className="text-[10px] text-blue-800 font-bold uppercase block">Daily Water Requirement</span>
-                    <strong className="text-base font-black text-blue-950">{customerProfile?.waterRequirementL || 3.0} Liters</strong>
+                    <strong className="text-base font-black text-blue-950">{show(customerProfile?.waterRequirementL, ' Liters')}</strong>
                   </div>
                   <Droplets className="w-5 h-5 text-blue-600" />
                 </div>
@@ -757,10 +701,10 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                 <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-200 flex justify-between items-center">
                   <div>
                     <span className="text-[10px] text-emerald-800 font-bold uppercase block">Ideal Body Weight</span>
-                    <strong className="text-base font-black text-emerald-950">{customerProfile?.idealBodyWeightKg || 56.8} kg</strong>
+                    <strong className="text-base font-black text-emerald-950">{show(customerProfile?.idealBodyWeightKg, ' kg')}</strong>
                   </div>
                   <span className="text-xs font-bold text-emerald-800 bg-emerald-200/80 px-2 py-1 rounded-xl">
-                    Lean: {customerProfile?.leanBodyMassKg || 49.5}kg
+                    Lean: {show(customerProfile?.leanBodyMassKg, ' kg')}
                   </span>
                 </div>
               </div>
@@ -776,39 +720,39 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Waist</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.circumferences?.waistCm || 81} cm</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.circumferences?.waistCm, ' cm')}</strong>
                 </div>
 
                 <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Hip</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.circumferences?.hipCm || 98} cm</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.circumferences?.hipCm, ' cm')}</strong>
                 </div>
 
                 <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Chest</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.circumferences?.chestCm || 88} cm</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.circumferences?.chestCm, ' cm')}</strong>
                 </div>
 
                 <div className="p-3 bg-stone-50 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Neck</span>
-                  <strong className="text-base font-black text-stone-900">{customerProfile?.circumferences?.neckCm || 34} cm</strong>
+                  <strong className="text-base font-black text-stone-900">{show(customerProfile?.circumferences?.neckCm, ' cm')}</strong>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 text-xs">
                 <div className="p-3 bg-stone-50/80 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Arm Circumference</span>
-                  <span className="font-bold text-stone-800">L: {customerProfile?.limbCircumferences?.leftArmCm || 28} cm • R: {customerProfile?.limbCircumferences?.rightArmCm || 28.5} cm</span>
+                  <span className="font-bold text-stone-800">L: {show(customerProfile?.limbCircumferences?.leftArmCm, ' cm')} • R: {show(customerProfile?.limbCircumferences?.rightArmCm, ' cm')}</span>
                 </div>
 
                 <div className="p-3 bg-stone-50/80 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Thigh Circumference</span>
-                  <span className="font-bold text-stone-800">L: {customerProfile?.limbCircumferences?.leftThighCm || 56} cm • R: {customerProfile?.limbCircumferences?.rightThighCm || 56.5} cm</span>
+                  <span className="font-bold text-stone-800">L: {show(customerProfile?.limbCircumferences?.leftThighCm, ' cm')} • R: {show(customerProfile?.limbCircumferences?.rightThighCm, ' cm')}</span>
                 </div>
 
                 <div className="p-3 bg-stone-50/80 rounded-2xl border border-stone-200">
                   <span className="text-[10px] text-stone-400 font-bold uppercase block">Calf Circumference</span>
-                  <span className="font-bold text-stone-800">L: {customerProfile?.limbCircumferences?.leftCalfCm || 36} cm • R: {customerProfile?.limbCircumferences?.rightCalfCm || 36} cm</span>
+                  <span className="font-bold text-stone-800">L: {show(customerProfile?.limbCircumferences?.leftCalfCm, ' cm')} • R: {show(customerProfile?.limbCircumferences?.rightCalfCm, ' cm')}</span>
                 </div>
               </div>
             </div>
@@ -825,37 +769,38 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                   <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-200">
                     <span className="text-[10px] text-amber-800 font-bold uppercase block">Medical Conditions</span>
                     <strong className="text-xs text-amber-950 font-black">
-                      {customerProfile?.medicalConditions?.join(', ') || 'PCOS, Insulin Resistance'}
+                      {customerProfile?.medicalConditions?.length ? customerProfile.medicalConditions.join(', ') : 'None reported'}
                     </strong>
                   </div>
 
                   <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200">
                     <span className="text-[10px] text-stone-400 font-bold uppercase block">Medications</span>
                     <strong className="text-xs text-stone-900 font-medium">
-                      {customerProfile?.currentMedications || 'Metformin 500mg daily'}
+                      {customerProfile?.currentMedications || 'None reported'}
                     </strong>
                   </div>
 
                   <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200">
                     <span className="text-[10px] text-stone-400 font-bold uppercase block">Supplements</span>
                     <strong className="text-xs text-stone-900 font-medium">
-                      {customerProfile?.supplements?.join(', ') || 'Multivitamin, Omega-3, Vitamin D3'}
+                      {customerProfile?.supplements?.length ? customerProfile.supplements.join(', ') : 'None reported'}
                     </strong>
                   </div>
                 </div>
 
                 <h4 className="text-xs font-bold uppercase text-stone-600 pt-1">Blood Test Panel (Lab Values)</h4>
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                  {getLabBadge('Fasting Sugar', customerProfile?.bloodTestResults?.fastingBloodSugar || 98, 70, 100, 'mg/dL')}
-                  {getLabBadge('HbA1c', customerProfile?.bloodTestResults?.hbA1c || 5.6, 4.0, 5.7, '%')}
-                  {getLabBadge('Total Cholesterol', customerProfile?.bloodTestResults?.totalCholesterol || 185, 120, 200, 'mg/dL')}
-                  {getLabBadge('HDL', customerProfile?.bloodTestResults?.hdl || 52, 40, 60, 'mg/dL')}
-                  {getLabBadge('LDL', customerProfile?.bloodTestResults?.ldl || 110, 50, 130, 'mg/dL')}
-                  {getLabBadge('Triglycerides', customerProfile?.bloodTestResults?.triglycerides || 115, 50, 150, 'mg/dL')}
-                  {getLabBadge('Hemoglobin', customerProfile?.bloodTestResults?.hemoglobin || 13.2, 12.0, 16.0, 'g/dL')}
-                  {getLabBadge('Vitamin D', customerProfile?.bloodTestResults?.vitaminD || 24, 30, 100, 'ng/mL')}
-                  {getLabBadge('Vitamin B12', customerProfile?.bloodTestResults?.vitaminB12 || 310, 200, 900, 'pg/mL')}
-                  {getLabBadge('TSH Thyroid', customerProfile?.bloodTestResults?.tsh || 2.4, 0.4, 4.0, 'mIU/L')}
+                  {getLabBadge('Fasting Sugar', customerProfile?.bloodTestResults?.fastingBloodSugar, 70, 100, 'mg/dL')}
+                  {getLabBadge('HbA1c', customerProfile?.bloodTestResults?.hbA1c, 4.0, 5.7, '%')}
+                  {getLabBadge('Total Cholesterol', customerProfile?.bloodTestResults?.totalCholesterol, 120, 200, 'mg/dL')}
+                  {getLabBadge('HDL', customerProfile?.bloodTestResults?.hdl, 40, 60, 'mg/dL')}
+                  {getLabBadge('LDL', customerProfile?.bloodTestResults?.ldl, 50, 130, 'mg/dL')}
+                  {getLabBadge('Triglycerides', customerProfile?.bloodTestResults?.triglycerides, 50, 150, 'mg/dL')}
+                  {getLabBadge('Hemoglobin', customerProfile?.bloodTestResults?.hemoglobin, 12.0, 16.0, 'g/dL')}
+                  {getLabBadge('Vitamin D', customerProfile?.bloodTestResults?.vitaminD, 30, 100, 'ng/mL')}
+                  {getLabBadge('Vitamin B12', customerProfile?.bloodTestResults?.vitaminB12, 200, 900, 'pg/mL')}
+                  {getLabBadge('TSH Thyroid', customerProfile?.bloodTestResults?.tsh, 0.4, 4.0, 'mIU/L')}
+                  {!customerProfile?.bloodTestResults && <p className="col-span-full text-xs text-stone-500">No blood test results were provided.</p>}
                 </div>
               </div>
             </div>
@@ -881,7 +826,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                   className="px-3.5 py-2 bg-teal-100 hover:bg-teal-200 text-teal-950 font-bold text-xs rounded-xl border border-teal-300 flex items-center gap-1.5 transition-all shadow-xs"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-teal-800" />
-                  <span>Auto-Balance 7 Days</span>
+                  <span>Clear all 7 days</span>
                 </button>
 
                 <button
@@ -899,9 +844,10 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
               {SEVEN_DAYS.map((dayObj) => {
                 const dayPlan = weeklyPlan.find((d) => d.dayNumber === dayObj.dayNumber);
                 const isSelected = expandedDayNumber === dayObj.dayNumber;
-                const cal = dayPlan?.totalCalories || 0;
-                const targetCal = activeRequest.targetCalories || 1700;
-                const isMatch = Math.abs(cal - targetCal) <= 100;
+                const cal = dayPlan?.totalCalories ?? 0; // total of the values that exist; see the "incomplete" marker below
+                const dayIncomplete = dayPlan ? incompleteItemCount(dayPlan) : 0;
+                const targetCal = activeRequest.targetCalories || 0; // no assumed target: without one nothing is marked as matching
+                const isMatch = dayIncomplete === 0 && targetCal > 0 && Math.abs(cal - targetCal) <= 100;
 
                 return (
                   <button
@@ -931,7 +877,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                           ? (isSelected ? 'text-emerald-300' : 'text-emerald-700') 
                           : (isSelected ? 'text-amber-300' : 'text-amber-700')
                       }`}>
-                        {isMatch ? '✓ Target' : `${cal > targetCal ? '+' : ''}${cal - targetCal}`}
+                        {dayIncomplete > 0 ? 'Incomplete' : isMatch ? '✓ Target' : `${cal > targetCal ? '+' : ''}${cal - targetCal}`}
                       </span>
                     </div>
                   </button>
@@ -973,6 +919,11 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                       </div>
                     </div>
                   </div>
+                  {incompleteItemCount(currentDayPlan) > 0 && (
+                    <p role="status" data-testid="day-totals-incomplete" className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                      Totals incomplete: {incompleteSummary(incompleteItemCount(currentDayPlan))}. The totals above add up only the values that exist.
+                    </p>
+                  )}
 
                   {/* 5 VERTICAL MEAL TIMINGS (Breakfast, Morning Snack, Lunch, Evening Snack, Dinner) */}
                   <div className="space-y-6">
@@ -985,17 +936,11 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                       };
 
                       const slotItems = mealSlot.items || [];
-                      let slotTotalCal = 0;
-                      let slotTotalP = 0;
-                      let slotTotalC = 0;
-                      let slotTotalF = 0;
-
-                      slotItems.forEach((it) => {
-                        slotTotalCal += it.calories || 0;
-                        slotTotalP += it.protein || 0;
-                        slotTotalC += it.carbs || 0;
-                        slotTotalF += it.fat || 0;
-                      });
+                      const slotTotalCal = sumKnown(slotItems, 'calories');
+                      const slotTotalP = sumKnown(slotItems, 'protein');
+                      const slotTotalC = sumKnown(slotItems, 'carbs');
+                      const slotTotalF = sumKnown(slotItems, 'fat');
+                      const slotIncomplete = slotItems.filter((it) => !isItemComplete(it)).length;
 
                       return (
                         <div 
@@ -1019,7 +964,7 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
 
                             <div className="flex items-center gap-3">
                               <div className="text-right">
-                                <span className="text-xs font-black text-emerald-900 font-mono">{slotTotalCal} kcal</span>
+                                <span className="text-xs font-black text-emerald-900 font-mono">{slotTotalCal} kcal{slotIncomplete > 0 ? ' (incomplete)' : ''}</span>
                                 <div className="text-[10px] text-stone-500 font-medium">
                                   P:{slotTotalP}g • C:{slotTotalC}g • F:{slotTotalF}g
                                 </div>
@@ -1068,21 +1013,26 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                                       <div className="grid grid-cols-4 gap-1 bg-teal-50/80 p-2 rounded-xl text-center text-[10px]">
                                         <div>
                                           <span className="text-stone-400 font-bold block">Calories</span>
-                                          <strong className="text-emerald-900 font-black">{item.calories} kcal</strong>
+                                          <strong className="text-emerald-900 font-black">{show(item.calories, ' kcal')}</strong>
                                         </div>
                                         <div>
                                           <span className="text-stone-400 font-bold block">Protein</span>
-                                          <strong className="text-stone-800 font-extrabold">{item.protein}g</strong>
+                                          <strong className="text-stone-800 font-extrabold">{show(item.protein, 'g')}</strong>
                                         </div>
                                         <div>
                                           <span className="text-stone-400 font-bold block">Carbs</span>
-                                          <strong className="text-stone-800 font-extrabold">{item.carbs}g</strong>
+                                          <strong className="text-stone-800 font-extrabold">{show(item.carbs, 'g')}</strong>
                                         </div>
                                         <div>
                                           <span className="text-stone-400 font-bold block">Fat</span>
-                                          <strong className="text-stone-800 font-extrabold">{item.fat}g</strong>
+                                          <strong className="text-stone-800 font-extrabold">{show(item.fat, 'g')}</strong>
                                         </div>
                                       </div>
+                                      {!isItemComplete(item) && (
+                                        <p role="alert" className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                                          Not provided: {missingParts(item).join(', ')}. Select this dish again from the catalogue to restore its values, or enter the portion size.
+                                        </p>
+                                      )}
 
                                       {/* Portion Size Selector (not quantity) */}
                                       <div className="space-y-1">
@@ -1093,15 +1043,21 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                                           <input
                                             type="number"
                                             step={10}
-                                            value={item.portionGrams}
-                                            onChange={(e) => handleUpdatePortion(currentDayPlan.dayNumber, timing.key, item.id, Number(e.target.value))}
+                                            value={portionDraft[item.id] ?? item.portionGrams ?? ''}
+                                            placeholder="Not provided"
+                                            aria-label={`Portion size in grams for ${item.recipeName}`}
+                                            aria-invalid={portionErrors[item.id] ? true : undefined}
+                                            onChange={(e) => handlePortionInput(currentDayPlan.dayNumber, timing.key, item.id, e.target.value)}
                                             className="w-16 font-extrabold text-stone-900 bg-white border border-stone-300 rounded-lg px-2 py-0.5 text-xs text-center outline-none focus:border-teal-600"
                                           />
                                           <span className="text-xs font-bold text-stone-600">grams</span>
                                           <span className="text-[10px] text-stone-400 ml-auto font-mono">
-                                            ({((item.portionGrams || 200) / (recipe?.servingGrams || 200)).toFixed(1)} portion)
+                                            ({portionRatioLabel(item, recipe)})
                                           </span>
                                         </div>
+                                        {portionErrors[item.id] && (
+                                          <p role="alert" className="text-[10px] font-bold text-red-700">{portionErrors[item.id]}</p>
+                                        )}
                                       </div>
 
                                       {/* Customisation Option for this particular menu to this person */}
@@ -1217,12 +1173,32 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                 Clicking finalize will synchronize the 7-day 5-timing diet plan and dietitian comments directly to the customer's portal.
               </p>
 
+              {!hasCalculatedTarget && (
+                <label className="text-xs text-stone-700 flex flex-col gap-1 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                  <span className="font-bold">
+                    Calorie target could not be calculated for this client ({customerProfile?.calculation?.missing?.length ? `missing: ${customerProfile.calculation.missing.join(', ')}` : 'date of birth and gender are needed'}). Enter the daily target you have decided:
+                  </span>
+                  <input
+                    type="number"
+                    min={500}
+                    max={10000}
+                    step={1}
+                    aria-label="Calorie target (kcal per day)"
+                    value={manualTarget}
+                    onChange={(e) => setManualTarget(e.target.value)}
+                    className="w-40 px-2 py-1 rounded-lg border border-stone-300 bg-white font-bold"
+                  />
+                </label>
+              )}
+              {publishError && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{publishError}</p>}
               <button
                 onClick={handleSendToClient}
-                className="bg-teal-800 hover:bg-teal-900 text-white font-black px-8 py-4 rounded-2xl text-sm transition-all shadow-md flex items-center gap-2 shrink-0"
+                disabled={publishing || hasPortionErrors || planIncompleteCount(weeklyPlan) > 0}
+                title={planIncompleteCount(weeklyPlan) > 0 ? `${incompleteSummary(planIncompleteCount(weeklyPlan))}: complete them before sending` : undefined}
+                className="bg-teal-800 hover:bg-teal-900 disabled:opacity-60 text-white font-black px-8 py-4 rounded-2xl text-sm transition-all shadow-md flex items-center gap-2 shrink-0"
               >
                 <Send className="w-4 h-4" />
-                <span>Finalize & Send Plan to Client</span>
+                <span>{publishing ? 'Sending…' : 'Finalize & Send Plan to Client'}</span>
               </button>
             </div>
           </div>
@@ -1281,6 +1257,18 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
             </div>
 
             <div className="p-4 overflow-y-auto space-y-2 flex-1">
+              {recipeStatus === 'loading' && <p role="status" className="text-xs text-stone-500">Loading recipes...</p>}
+              {recipeStatus === 'error' && (
+                <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                  We could not load the recipes.{' '}
+                  <button type="button" onClick={reloadRecipes} className="font-bold underline">Retry</button>
+                </p>
+              )}
+              {recipeStatus === 'ready' && filteredRecipes.length === 0 && (
+                <p className="text-xs text-stone-500">
+                  {catalogue.length === 0 ? 'No published recipes exist yet.' : 'No recipes match your search.'}
+                </p>
+              )}
               {filteredRecipes.map((recipe) => (
                 <div
                   key={recipe.id}
@@ -1288,11 +1276,13 @@ export const NutritionistDashboard: React.FC<NutritionistDashboardProps> = ({
                   className="p-3 bg-white hover:bg-teal-50/60 rounded-2xl border border-stone-200 cursor-pointer transition-all flex items-center justify-between gap-3 group"
                 >
                   <div className="flex items-center gap-3">
-                    <img
-                      src={recipe.image}
-                      alt={recipe.name}
-                      className="w-12 h-12 object-cover rounded-xl shrink-0"
-                    />
+                    {recipe.image && (
+                      <img
+                        src={recipe.image}
+                        alt={recipe.name}
+                        className="w-12 h-12 object-cover rounded-xl shrink-0"
+                      />
+                    )}
                     <div>
                       <h5 className="text-xs font-extrabold text-stone-900 group-hover:text-teal-900">{recipe.name}</h5>
                       <div className="text-[10px] text-stone-500 mt-0.5">

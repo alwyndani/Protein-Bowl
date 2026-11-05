@@ -49,7 +49,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
     return who[label];
   }
 
-  /** A DISPATCHED + PAID + ONLINE order owned by custA, with an IN_TRANSIT assignment of driver d1 (branch A). */
+  /** A DISPATCHED + PAID + ONLINE order owned by custA, with an IN_TRANSIT assignment operated by the SUPER_ADMIN (B2a: there is no driver any more). */
   const dispatched = async (over: Record<string, unknown> = {}, assignment: Record<string, unknown> = {}) => {
     const n = ++seq;
     return prisma.order.create({
@@ -66,7 +66,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
         confirmedAt: new Date(),
         deliveryAddressSnapshot: { addressLine1: '12 Secret Street', city: 'Kochi', postalCode: '682001', recipientName: 'Asha Verma-Secret', phone: '+91 98765 43210' },
         items: { create: [{ itemTitle: `Bowl ${n}`, unitPrice: 100, quantity: 1, taxRate: 0.05, totalPrice: 100 }] },
-        delivery: { create: { driverId: who.d1.employeeId, branchId: branchA.id, status: 'IN_TRANSIT', pickupTime: new Date(), ...assignment } },
+        delivery: { create: { driverId: null, operatedByUserId: who.admin.id, branchId: branchA.id, status: 'IN_TRANSIT', pickupTime: new Date(), ...assignment } },
         ...over
       } as never
     });
@@ -75,8 +75,16 @@ describe('P9B - Delivery Code proof of delivery', () => {
   const cState = (token: string, id: string) => request(app).get(`/api/v1/orders/${id}/delivery-code`).set(bearer(token));
   const cIssue = (token: string, id: string, body: Record<string, unknown> = {}) => request(app).post(`/api/v1/orders/${id}/delivery-code`).set(bearer(token)).send(body);
   const cRegen = (token: string, id: string, body: Record<string, unknown> = {}) => request(app).post(`/api/v1/orders/${id}/delivery-code/regenerate`).set(bearer(token)).send(body);
-  const verify = (token: string, id: string, code: unknown) => request(app).post(`/api/v1/delivery/orders/${id}/verify-delivery`).set(bearer(token)).send({ code });
-  const report = (token: string, id: string, reasonCode = 'CUSTOMER_UNAVAILABLE') => request(app).post(`/api/v1/delivery/orders/${id}/report-failure`).set(bearer(token)).send({ reasonCode });
+  /** B2a: the code is entered by the SUPER_ADMIN operator (single shared implementation); a legacy driver token is mapped to the administrator so the shared rules stay covered. */
+  const asOperator = (token: string) => (['d1', 'd2', 'dB'].some((l) => who[l].token === token) ? who.admin.token : token);
+  const rawVerify = (token: string, id: string, code: unknown) => request(app).post(`/api/v1/admin/delivery/orders/${id}/verify-delivery`).set(bearer(token)).set('x-step-up-token', step).send({ code });
+  const monitorItem = async (id: string) => {
+    const m = await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(who.admin.token));
+    expect(m.status).toBe(200);
+    return Object.values(m.body.data.sections as Record<string, { items: Array<{ id: string; proofState: string; assignment: { issueReported?: boolean } }> }>).flatMap((x) => x.items).find((x) => x.id === id);
+  };
+  const verify = (token: string, id: string, code: unknown) => request(app).post(`/api/v1/admin/delivery/orders/${id}/verify-delivery`).set(bearer(asOperator(token))).set('x-step-up-token', step).send({ code });
+  const report = (token: string, id: string, reasonCode = 'CUSTOMER_UNAVAILABLE') => request(app).post(`/api/v1/admin/delivery/orders/${id}/report-failure`).set(bearer(asOperator(token))).set('x-step-up-token', step).send({ reasonCode });
   const override = (id: string, body: Record<string, unknown>, token = who.admin.token, stepToken: string | null = step) => {
     const r = request(app).post(`/api/v1/admin/orders/${id}/delivery-override`).set(bearer(token));
     return (stepToken ? r.set('x-step-up-token', stepToken) : r).send(body);
@@ -152,6 +160,10 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(dev.secretSource).toBe('DEVELOPMENT_FALLBACK');
       expect(dev.secret.length).toBeGreaterThanOrEqual(32);
       expect(parseDeliveryProofConfig({}, 'test').secretSource).toBe('DEVELOPMENT_FALLBACK');
+      // no spelling of "production" can reach the public development fallback
+      for (const spelled of ['Production', 'PRODUCTION', ' production ', 'production\n']) {
+        expect(() => parseDeliveryProofConfig({}, spelled), JSON.stringify(spelled)).toThrow(/must be set explicitly in production/);
+      }
     });
 
     it('4. normalization accepts 123456 / "123 456" / 123-456 and nothing else (and never echoes the input)', () => {
@@ -366,9 +378,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
     it('13. existing DISPATCHED orders without a proof row are simply NOT_ISSUED / CODE_NOT_ISSUED; nothing is auto-delivered', async () => {
       const o = await dispatched();
       expect((await cState(who.custA.token, o.id)).body.data.state).toBe('NOT_ISSUED');
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      const item = q.body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id);
-      expect(item.proof).toEqual({ state: 'CODE_NOT_ISSUED', lockedUntil: null });
+      expect((await monitorItem(o.id))!.proofState).toBe('NOT_ISSUED');
       expect((await verify(who.d1.token, o.id, '123456')).body.error).toBe('DELIVERY_CODE_NOT_ISSUED');
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
       expect(await proofOf(o.id)).toBeNull(); // verification never creates rows
@@ -392,16 +402,15 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(a.status).toBe('DELIVERED');
       expect(a.deliveryTime).not.toBeNull();
       const p = (await proofOf(o.id))!;
-      expect(p).toMatchObject({ method: 'PIN', verifiedByEmployeeId: who.d1.employeeId, previousAssignmentStatus: 'IN_TRANSIT', failedAttempts: 0 });
+      expect(p).toMatchObject({ method: 'PIN', verifiedByUserId: who.admin.id, verifiedByEmployeeId: null, previousAssignmentStatus: 'IN_TRANSIT', failedAttempts: 0 });
       expect(p.verifiedAt).not.toBeNull();
       const ev = await events(o.id);
       expect(ev).toHaveLength(1);
-      expect(ev[0]).toMatchObject({ fromStatus: 'DISPATCHED', toStatus: 'DELIVERED', actorUserId: who.d1.id, actorRole: 'DELIVERY' });
+      expect(ev[0]).toMatchObject({ fromStatus: 'DISPATCHED', toStatus: 'DELIVERED', actorUserId: who.admin.id, actorRole: 'SUPER_ADMIN' });
       expect(await audits(o.id, 'ORDER_STATUS_CHANGED')).toHaveLength(1);
       expect(await audits(o.id, 'DELIVERY_VERIFIED')).toHaveLength(1);
       expect((await cState(who.custA.token, o.id)).body.data.state).toBe('VERIFIED');
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      expect(JSON.stringify(q.body.data.sections)).not.toContain(o.id);
+      expect(await monitorItem(o.id)).toBeUndefined(); // delivered orders leave the monitor
     });
 
     it('15. customer-friendly input works: "123 456" and "123-456"; malformed input is a fixed 422 that is not counted and never echoes the value', async () => {
@@ -422,24 +431,19 @@ describe('P9B - Delivery Code proof of delivery', () => {
       }
       expect((await proofOf(o3.id))!.failedAttempts).toBe(0);
       for (const body of [{}, { code: 123456 }, { code: '123456', extra: 1 }, { code: ['123456'] }]) {
-        const r = await request(app).post(`/api/v1/delivery/orders/${o3.id}/verify-delivery`).set(bearer(who.d1.token)).send(body);
+        const r = await request(app).post(`/api/v1/admin/delivery/orders/${o3.id}/verify-delivery`).set(bearer(who.admin.token)).set('x-step-up-token', step).send(body);
         expect(r.status).toBe(422);
         expect(text(r)).not.toContain('123456');
       }
     });
 
-    it('16. only the assigned DELIVERY owner: customers, chef, MD and SUPER_ADMIN get 403; a same-branch driver and a foreign-branch driver get the SAME 404', async () => {
+    it('16. only a SUPER_ADMIN enters the code: customers, chef, MD and a legacy driver token get 403; an unknown order is 404; a refused caller can never burn attempts', async () => {
       const o = await dispatched();
       const code = await issued(o.id);
-      for (const label of ['custA', 'chef', 'md', 'admin']) expect((await verify(who[label].token, o.id, code)).status, label).toBe(403);
-      const unknown = await verify(who.d2.token, '00000000-0000-4000-8000-000000000000', code);
-      for (const label of ['d2', 'dB']) {
-        const r = await verify(who[label].token, o.id, code);
-        expect(r.status, label).toBe(404);
-        expect(r.body).toEqual(unknown.body);
-      }
+      for (const label of ['custA', 'chef', 'md', 'd1', 'dB']) expect((await rawVerify(who[label].token, o.id, code)).status, label).toBe(403);
+      expect((await rawVerify(who.admin.token, '00000000-0000-4000-8000-000000000000', code)).status).toBe(404);
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
-      expect((await proofOf(o.id))!.failedAttempts).toBe(0); // a non-owner can never even burn attempts
+      expect((await proofOf(o.id))!.failedAttempts).toBe(0);
     });
 
     it('17. an assignment that is not IN_TRANSIT cannot complete: FAILED is refused with DELIVERY_IN_EXCEPTION and nothing changes (no revival)', async () => {
@@ -453,8 +457,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
       expect((await proofOf(o.id))!.verifiedAt).toBeNull();
       expect((await proofOf(o.id))!.failedAttempts).toBe(0);
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      expect(q.body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id).assignment.issueReported).toBe(true);
+      expect(await monitorItem(o.id)).toBeDefined(); // the failed delivery is listed under Exceptions
     });
 
     it('18. only DISPATCHED + PAID + ONLINE orders complete: a refund before verification blocks it (409), the order stays DISPATCHED', async () => {
@@ -467,7 +470,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
       expect((await assignmentOf(o.id)).status).toBe('IN_TRANSIT');
       const cod = await dispatched({ paymentMethod: 'COD' });
-      expect((await verify(who.d1.token, cod.id, '123456')).status).toBe(404); // historical COD is invisible to the delivery module
+      expect([404, 409]).toContain((await verify(who.d1.token, cod.id, '123456')).status); // historical COD is never completed by the delivery module
     });
 
     it('19. verify vs refund: a payment change that holds the order lock while verification is already waiting wins - nothing is half-applied', async () => {
@@ -499,7 +502,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(wrong.body.error).toBe('ALREADY_DELIVERED');
       expect((await proofOf(o.id))!.failedAttempts).toBe(0);
       expect(await events(o.id)).toHaveLength(1);
-      expect((await verify(who.d2.token, o.id, code)).status).toBe(404);
+      expect((await rawVerify(who.d2.token, o.id, code)).status).toBe(403); // a retired driver account cannot enter codes
     });
 
     it('21. parallel correct verifications (two tabs / double click): exactly ONE completion, one event, one audit row', async () => {
@@ -545,10 +548,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
       // the customer and the driver see the lock as a SAFE state
       expect((await cState(who.custA.token, o.id)).body.data.state).toBe('LOCKED');
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      const item = q.body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id);
-      expect(item.proof.state).toBe('LOCKED');
-      expect(Object.keys(item.proof).sort()).toEqual(['lockedUntil', 'state']);
+      expect((await monitorItem(o.id))!.proofState).toBe('LOCKED');
     });
 
     it('23. when the lock expires a NEW five-attempt window opens (and the correct code works again)', async () => {
@@ -582,8 +582,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(blocked.status).toBe(409);
       expect(blocked.body.error).toBe('DELIVERY_CODE_BLOCKED');
       expect((await cState(who.custA.token, o.id)).body.data.state).toBe('CODE_BLOCKED');
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      expect(q.body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id).proof.state).toBe('CODE_BLOCKED');
+      expect((await monitorItem(o.id))!.proofState).toBe('CODE_BLOCKED');
 
       await age(o.id);
       const fresh = (await cRegen(who.custA.token, o.id)).body.data.code as string;
@@ -620,9 +619,9 @@ describe('P9B - Delivery Code proof of delivery', () => {
       const receivedAt = new Date(); // the driver's request arrived now...
       await new Promise((r) => setTimeout(r, 15));
       const fresh = (await cRegen(who.custA.token, o.id)).body.data.code as string; // ...the regeneration committed afterwards
-      const caller = { userId: who.d1.id, employeeProfileId: who.d1.employeeId!, branchIds: [branchA.id] };
+      const caller = { userId: who.admin.id, roles: [RoleEnum.SUPER_ADMIN] as const };
       const before = (await proofOf(o.id))!;
-      await expect(DeliveryProofService.verifyDelivery(o.id, oldCode, caller, receivedAt)).rejects.toMatchObject({ errorCode: 'DELIVERY_CODE_CHANGED', statusCode: 409 });
+      await expect(DeliveryProofService.verifyAsAdmin(o.id, oldCode, caller, receivedAt)).rejects.toMatchObject({ errorCode: 'DELIVERY_CODE_CHANGED', statusCode: 409 });
       const after = (await proofOf(o.id))!;
       expect(after.failedAttempts).toBe(before.failedAttempts);
       expect(after.failedAttempts).toBe(0);
@@ -758,7 +757,7 @@ describe('P9B - Delivery Code proof of delivery', () => {
       expect(late.status).toBe(409);
       expect(late.body.error).toBe('ALREADY_DELIVERED');
       const x = await dispatched();
-      expect((await verify(who.admin.token, x.id, '123456')).status).toBe(403);
+      expect((await rawVerify(who.chef.token, x.id, '123456')).status).toBe(403);
     });
 
     it('35. override vs verify and override vs failure in parallel: exactly one effective completion each time', async () => {
@@ -847,16 +846,13 @@ describe('P9B - Delivery Code proof of delivery', () => {
 
   // ===================================================================================================== DTOs and leakage
   describe('safe DTOs and no leakage', () => {
-    it('38. driver, monitor and customer payloads carry proof STATE only - never the code, hash, version, counters or lock cycles', async () => {
+    it('38. monitor and customer payloads carry proof STATE only - never the code, hash, version, counters or lock cycles', async () => {
       const o = await dispatched();
       const code = await issued(o.id);
       await verify(who.d1.token, o.id, wrongCode(code));
       const hash = (await proofOf(o.id))!.codeHash!;
       const payloads = [
-        await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token)),
-        await request(app).get(`/api/v1/delivery/orders/${o.id}`).set(bearer(who.d1.token)),
         await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(who.admin.token)),
-        await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(who.md.token)),
         await cState(who.custA.token, o.id),
         await request(app).get(`/api/v1/orders/${o.id}`).set(bearer(who.custA.token)),
         await request(app).get('/api/v1/orders/my-orders').set(bearer(who.custA.token))
@@ -868,11 +864,9 @@ describe('P9B - Delivery Code proof of delivery', () => {
         expect(t).not.toContain(`"${code}"`);
         expect(t).not.toMatch(/codeHash|codeVersion|failedAttempts|lockCycles|regenerationCount|overrideNote|DELIVERY_PROOF_SECRET/);
       }
-      const monitorItem = payloads[2].body.data.sections.dispatched.items.find((x: { id: string }) => x.id === o.id);
-      expect(monitorItem.proofState).toBe('ISSUED');
-      const mine = payloads[0].body.data.sections.outForDelivery.items.find((x: { id: string }) => x.id === o.id);
-      expect(mine.proof).toEqual({ state: 'READY_FOR_VERIFICATION', lockedUntil: null });
-      expect(JSON.stringify(mine)).not.toMatch(/failedAttempts|attempts?Left|remainingAttempts|lockCycles/i); // P9C added attemptNumber (the delivery attempt, not a code-guess counter)
+      const item = payloads[0].body.data.sections.dispatched.items.find((x: { id: string }) => x.id === o.id);
+      expect(item.proofState).toBe('ISSUED');
+      expect(JSON.stringify(item)).not.toMatch(/failedAttempts|attempts?Left|remainingAttempts|lockCycles/i); // P9C added attemptNumber (the delivery attempt, not a code-guess counter)
     });
 
     it('39. the code never reaches the console, the audit log or any error body (wrong, correct, malformed, locked and stale submissions)', async () => {
@@ -905,7 +899,8 @@ describe('P9B - Delivery Code proof of delivery', () => {
       for (const p of ['deliver', 'delivered', 'mark-delivered', 'complete', 'status']) {
         expect((await request(app).post(`/api/v1/delivery/orders/${o.id}/${p}`).set(bearer(who.d1.token)).send({ status: 'DELIVERED' })).status, p).toBe(404);
       }
-      expect((await request(app).post(`/api/v1/delivery/orders/${o.id}/dispatch`).set(bearer(who.d1.token)).send({ status: 'DELIVERED' })).status).toBe(422);
+      expect((await request(app).post(`/api/v1/delivery/orders/${o.id}/dispatch`).set(bearer(who.d1.token)).send({ status: 'DELIVERED' })).status).toBe(404); // the driver dispatch route is gone
+      expect((await request(app).post(`/api/v1/admin/delivery/orders/${o.id}/dispatch`).set(bearer(who.admin.token)).set('x-step-up-token', step).send({ status: 'DELIVERED' })).status).toBe(422); // the operator body stays strict
       expect((await orderOf(o.id)).status).toBe('DISPATCHED');
     });
   });

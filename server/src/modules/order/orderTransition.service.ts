@@ -2,7 +2,7 @@ import { Prisma, RoleEnum } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
-import { PAID_CANCELLATION_FROM_STATES } from '../refund/cancellationPolicy.js';
+import { PAID_CANCELLATION_FROM_STATES, REVIEWABLE_CANCELLATION_STATES } from '../refund/cancellationPolicy.js';
 import {
   KITCHEN_BRANCH_REQUIRED_FOR,
   MESS_ORDER_EDGES,
@@ -44,6 +44,11 @@ export interface TransitionRequest {
   reason?: string | null;
   /** P7C: id of the Refund intent created in the SAME transaction (required to cancel an order whose money was received). Only the cancellation service passes it. */
   refundIntentId?: string;
+  /**
+   * Staff-reviewed cancellation: id of an APPROVED CancellationRequest of this order. Together with the refund intent it is the ONLY way a paid order
+   * leaves PREPARING/READY. It proves nothing by itself: the transition re-reads the APPROVED request of THIS order under the order lock.
+   */
+  cancellationReviewId?: string;
   /**
    * P9C: set ONLY by CancellationService.cancelUndeliverableInTx for the DISPATCHED -> CANCELLED undeliverable path. It proves nothing by itself:
    * the transition independently requires a FAILED assignment of that attempt, an archived UNDELIVERABLE_CANCELLED DeliveryAttempt row and a REQUESTED refund.
@@ -249,9 +254,16 @@ export class OrderTransitionService {
       throw new AppError('Invalid cancellation request', 409, 'ORDER_NOT_CANCELLABLE');
     }
     if (from !== 'DISPATCHED' && (PAID_PAYMENT_STATUSES as readonly string[]).includes(order.paymentStatus)) {
+      const reviewed =
+        !!request.cancellationReviewId &&
+        actor.kind === 'USER' &&
+        actor.roles.includes(RoleEnum.SUPER_ADMIN) &&
+        actor.isGlobal === true &&
+        (REVIEWABLE_CANCELLATION_STATES as readonly string[]).includes(from) &&
+        (await tx.cancellationRequest.count({ where: { id: request.cancellationReviewId, orderId: order.id, status: 'APPROVED' } })) === 1;
       const intentOk =
         !!request.refundIntentId &&
-        (PAID_CANCELLATION_FROM_STATES as readonly string[]).includes(from) &&
+        ((PAID_CANCELLATION_FROM_STATES as readonly string[]).includes(from) || reviewed) &&
         (await tx.refund.count({ where: { id: request.refundIntentId, orderId: order.id, status: 'REQUESTED' } })) === 1;
       if (!intentOk) {
         throw new AppError('A paid order can only be cancelled together with its refund', 409, 'ORDER_NOT_CANCELLABLE');

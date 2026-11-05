@@ -27,7 +27,7 @@ describe('Chef workspace in PRODUCTION', () => {
   beforeEach(() => vi.stubEnv('DEV', false));
 
   it('opens on the real Kitchen Queue and offers only Kitchen Queue + the real Kerala Mess kitchen + Recipes: no mock tab, no demo figure', async () => {
-    render(<ChefDashboard orders={[]} onOpenMenuModal={vi.fn()} />);
+    render(<ChefDashboard />);
     expect(await screen.findByTestId('kitchen-queue')).toBeInTheDocument();
     expect(getQueue).toHaveBeenCalled();
     const names = tabs();
@@ -42,7 +42,7 @@ describe('Chef workspace in PRODUCTION', () => {
   });
 
   it('the Recipes tab is the real (API-backed) recipe database and the kitchen queue stays one click away', async () => {
-    render(<ChefDashboard orders={[]} onOpenMenuModal={vi.fn()} />);
+    render(<ChefDashboard />);
     await screen.findByTestId('kitchen-queue');
     fireEvent.click(screen.getByRole('button', { name: /Recipe Database/ }));
     expect(screen.queryByTestId('kitchen-queue')).not.toBeInTheDocument();
@@ -56,14 +56,11 @@ describe('Chef workspace in PRODUCTION', () => {
 });
 
 describe('Chef workspace in DEVELOPMENT', () => {
-  it('still opens on the Kitchen Queue; the mock tabs exist but are clearly labelled "Demo (mock data)"', async () => {
+  it('offers the same three tabs: the mock tabs were removed', async () => {
     vi.stubEnv('DEV', true);
-    render(<ChefDashboard orders={[]} onOpenMenuModal={vi.fn()} />);
+    render(<ChefDashboard />);
     expect(await screen.findByTestId('kitchen-queue')).toBeInTheDocument();
-    const names = tabs();
-    expect(names[0]).toBe('Kitchen Queue');
-    const mock = names.filter((n) => /Daily Production Sheet|Kerala Mess & Mass Batches|Order Dispatch/.test(n));
-    expect(mock).toHaveLength(3);
-    for (const n of mock) expect(n).toMatch(/^Demo \(mock data\)/);
+    expect(tabs()).toHaveLength(3);
+    expect(screen.queryByText(/Demo/)).not.toBeInTheDocument();
   });
 });

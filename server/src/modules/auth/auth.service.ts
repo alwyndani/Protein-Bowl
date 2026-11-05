@@ -6,6 +6,9 @@ import { AppError } from '../../middleware/error.middleware.js';
 import { RegisterDto, LoginDto } from './auth.validator.js';
 import { RoleEnum } from '@prisma/client';
 import { AuditService, AuditContext } from '../audit/audit.service.js';
+import { approvedRolesOf, isApprovedRole } from '../../authz/approvedRoles.js';
+import { normalizePhone } from '../../utils/phone.js';
+import { isPhoneTaken } from './phoneUniqueness.js';
 
 /** Lifetime of a refresh token (web cookie and mobile body alike: one session model). */
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -35,6 +38,20 @@ export class AuthService {
     throw new AppError('This app is for customer accounts only.', 403, 'CUSTOMER_APP_ONLY');
   }
 
+  /** A revoked refresh token was presented again: revoke every still-active session of the user, audit it (no token material), answer 401 TOKEN_REUSED. */
+  private static async handleRefreshReuse(userId: string, context?: AuditContext): Promise<never> {
+    await this.revokeAllRefreshTokens(userId);
+    await AuditService.recordSafe({
+      actor: { userId, roles: [] },
+      action: 'AUTH_REFRESH_TOKEN_REUSED',
+      entity: 'User',
+      entityId: userId,
+      payload: {},
+      context
+    });
+    throw new AppError('Invalid session state. Refresh token reused.', 401, 'TOKEN_REUSED');
+  }
+
   /**
    * Revoke every active refresh session of a user (used on deactivation / role change / security events).
    * Existing access tokens stop working immediately anyway (authenticateToken checks the database); this ends refresh.
@@ -56,7 +73,7 @@ export class AuthService {
       email: user.email,
       phone: user.phone,
       status: user.status,
-      roles: user.roles?.map((r: any) => r.role) || [],
+      roles: (user.roles?.map((r: any) => r.role) || []).filter(isApprovedRole),
       customerProfile: user.customerProfile || null,
       employeeProfile: user.employeeProfile || null,
       createdAt: user.createdAt
@@ -75,15 +92,23 @@ export class AuthService {
       throw new AppError('Email address is already registered', 409, 'EMAIL_EXISTS');
     }
 
+    // The number is stored in its normalised form (validated by the schema), and a number another account holds is refused with a clear 409.
+    const phone = dto.phone ? normalizePhone(dto.phone) : null;
+    if (phone && (await isPhoneTaken(phone, null))) {
+      throw new AppError('This mobile number is already registered to another account', 409, 'PHONE_IN_USE');
+    }
+
     const passwordHash = await hashPassword(dto.password);
     const referralCode = generateServerReferralCode('PB');
 
-    const newUser = await prisma.$transaction(async (tx) => {
+    let newUser;
+    try {
+    newUser = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           email: dto.email,
           passwordHash,
-          phone: dto.phone || null,
+          phone,
           roles: {
             create: {
               role: dto.requestedRole
@@ -104,8 +129,17 @@ export class AuthService {
       });
       return user;
     });
+    } catch (err) {
+      // Two registrations racing for the same email or number: the unique constraints decide; the answer is still a clear 409, never a 500.
+      if ((err as { code?: string }).code === 'P2002') {
+        const target = JSON.stringify((err as { meta?: { target?: unknown } }).meta?.target ?? '');
+        if (target.includes('phone')) throw new AppError('This mobile number is already registered to another account', 409, 'PHONE_IN_USE');
+        if (target.includes('email')) throw new AppError('Email address is already registered', 409, 'EMAIL_EXISTS');
+      }
+      throw err;
+    }
 
-    const userRoles = newUser.roles.map(r => r.role);
+    const userRoles = approvedRolesOf(newUser.roles.map(r => r.role)); // retired roles never appear in an issued token (authorization ignores claims anyway)
     const accessToken = generateAccessToken({
       userId: newUser.id,
       email: newUser.email,
@@ -157,6 +191,11 @@ export class AuthService {
       throw new AppError('Account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
+    // Fail closed: an ACTIVE account without an approved role never receives a session (checked after the password, before any token exists).
+    if (!user.roles.some((r) => isApprovedRole(r.role))) {
+      throw new AppError('Your account has no approved role. Please contact an administrator.', 403, 'NO_APPROVED_ROLE');
+    }
+
     // P11A: the customer mobile app never establishes a session for a non-customer account (checked after the password, before any token exists).
     if (opts.customerOnly && !isCustomerAppAccount(user.roles.map((r) => r.role))) {
       await this.refuseNonCustomer(user, 'login', opts.context);
@@ -167,7 +206,7 @@ export class AuthService {
       data: { lastLoginAt: new Date() }
     });
 
-    const userRoles = user.roles.map(r => r.role);
+    const userRoles = approvedRolesOf(user.roles.map(r => r.role)); // retired roles never appear in an issued token (authorization ignores claims anyway)
     const accessToken = generateAccessToken({
       userId: user.id,
       email: user.email,
@@ -217,13 +256,9 @@ export class AuthService {
       }
     });
 
-    // Re-use attack detection: If token exists but was already revoked, revoke all user tokens for security!
+    // Re-use attack detection: a token that exists but was already revoked (rotated or logged out) is being replayed: end every active session of that user.
     if (existingToken && existingToken.revokedAt) {
-      await prisma.refreshToken.updateMany({
-        where: { userId: existingToken.userId },
-        data: { revokedAt: new Date() }
-      });
-      throw new AppError('Invalid session state. Refresh token reused.', 401, 'TOKEN_REUSED');
+      await this.handleRefreshReuse(existingToken.userId, context);
     }
 
     if (!existingToken || existingToken.expiresAt < new Date()) {
@@ -245,6 +280,20 @@ export class AuthService {
       throw new AppError('Your session is no longer valid. Please sign in again.', 401, 'ACCOUNT_INACTIVE');
     }
 
+    // Fail closed: an owner left without an approved role ends every session and receives no new tokens.
+    if (!tokenOwner.roles.some((r) => isApprovedRole(r.role))) {
+      await this.revokeAllRefreshTokens(tokenOwner.id);
+      await AuditService.recordSafe({
+        actor: { userId: tokenOwner.id, roles: [] },
+        action: 'AUTH_REFRESH_DENIED_NO_APPROVED_ROLE',
+        entity: 'User',
+        entityId: tokenOwner.id,
+        payload: {},
+        context
+      });
+      throw new AppError('Your account has no approved role. Please contact an administrator.', 403, 'NO_APPROVED_ROLE');
+    }
+
     // P11A: a mobile session whose owner is no longer a pure customer fails safely; nothing is rotated or revoked here.
     if (opts.customerOnly && !isCustomerAppAccount(tokenOwner.roles.map((r) => r.role))) {
       await this.refuseNonCustomer(tokenOwner, 'refresh', context);
@@ -252,7 +301,7 @@ export class AuthService {
 
     // Issue new token pair
     const user = existingToken.user;
-    const userRoles = user.roles.map(r => r.role);
+    const userRoles = approvedRolesOf(user.roles.map(r => r.role)); // retired roles never appear in an issued token (authorization ignores claims anyway)
     const newAccessToken = generateAccessToken({
       userId: user.id,
       email: user.email,
@@ -265,11 +314,14 @@ export class AuthService {
 
     // P11A: revoking the old token and creating the new one is ONE transaction, so a failure between the two can never leave the
     // session without a valid refresh token (and the old token is never revoked without a successor).
-    await prisma.$transaction(async (tx) => {
-      await tx.refreshToken.update({
-        where: { id: existingToken.id },
+    // The revoke is a compare-and-set (revokedAt must still be null): of two concurrent refreshes with the same token exactly one wins; the loser
+    // is a replay, creates nothing, and ends the user's sessions below (never two live successors from one token).
+    const rotated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: existingToken.id, revokedAt: null },
         data: { revokedAt: new Date() }
       });
+      if (claimed.count !== 1) return false;
       await tx.refreshToken.create({
         data: {
           userId: user.id,
@@ -277,7 +329,11 @@ export class AuthService {
           expiresAt
         }
       });
+      return true;
     });
+    if (!rotated) {
+      await this.handleRefreshReuse(user.id, context);
+    }
 
     return {
       accessToken: newAccessToken,

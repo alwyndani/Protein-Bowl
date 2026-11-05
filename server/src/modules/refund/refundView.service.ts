@@ -2,7 +2,7 @@ import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { RECON } from '../payment/paymentStatus.js';
 import { PaymentSummary, PaymentSummaryService } from '../payment/paymentSummary.service.js';
-import { CUSTOMER_CANCELLABLE_STATES } from './cancellationPolicy.js';
+import { CUSTOMER_CANCELLABLE_STATES, REVIEWABLE_CANCELLATION_STATES } from './cancellationPolicy.js';
 import { LIVE_REFUND_STATUSES, PublicCancellationState, PublicRefundState, publicRefundState } from './refundStatus.js';
 
 import { CustomerDeliveryView, DeliveryViewService } from '../delivery/deliveryView.service.js';
@@ -12,6 +12,11 @@ export interface DerivedOrderState {
   delivery?: CustomerDeliveryView;
   cancellation: { state: PublicCancellationState; allowed: boolean };
   refund: { state: PublicRefundState };
+  /**
+   * Staff-reviewed cancellation of a paid order the kitchen has started. REQUESTABLE = the customer may ask (nothing is promised);
+   * REQUESTED = waiting for staff; DECLINED = staff said no (the reason they wrote is shown). Absent otherwise.
+   */
+  cancellationRequest?: { state: 'REQUESTABLE' | 'REQUESTED' | 'DECLINED'; declinedReason?: string | null };
   /** P7D-G1: server-derived payment summary (authoritative for the web UI). */
   payment: PaymentSummary;
 }
@@ -31,6 +36,9 @@ export class RefundViewService {
     const flagged = ids.length
       ? await prisma.providerPayment.findMany({ where: { orderId: { in: ids }, reconciliationStatus: { in: [RECON.DUPLICATE, RECON.AFTER_CANCELLATION] } }, select: { id: true, orderId: true } })
       : [];
+    const requests = ids.length
+      ? await prisma.cancellationRequest.findMany({ where: { orderId: { in: ids } }, orderBy: { createdAt: 'desc' }, select: { orderId: true, status: true, decisionNote: true } })
+      : [];
     const refundedLedger = new Set(refunds.filter((r) => (LIVE_REFUND_STATUSES as readonly string[]).includes(r.status)).map((r) => r.providerPaymentId));
 
     for (const o of orders) {
@@ -44,8 +52,16 @@ export class RefundViewService {
 
       const cancelled = o.status === 'CANCELLED';
       const allowed = !cancelled && o.orderType === 'DIRECT' && (CUSTOMER_CANCELLABLE_STATES as readonly string[]).includes(o.status) && (o.paymentStatus === 'PENDING' || o.paymentStatus === 'PAID');
+      let cancellationRequest: DerivedOrderState['cancellationRequest'];
+      if (!cancelled && o.orderType === 'DIRECT') {
+        const mine = requests.filter((r) => r.orderId === o.id);
+        if (mine.some((r) => r.status === 'PENDING')) cancellationRequest = { state: 'REQUESTED' };
+        else if (mine.some((r) => r.status === 'DECLINED')) cancellationRequest = { state: 'DECLINED', declinedReason: mine.find((r) => r.status === 'DECLINED')?.decisionNote ?? null };
+        else if (o.paymentStatus === 'PAID' && o.paymentMethod === 'ONLINE' && (REVIEWABLE_CANCELLATION_STATES as readonly string[]).includes(o.status)) cancellationRequest = { state: 'REQUESTABLE' };
+      }
       out.set(o.id, {
         cancellation: { state: cancelled ? 'CANCELLED' : allowed ? 'CANCELLATION_AVAILABLE' : 'CANCELLATION_NOT_ALLOWED', allowed },
+        ...(cancellationRequest ? { cancellationRequest } : {}),
         refund: { state: best },
         payment: payments.get(o.id)!,
         ...(deliveries.has(o.id) ? { delivery: deliveries.get(o.id)! } : {})

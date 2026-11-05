@@ -1,7 +1,6 @@
 import { Payment, Prisma } from '@prisma/client';
 import { prisma } from '../../config/database.js';
 import { getPaymentConfig } from '../../config/paymentConfig.js';
-import { toMinorUnits } from './money.js';
 import { adoptProviderOrder, lookupProviderOrderByReceipt } from './paymentRecovery.ops.js';
 import { PaymentSettlementService } from './paymentSettlement.service.js';
 import { backoffMs, paymentAlert, safeCode } from './paymentOps.js';
@@ -163,28 +162,23 @@ export class PaymentReconciliationService {
     stats.sessionsClaimed = sessionIds.length;
     for (const id of sessionIds) await this.reconcileSession(id, provider, stats);
 
-    // 3) captured ledger rows that were never applied (an earlier apply failed): decide them from stored evidence, no provider call
+    // 3) captured ledger rows that were never applied (an earlier apply failed). The provider is asked for the payment's CURRENT state immediately
+    //    before every apply: stored evidence alone is never enough. If the provider cannot be reached the row stays PENDING and is retried next run;
+    //    if the provider does not know the payment, or it is no longer captured / belongs to another order, nothing is applied and an alert is raised.
     const pending = await prisma.providerPayment.findMany({ where: { providerStatus: 'CAPTURED', reconciliationStatus: 'PENDING' }, orderBy: { createdAt: 'asc' }, take: limit });
     for (const row of pending) {
       try {
-        const res = await PaymentSettlementService.settle({
-          paymentId: row.paymentId,
-          provider: row.provider,
-          via: 'RECONCILIATION',
-          payment: {
-            providerPaymentId: row.providerPaymentId,
-            providerOrderId: row.providerOrderId,
-            amountMinor: toMinorUnits(row.amount),
-            currency: row.currency,
-            status: 'CAPTURED',
-            method: row.method,
-            errorCode: null,
-            errorReason: null
-          }
-        });
+        const fresh = await provider.fetchPayment(row.providerPaymentId);
+        if (!fresh || fresh.providerPaymentId !== row.providerPaymentId || fresh.providerOrderId !== row.providerOrderId) {
+          paymentAlert('ledger.provider_state_mismatch', { ledgerId: row.id, orderId: row.orderId, found: fresh ? 'yes' : 'no' });
+          stats.providerErrors++;
+          continue;
+        }
+        const res = await PaymentSettlementService.settle({ paymentId: row.paymentId, provider: row.provider, via: 'RECONCILIATION', payment: fresh });
         if (res.outcome === 'APPLIED') stats.ledgerApplied++;
-      } catch {
+      } catch (err) {
         stats.providerErrors++;
+        paymentAlert('ledger.apply_failed', { ledgerId: row.id, orderId: row.orderId, code: safeCode(err, 'RECONCILE_ERROR') }); // state unchanged: retried by the next run
       }
     }
 

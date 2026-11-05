@@ -117,11 +117,12 @@ export function AddressFormScreen({ route, navigation }: FormProps) {
   const addresses = useAddresses();
   const writes = useAddressWrites();
   const existing = addressId ? addresses.data?.find((a) => a.id === addressId) : undefined;
-  const [title, setTitle] = useState(existing?.title ?? 'Home');
+  // No prefilled label or state: the customer types both, so an address is never saved with a value they did not choose.
+  const [title, setTitle] = useState(existing?.title ?? '');
   const [line1, setLine1] = useState(existing?.addressLine1 ?? '');
   const [line2, setLine2] = useState(existing?.addressLine2 ?? '');
   const [city, setCity] = useState(existing?.city ?? '');
-  const [stateName, setStateName] = useState(existing?.state ?? 'Kerala');
+  const [stateName, setStateName] = useState(existing?.state ?? '');
   const [postal, setPostal] = useState(existing?.postalCode ?? '');
   const [isDefault, setIsDefault] = useState(existing?.isDefault ?? addresses.data?.length === 0);
   const [errors, setErrors] = useState<Record<string, string | null>>({});
@@ -146,22 +147,24 @@ export function AddressFormScreen({ route, navigation }: FormProps) {
 
   async function save() {
     if (lock.current || writes.isLocked()) return;
-    // Mirrors the BACKEND minimums only (line 1 >= 3, city >= 2, postal code >= 4); the server stays authoritative.
+    // Mirrors the BACKEND minimums only (label and state required, line 1 >= 3, city >= 2, postal code >= 4); the server stays authoritative.
     const next = {
+      title: title.trim().length >= 1 ? null : 'Enter a label for this address, for example Home.',
+      state: stateName.trim().length >= 1 ? null : 'Enter the state.',
       line1: line1.trim().length >= 3 ? null : 'Enter the first line of the address.',
       city: city.trim().length >= 2 ? null : 'Enter the city.',
       postal: postal.trim().length >= 4 ? null : 'Enter the postal code.'
     };
     setErrors(next);
     setFormError(null);
-    if (next.line1 || next.city || next.postal) return;
+    if (next.title || next.state || next.line1 || next.city || next.postal) return;
     lock.current = true;
     const input = {
-      title: title.trim() || 'Home',
+      title: title.trim(),
       addressLine1: line1.trim(),
       addressLine2: line2.trim() || null,
       city: city.trim(),
-      state: stateName.trim() || 'Kerala',
+      state: stateName.trim(),
       postalCode: postal.trim(),
       isDefault
     };
@@ -181,11 +184,11 @@ export function AddressFormScreen({ route, navigation }: FormProps) {
   return (
     <Screen>
       {formError ? <Notice>{formError}</Notice> : null}
-      <TextField label="Label (for example Home)" value={title} onChangeText={setTitle} returnKeyType="next" editable={!writes.busy} />
+      <TextField label="Label (for example Home)" value={title} onChangeText={setTitle} error={errors.title} returnKeyType="next" editable={!writes.busy} />
       <TextField label="Address line 1" value={line1} onChangeText={setLine1} error={errors.line1} autoComplete="address-line1" returnKeyType="next" onSubmitEditing={() => l2.current?.focus()} editable={!writes.busy} />
       <TextField ref={l2} label="Address line 2 (optional)" value={line2} onChangeText={setLine2} autoComplete="address-line2" returnKeyType="next" onSubmitEditing={() => cityRef.current?.focus()} editable={!writes.busy} />
       <TextField ref={cityRef} label="City" value={city} onChangeText={setCity} error={errors.city} returnKeyType="next" onSubmitEditing={() => postalRef.current?.focus()} editable={!writes.busy} />
-      <TextField label="State" value={stateName} onChangeText={setStateName} returnKeyType="next" editable={!writes.busy} />
+      <TextField label="State" value={stateName} onChangeText={setStateName} error={errors.state} returnKeyType="next" editable={!writes.busy} />
       <TextField ref={postalRef} label="Postal code" value={postal} onChangeText={setPostal} error={errors.postal} keyboardType="number-pad" autoComplete="postal-code" returnKeyType="done" editable={!writes.busy} />
       <Pressable accessibilityRole="switch" accessibilityLabel="Use as my default address" accessibilityState={{ checked: isDefault }} onPress={() => setIsDefault((v) => !v)} style={styles.switchRow}>
         <Text style={styles.title}>Use as my default address</Text>

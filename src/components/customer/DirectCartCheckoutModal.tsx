@@ -47,11 +47,12 @@ interface NewAddressForm {
 }
 
 const EMPTY_ADDRESS_FORM: NewAddressForm = {
-  title: 'Home',
+  // No pre-filled label or state: the customer types both, so an address is never submitted with a value they did not choose.
+  title: '',
   addressLine1: '',
   addressLine2: '',
   city: '',
-  state: 'Kerala',
+  state: '',
   postalCode: '',
   isDefault: false
 };
@@ -177,11 +178,11 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
     setAddressError(null);
     try {
       const created = await AddressService.createAddress({
-        title: addressForm.title.trim() || 'Home',
+        title: addressForm.title.trim(),
         addressLine1: addressForm.addressLine1.trim(),
         addressLine2: addressForm.addressLine2.trim() || undefined,
         city: addressForm.city.trim(),
-        state: addressForm.state.trim() || 'Kerala',
+        state: addressForm.state.trim(),
         postalCode: addressForm.postalCode.trim(),
         isDefault: addressForm.isDefault || addresses.length === 0
       });
@@ -447,7 +448,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                     <label className="block">
                       <span className="block mb-1 text-stone-400">Label</span>
-                      <input value={addressForm.title} onChange={(e) => setAddressForm({ ...addressForm, title: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                      <input required placeholder="e.g. Home, Work" value={addressForm.title} onChange={(e) => setAddressForm({ ...addressForm, title: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
                     </label>
                     <label className="block">
                       <span className="block mb-1 text-stone-400">Address line 1</span>
@@ -463,7 +464,7 @@ export const DirectCartCheckoutModal: React.FC<DirectCartCheckoutModalProps> = (
                     </label>
                     <label className="block">
                       <span className="block mb-1 text-stone-400">State</span>
-                      <input value={addressForm.state} onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
+                      <input required placeholder="e.g. Kerala" value={addressForm.state} onChange={(e) => setAddressForm({ ...addressForm, state: e.target.value })} className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white" />
                     </label>
                     <label className="block">
                       <span className="block mb-1 text-stone-400">Postal code</span>

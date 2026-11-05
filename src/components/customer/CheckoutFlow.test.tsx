@@ -177,15 +177,36 @@ describe('address selection', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: /continue to delivery/i }));
     await userEvent.type(await screen.findByLabelText('Address line 1'), '5 New Road');
+    await userEvent.type(screen.getByLabelText('Label'), 'Office');
     await userEvent.type(screen.getByLabelText('City'), 'Kochi');
+    await userEvent.type(screen.getByLabelText('State'), 'Kerala');
     await userEvent.type(screen.getByLabelText('Postal code'), '682030');
     await userEvent.click(screen.getByRole('button', { name: /save address/i }));
 
     await waitFor(() =>
-      expect(AddressService.createAddress).toHaveBeenCalledWith(expect.objectContaining({ addressLine1: '5 New Road', city: 'Kochi', postalCode: '682030', isDefault: true }))
+      expect(AddressService.createAddress).toHaveBeenCalledWith(expect.objectContaining({ title: 'Office', addressLine1: '5 New Road', city: 'Kochi', state: 'Kerala', postalCode: '682030', isDefault: true }))
     );
     await userEvent.click(await screen.findByRole('button', { name: /review order/i }));
     await waitFor(() => expect(checkoutPreview).toHaveBeenCalledWith({ addressId: 'addr-new' }));
+  });
+});
+
+describe('new-address form has no pre-filled label or state', () => {
+  it('Label and State start empty and are required, so no address is submitted with a value the customer did not enter', async () => {
+    getAddresses.mockResolvedValue([]);
+    renderModal();
+    await userEvent.click(await screen.findByRole('button', { name: /continue to delivery/i }));
+    const label = await screen.findByLabelText('Label');
+    const state = screen.getByLabelText('State');
+    expect(label).toHaveValue('');
+    expect(state).toHaveValue('');
+    expect(label).toBeRequired();
+    expect(state).toBeRequired();
+    await userEvent.type(screen.getByLabelText('Address line 1'), '5 New Road');
+    await userEvent.type(screen.getByLabelText('City'), 'Kochi');
+    await userEvent.type(screen.getByLabelText('Postal code'), '682030');
+    await userEvent.click(screen.getByRole('button', { name: /save address/i }));
+    expect(AddressService.createAddress).not.toHaveBeenCalled(); // blocked by the required Label/State
   });
 });
 

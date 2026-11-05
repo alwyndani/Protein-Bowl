@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdtempSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { ADMIN_URL, urlOf } from './migrationDb.js';
 
 /**
  * Replays the REAL migration files into throwaway databases (the shared test DB is never touched):
@@ -13,11 +14,9 @@ import { PrismaClient } from '@prisma/client';
  */
 const SERVER_ROOT = join(__dirname, '..', '..');
 const PRISMA_CLI = join(SERVER_ROOT, 'node_modules', 'prisma', 'build', 'index.js');
-const ADMIN_URL = 'postgresql://postgres:postgres@localhost:5432/postgres?schema=public';
 const stamp = Date.now();
 const dbA = `pb_p10b_mig_a_${stamp}`;
 const dbB = `pb_p10b_mig_b_${stamp}`;
-const urlOf = (db: string) => `postgresql://postgres:postgres@localhost:5432/${db}?schema=public`;
 
 const migrations = readdirSync(join(SERVER_ROOT, 'prisma', 'migrations'), { withFileTypes: true })
   .filter((d) => d.isDirectory())

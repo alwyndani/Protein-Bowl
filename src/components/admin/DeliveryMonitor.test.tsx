@@ -15,7 +15,7 @@ vi.mock('../../services/kitchenService', () => ({
   KitchenService: { getQueue: vi.fn(), act: vi.fn(), listRouting: vi.fn(), assignBranch: vi.fn() }
 }));
 vi.mock('../../services/deliveryService', () => ({
-  DeliveryService: { getQueue: vi.fn(), act: vi.fn(), reportFailure: vi.fn(), verifyDelivery: vi.fn(), overrideDelivery: vi.fn(), getMonitor: vi.fn(), listDrivers: vi.fn(), assign: vi.fn() }
+  DeliveryService: { overrideDelivery: vi.fn(), getMonitor: vi.fn() }
 }));
 
 import { AdminService } from '../../services/adminService';
@@ -56,7 +56,6 @@ beforeEach(() => {
   admin.listAudit.mockResolvedValue(page([]));
   admin.stepUp.mockResolvedValue({ stepUpToken: 'PROOF-1', expiresInSeconds: 300 });
   delivery.getMonitor.mockResolvedValue(deliveryMonitor({ unclaimed: [unclaimed()], assigned: [assigned()] }));
-  delivery.listDrivers.mockResolvedValue([DRIVER_1, DRIVER_2]);
 });
 
 describe('SUPER_ADMIN delivery monitor', () => {
@@ -77,109 +76,6 @@ describe('SUPER_ADMIN delivery monitor', () => {
     expect(rows[0]).toHaveTextContent('No driver yet');
     expect(rows[1]).toHaveTextContent('Driver: Ravi Kumar (DRV-001)');
     expect(panel.textContent).not.toMatch(/phone|email|street|marine drive|payment|refund|price|₹/i);
-  });
-
-  it('assign: accessible dialog, driver + reason required, step-up first, expectedDriverId = null for an unclaimed order, only the approved fields are sent', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    await user.click(await within(panel).findByRole('button', { name: 'Assign PB-UN-1' }));
-    const dialog = await screen.findByRole('dialog', { name: /Assign a driver to PB-UN-1/ });
-    await waitFor(() => expect(delivery.listDrivers).toHaveBeenCalledWith(BRANCH_A_ID));
-
-    await user.click(within(dialog).getByRole('button', { name: 'Assign driver' }));
-    expect(within(dialog).getByText('Choose a driver.')).toBeInTheDocument();
-    expect(within(dialog).getByText(/at least 3 characters/)).toBeInTheDocument();
-    expect(admin.stepUp).not.toHaveBeenCalled();
-    expect(delivery.assign).not.toHaveBeenCalled();
-
-    await user.selectOptions(await within(dialog).findByLabelText('Driver'), DRIVER_2.employeeId);
-    await user.type(within(dialog).getByLabelText('Reason'), '  Closest to the customer  ');
-    delivery.assign.mockResolvedValue({ changed: true, orderId: 'x', orderNumber: 'PB-UN-1', action: 'ASSIGNED', previousDriverId: null, driverEmployeeId: DRIVER_2.employeeId });
-    await user.click(within(dialog).getByRole('button', { name: 'Assign driver' }));
-    await confirmPassword(user);
-
-    await waitFor(() => expect(delivery.assign).toHaveBeenCalledTimes(1));
-    expect(admin.stepUp).toHaveBeenCalledWith(PW);
-    const [, input, proof] = delivery.assign.mock.calls[0];
-    expect(input).toEqual({ driverEmployeeId: DRIVER_2.employeeId, expectedDriverId: null, reason: 'Closest to the customer' });
-    expect(Object.keys(input).sort()).toEqual(['driverEmployeeId', 'expectedDriverId', 'reason']);
-    expect(proof).toBe('PROOF-1');
-    expect(await screen.findByTestId('delivery-monitor-notice')).toHaveTextContent('PB-UN-1 was assigned');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
-
-  it('reassign offers every OTHER driver and sends the CURRENT driver as expectedDriverId; unassign sends a null driver with the current driver expected', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    await user.click(await within(panel).findByRole('button', { name: 'Reassign PB-AS-1' }));
-    let dialog = await screen.findByRole('dialog', { name: /Reassign PB-AS-1/ });
-    const select = await within(dialog).findByLabelText('Driver');
-    await waitFor(() => expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).toContain(DRIVER_2.employeeId));
-    expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).not.toContain(DRIVER_1.employeeId); // the current driver is not offered again
-    await user.selectOptions(select, DRIVER_2.employeeId);
-    await user.type(within(dialog).getByLabelText('Reason'), 'Driver 1 is off shift');
-    delivery.assign.mockResolvedValue({ changed: true, orderId: 'x', orderNumber: 'PB-AS-1', action: 'REASSIGNED', previousDriverId: DRIVER_1.employeeId, driverEmployeeId: DRIVER_2.employeeId });
-    await user.click(within(dialog).getByRole('button', { name: 'Reassign driver' }));
-    await confirmPassword(user);
-    await waitFor(() => expect(delivery.assign).toHaveBeenCalledTimes(1));
-    expect(delivery.assign.mock.calls[0][1]).toEqual({ driverEmployeeId: DRIVER_2.employeeId, expectedDriverId: DRIVER_1.employeeId, reason: 'Driver 1 is off shift' });
-
-    await user.click(await within(panel).findByRole('button', { name: 'Unassign PB-AS-1' }));
-    dialog = await screen.findByRole('dialog', { name: /Unassign PB-AS-1/ });
-    expect(within(dialog).queryByLabelText('Driver')).not.toBeInTheDocument(); // no driver choice when unassigning
-    await user.type(within(dialog).getByLabelText('Reason'), 'Back to the pool');
-    delivery.assign.mockResolvedValue({ changed: true, orderId: 'x', orderNumber: 'PB-AS-1', action: 'UNASSIGNED', previousDriverId: DRIVER_1.employeeId, driverEmployeeId: null });
-    await user.click(within(dialog).getByRole('button', { name: 'Unassign' }));
-    await waitFor(() => expect(delivery.assign).toHaveBeenCalledTimes(2)); // the proof is reused: no second password prompt
-    expect(delivery.assign.mock.calls[1][1]).toEqual({ driverEmployeeId: null, expectedDriverId: DRIVER_1.employeeId, reason: 'Back to the pool' });
-  }, 15000); // step-up dialog flow: ~2.6 s alone, can exceed the 5 s default under full-suite parallel load
-
-  it('a STALE expectedDriverId (409) shows safe copy, keeps the dialog open and reloads the monitor; no raw backend text', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    await user.click(await within(panel).findByRole('button', { name: 'Assign PB-UN-1' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.selectOptions(await within(dialog).findByLabelText('Driver'), DRIVER_1.employeeId);
-    await user.type(within(dialog).getByLabelText('Reason'), 'Closest driver');
-    delivery.assign.mockRejectedValue(new ApiRequestError('The delivery assignment changed in the meantime. RAW', 'DELIVERY_ASSIGNMENT_CHANGED', 409));
-    const loads = delivery.getMonitor.mock.calls.length;
-    await user.click(within(dialog).getByRole('button', { name: 'Assign driver' }));
-    await confirmPassword(user);
-    const alert = await within(dialog).findByRole('alert');
-    expect(alert).toHaveTextContent(/changed this order's delivery assignment in the meantime/i);
-    expect(alert).not.toHaveTextContent(/RAW/);
-    await waitFor(() => expect(delivery.getMonitor.mock.calls.length).toBeGreaterThan(loads));
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-  }, 15000); // step-up dialog flow: 4-5 s under full-suite parallel load (default 5 s leaves no margin)
-
-  it('an order that is already out for delivery cannot be reassigned: the server refusal (ORDER_NOT_ASSIGNABLE) is shown as safe copy', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    await user.click(await within(panel).findByRole('button', { name: 'Reassign PB-AS-1' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.selectOptions(await within(dialog).findByLabelText('Driver'), DRIVER_2.employeeId);
-    await user.type(within(dialog).getByLabelText('Reason'), 'Too late test');
-    delivery.assign.mockRejectedValue(new ApiRequestError('Delivery can only be assigned while the order is READY and eligible', 'ORDER_NOT_ASSIGNABLE', 409));
-    await user.click(within(dialog).getByRole('button', { name: 'Reassign driver' }));
-    await confirmPassword(user);
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent(/only be assigned while the order is ready/i);
-  });
-
-  it('a double submit sends ONE assignment request', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    await user.click(await within(panel).findByRole('button', { name: 'Assign PB-UN-1' }));
-    const dialog = await screen.findByRole('dialog');
-    await user.selectOptions(await within(dialog).findByLabelText('Driver'), DRIVER_1.employeeId);
-    await user.type(within(dialog).getByLabelText('Reason'), 'double click test');
-    let finish!: () => void;
-    delivery.assign.mockImplementation(() => new Promise((res) => (finish = () => res({ changed: true, orderId: 'x', orderNumber: 'n', action: 'ASSIGNED', previousDriverId: null, driverEmployeeId: DRIVER_1.employeeId }))));
-    await user.click(within(dialog).getByRole('button', { name: 'Assign driver' }));
-    await confirmPassword(user);
-    await waitFor(() => expect(delivery.assign).toHaveBeenCalledTimes(1));
-    await user.dblClick(within(dialog).getByRole('button', { name: /working/i }));
-    expect(delivery.assign).toHaveBeenCalledTimes(1);
-    finish();
   });
 
   it('exceptions: shows the reason, the note and the "awaiting review" policy; the only actions are the approved P9C resolutions (retry / reassign / Cancel & Full Refund) and the override: no dispatch, no mark-delivered, no READY-stage assignment controls', async () => {
@@ -206,9 +102,8 @@ describe('SUPER_ADMIN delivery monitor', () => {
     expect(within(panel).getByTestId('delivery-monitor-dispatched')).toHaveTextContent('Driver: Meera Nair');
   });
 
-  it('a read-only monitor (MD-style response) offers no assign / reassign / unassign controls', async () => {
+  it('B2a: no READY-stage driver assignment controls exist at all (assign / reassign / unassign were removed with the DELIVERY role)', async () => {
     const user = userEvent.setup();
-    delivery.getMonitor.mockResolvedValue(deliveryMonitor({ unclaimed: [unclaimed()], assigned: [assigned()] }, { readOnly: true }));
     const panel = await openDelivery(user);
     await within(panel).findAllByTestId('delivery-monitor-row');
     expect(within(panel).queryByRole('button', { name: /assign|reassign|unassign/i })).not.toBeInTheDocument();
@@ -230,17 +125,6 @@ describe('SUPER_ADMIN delivery monitor', () => {
     expect(within(panel).getByText('PB-UN-1')).toBeInTheDocument();
   });
 
-  it('Escape closes the dialog and focus returns to the control that opened it', async () => {
-    const user = userEvent.setup();
-    const panel = await openDelivery(user);
-    const opener = await within(panel).findByRole('button', { name: 'Assign PB-UN-1' });
-    await user.click(opener);
-    await screen.findByRole('dialog');
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(opener).toHaveFocus();
-  });
-
   it('only SUPER_ADMIN reaches the delivery admin UI: MD, DELIVERY and customers get the not-authorized screen and no delivery request', async () => {
     for (const roles of [['MD'], ['DELIVERY'], ['CUSTOMER']]) {
       h.auth.user = { id: 'u', roles };
@@ -249,7 +133,6 @@ describe('SUPER_ADMIN delivery monitor', () => {
       unmount();
     }
     expect(delivery.getMonitor).not.toHaveBeenCalled();
-    expect(delivery.listDrivers).not.toHaveBeenCalled();
   });
 });
 

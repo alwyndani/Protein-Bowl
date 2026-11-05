@@ -65,7 +65,10 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
   });
 
   it('future-phase endpoints are absent: no cancel, refund, delivery-code, handover or Mess request anywhere', () => {
-    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b/i)).toEqual([]);
+    // Cancellation / refund-status / Delivery Code requests live in exactly one module: src/orders/orderActionsApi.ts.
+    // The Kerala Mess customer slice (src/mess/api.ts) owns its own /mess endpoints (cancel, handover code) and nothing else does.
+    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code/i).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/mess/api.ts', 'src/orders/orderActionsApi.ts']);
+    expect(offenders(/handover-code|\/mess\b/i).map((p) => p.replace(/\\/g, '/')).filter((p) => !/^src\/(mess|screens\/mess|navigation\/MessNavigator)/.test(p) && !/^src\/navigation\/MainTabs/.test(p))).toEqual([]);
   });
 
   it('payment evidence is memory-only: payment modules use no storage, Query cache, navigation, logging or analytics', () => {
@@ -98,7 +101,7 @@ describe('P11C-2 step 3 static guards (production payment foundation)', () => {
   });
 
   it('payment UI exists in ONE panel: the hook has one consumer, the explicit controls live only in the panel, nothing else offers payment', () => {
-    expect(offenders(/PaymentPanel/).sort()).toEqual(['src/screens/commerce/OrderScreens.tsx', 'src/screens/commerce/PaymentPanel.tsx']);
+    expect(offenders(/PaymentPanel/).sort()).toEqual(['src/screens/commerce/OrderScreens.tsx', 'src/screens/commerce/PaymentPanel.tsx', 'src/screens/mess/MessPaymentSection.tsx']);
     expect(offenders(/Pay now|Pay with|Pay securely|Retry payment|Check payment status/i)).toEqual(['src/screens/commerce/PaymentPanel.tsx']);
     expect(offenders(/usePaymentFlow/).sort()).toEqual(['src/commerce/usePaymentFlow.ts', 'src/screens/commerce/PaymentPanel.tsx']);
     expect(offenders(/paymentFlowController|paymentPresentation|paymentFlowMachine/).filter((p) => p.startsWith('src/screens/') || p.startsWith('src/navigation/'))).toEqual([]);

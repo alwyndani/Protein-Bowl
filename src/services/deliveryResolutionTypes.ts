@@ -17,27 +17,6 @@ export const UNDELIVERABLE_REASONS = [
 ] as const;
 export type UndeliverableReasonCode = (typeof UNDELIVERABLE_REASONS)[number]['code'];
 
-export interface RetryInput {
-  mode: 'SAME_DRIVER' | 'REASSIGN';
-  /** Required for REASSIGN, forbidden for SAME_DRIVER. */
-  driverEmployeeId?: string;
-  /** The attempt and driver this screen showed: a mismatch is a 409 instead of an overwrite. */
-  expectedAttemptNumber: number;
-  expectedDriverId: string;
-  reasonCode: RetryReasonCode;
-  note?: string;
-}
-
-export interface RetryResult {
-  changed: boolean;
-  orderId: string;
-  orderNumber: string;
-  action: 'RETRY_SAME_DRIVER' | 'REASSIGNED' | 'PENDING_REASSIGNED';
-  attemptNumber: number;
-  assignmentState: 'ASSIGNED';
-  driverEmployeeId: string;
-}
-
 export interface UndeliverableInput {
   reasonCode: UndeliverableReasonCode;
   note: string;

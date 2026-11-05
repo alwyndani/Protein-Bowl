@@ -353,7 +353,8 @@ export class RecipeService {
         flourGrainPreference: data.flourGrainPreference || null,
         spiceLevel: data.spiceLevel || null,
         image: data.image || null,
-        rating: data.rating || 4.8,
+        // Only an explicitly supplied rating is written (0 is a legitimate value); nothing is invented in code.
+        rating: typeof data.rating === 'number' ? data.rating : undefined,
         prepSteps: data.prepSteps || [],
         isPublished,
       },

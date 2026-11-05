@@ -12,6 +12,7 @@ import type { OrdersStackParamList } from '../../navigation/types';
 import { Body, colors, Notice, Screen, Title } from '../../ui/components';
 import { EmptyState, ErrorState, Pill, Row, StaleBanner } from '../../ui/commerceUi';
 import { PaymentPanel } from './PaymentPanel';
+import { CancelOrderPanel, CancellationRequestPanel, DeliveryCodePanel } from './OrderActionPanels';
 
 type ListProps = NativeStackScreenProps<OrdersStackParamList, 'Orders'>;
 type DetailProps = NativeStackScreenProps<OrdersStackParamList, 'OrderDetail'>;
@@ -102,7 +103,10 @@ export function OrderDetailScreen({ route }: DetailProps) {
       </View>
       {o.payment ? <PaymentPanel order={o} /> : needsPayment(o) ? <Notice tone="info">{PAYMENT_REQUIRED_COPY}</Notice> : null}
       {cancelled ? <Notice tone="info">{cancelled}</Notice> : null}
+      <CancelOrderPanel order={o} />
+      <CancellationRequestPanel order={o} />
       {delivery ? <Notice tone="info">{`${delivery.title}. ${delivery.body}`}</Notice> : null}
+      <DeliveryCodePanel order={o} />
 
       <View style={styles.box}>
         {o.items.map((i) => (

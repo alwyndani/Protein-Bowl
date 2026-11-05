@@ -45,7 +45,6 @@ interface BrandHeaderProps {
   onOpenCart?: () => void;
   onOpenDirectTracking?: () => void;
   onOpenEmployeeLogin?: () => void;
-  onOpenSRS?: () => void;
   onOpenKeralaMessPortal?: () => void;
 }
 
@@ -57,7 +56,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
   currentUser,
   onOpenAuthModal,
   onLogout,
-  activeOrdersCount = 1,
+  activeOrdersCount = 0, // never a made-up count: the badge shows only when a real count is passed
   hideRoleDemo = false,
   selectedBranchId = 'all',
   onSelectBranch,
@@ -67,7 +66,6 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
   onOpenCart,
   onOpenDirectTracking,
   onOpenEmployeeLogin,
-  onOpenSRS,
   onOpenKeralaMessPortal
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -78,17 +76,11 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
 
   const roleLabels: Record<UserRole, { title: string; icon: React.ReactNode; color: string }> = {
     customer: { title: 'Customer Portal', icon: <User className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-800' },
-    swiggy_zomato: { title: '⚡ Swiggy/Zomato', icon: <Layers className="w-4 h-4" />, color: 'bg-orange-100 text-orange-800' },
     super_admin: { title: 'Super Admin', icon: <ShieldAlert className="w-4 h-4" />, color: 'bg-rose-100 text-rose-800' },
-    md: { title: 'MD Dashboard', icon: <Building2 className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
-    pos: { title: 'POS Billing', icon: <Calculator className="w-4 h-4" />, color: 'bg-indigo-100 text-indigo-800' },
     nutritionist: { title: 'Dietician', icon: <Stethoscope className="w-4 h-4" />, color: 'bg-teal-100 text-teal-800' },
     trainer: { title: 'Trainer', icon: <Dumbbell className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-800' },
     chef: { title: 'Chef ERP', icon: <ChefHat className="w-4 h-4" />, color: 'bg-orange-100 text-orange-800' },
     procurement: { title: 'Procurement', icon: <Package className="w-4 h-4" />, color: 'bg-blue-100 text-blue-800' },
-    delivery: { title: 'Delivery', icon: <Truck className="w-4 h-4" />, color: 'bg-purple-100 text-purple-800' },
-    bakery_fmcg: { title: 'FMCG Foods', icon: <Package className="w-4 h-4" />, color: 'bg-amber-100 text-amber-800' },
-    tepache_erp: { title: 'Tepache ERP', icon: <FlaskConical className="w-4 h-4" />, color: 'bg-emerald-100 text-emerald-800' },
   };
 
   return (
@@ -108,7 +100,7 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
 
             {/* Quick Role Selector Buttons */}
             <div className="flex items-center gap-1 overflow-x-auto py-0.5 scrollbar-none">
-              {(['customer', 'swiggy_zomato', 'chef', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => {
+              {(['customer', 'chef', 'nutritionist', 'trainer', 'procurement', 'super_admin'] as UserRole[]).map((r) => {
                 const active = currentRole === r;
                 return (
                   <button
@@ -192,19 +184,11 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
                   title="Operating Cloud Kitchen Branch"
                 >
                   <option value="all" className="bg-stone-900 text-white">🏢 Statewide (All Kitchens)</option>
-                  {branches && branches.length > 0 ? (
-                    branches.map(b => (
-                      <option key={b.id} value={b.id} className="bg-stone-900 text-white">
-                        📍 {b.name} ({b.city})
-                      </option>
-                    ))
-                  ) : (
-                    <>
-                      <option value="trivandrum" className="bg-stone-900 text-white">📍 Trivandrum Kitchen</option>
-                      <option value="kochi" className="bg-stone-900 text-white">📍 Kochi Central HQ</option>
-                      <option value="kozhikode" className="bg-stone-900 text-white">📍 Kozhikode Hub</option>
-                    </>
-                  )}
+                  {(branches ?? []).map(b => (
+                    <option key={b.id} value={b.id} className="bg-stone-900 text-white">
+                      📍 {b.name} ({b.city})
+                    </option>
+                  ))}
                 </select>
               </div>
             )}
@@ -315,16 +299,6 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
                 </button>
               )}
 
-              {onOpenSRS && (
-                <button
-                  onClick={onOpenSRS}
-                  className="hidden lg:flex items-center gap-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 px-3 py-2 rounded-xl text-xs font-bold transition-all shadow-xs"
-                  title="Open and Download Software Requirements Specification (Word .docx)"
-                >
-                  <FileText className="w-3.5 h-3.5 text-blue-400" />
-                  <span>SRS (Word)</span>
-                </button>
-              )}
             </div>
           )}
 
@@ -462,25 +436,10 @@ export const BrandHeader: React.FC<BrandHeaderProps> = ({
                 </div>
               )}
 
-              {onOpenSRS && (
-                <div className="pb-2 border-b border-stone-800">
-                  <button
-                    onClick={() => {
-                      onOpenSRS();
-                      setMobileMenuOpen(false);
-                    }}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black p-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md"
-                  >
-                    <FileText className="w-4 h-4" />
-                    <span>📄 View & Download SRS (Word Document)</span>
-                  </button>
-                </div>
-              )}
-
               <div>
                 <div className="text-[10px] font-black uppercase tracking-wider text-stone-400 mb-2 pt-2">Switch ERP Perspective</div>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['customer', 'chef', 'swiggy_zomato', 'md', 'nutritionist', 'trainer', 'delivery', 'pos', 'bakery_fmcg'] as UserRole[]).map((r) => (
+                  {(['customer', 'chef', 'nutritionist', 'trainer', 'procurement', 'super_admin'] as UserRole[]).map((r) => (
                     <button
                       key={r}
                       onClick={() => {

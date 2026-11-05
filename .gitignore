@@ -42,3 +42,25 @@ Thumbs.db
 .parcel-cache/
 tmp/
 scratch/
+
+# Claude Code: per-user overrides must never be committed
+# (.claude/hooks/pb-guard.mjs and .claude/settings.json ARE committed on purpose: they are the shared guard policy)
+.claude/settings.local.json
+
+# Database dumps and local backups (never belong in the repository)
+*.dump
+*.sql.gz
+pb-backups/
+
+# Local-only working material kept inside the tree (45 files)
+server/prisma/proposed/role-simplification/evidence/
+server/prisma/proposed/role-simplification/migration-b/
+server/prisma/proposed/role-simplification/README.md
+server/prisma/proposed/role-simplification/MESS_CUSTOMER_IMPACT_INSPECTION_PLAN.md
+server/prisma/proposed/role-simplification/BACKUP_AND_RECOVERY.md
+server/prisma/proposed/role-simplification/SHARED_TEST_*.md
+server/prisma/proposed/role-simplification/20261020100000_role_simplification_admin_actors/migration.sql
+server/scripts/takeoverLiveDelivery.ts
+.claude/skills/
+automation/reports/
+SCOPE_REMOVAL_IMPACT_REPORT.md

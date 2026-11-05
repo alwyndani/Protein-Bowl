@@ -234,9 +234,9 @@ export class FakeCommerceBackend extends FakeBackend {
     // addresses (owner scoped)
     if (cleanPath === '/customers/me/addresses' && method === 'GET') return this.respond(200, { success: true, data: this.addrs(uid).filter((a) => a.isActive) });
     if (cleanPath === '/customers/me/addresses' && method === 'POST') {
-      if (!body.addressLine1 || body.addressLine1.length < 3 || !body.city || !body.postalCode) return this.err(422, 'VALIDATION_ERROR');
+      if (!body.addressLine1 || body.addressLine1.length < 3 || !body.city || !body.postalCode || !String(body.title ?? '').trim() || !String(body.state ?? '').trim()) return this.err(422, 'VALIDATION_ERROR'); // like the server: label and state are required, never defaulted
       if (body.isDefault) this.addrs(uid).forEach((a) => (a.isDefault = false));
-      const a = { id: `addr-${++this.seq}`, customerProfileId: `cp-${uid}`, title: body.title || 'Home', addressLine1: body.addressLine1, addressLine2: body.addressLine2 ?? null, city: body.city, state: body.state || 'Kerala', postalCode: body.postalCode, isDefault: !!body.isDefault, isActive: true, latitude: null, longitude: null };
+      const a = { id: `addr-${++this.seq}`, customerProfileId: `cp-${uid}`, title: body.title, addressLine1: body.addressLine1, addressLine2: body.addressLine2 ?? null, city: body.city, state: body.state, postalCode: body.postalCode, isDefault: !!body.isDefault, isActive: true, latitude: null, longitude: null };
       this.addrs(uid).push(a);
       return this.respond(201, { success: true, data: a });
     }

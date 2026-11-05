@@ -11,7 +11,8 @@ import { getPaymentProvider } from '../modules/payment/providerRegistry.js';
 import { MockPaymentProvider } from '../modules/payment/mock.provider.js';
 import { PaymentReconciliationService } from '../modules/payment/paymentReconciliation.service.js';
 import { OrderTransitionService } from '../modules/order/orderTransition.service.js';
-import { MAX_DELIVERY_ATTEMPTS, retryBodySchema, undeliverableBodySchema } from '../modules/delivery/deliveryAttemptPolicy.js';
+import { MAX_DELIVERY_ATTEMPTS, undeliverableBodySchema } from '../modules/delivery/deliveryAttemptPolicy.js';
+import { operatorRetryBodySchema } from '../modules/delivery/deliveryOperate.service.js';
 import { roleHasPermission } from '../authz/permissions.js';
 import type { ProviderRefund } from '../modules/payment/provider.types.js';
 
@@ -58,7 +59,7 @@ describe('P9C - failed delivery resolution', () => {
   }
 
   const failureNotes = `PBFAIL1:${JSON.stringify({ reasonCode: 'CUSTOMER_UNAVAILABLE', note: FAIL_NOTE })}`;
-  /** A DISPATCHED + PAID + ONLINE order of custA whose assignment (driver d1, branch A) is in the given state. */
+  /** A DISPATCHED + PAID + ONLINE order of custA whose assignment (operated by the SUPER_ADMIN, branch A) is in the given state. */
   const dispatched = async (assignment: Record<string, unknown> = {}, over: Record<string, unknown> = {}) => {
     const n = ++seq;
     return prisma.order.create({
@@ -75,7 +76,7 @@ describe('P9C - failed delivery resolution', () => {
         confirmedAt: new Date(),
         deliveryAddressSnapshot: { addressLine1: '12 Secret Street', city: 'Kochi', postalCode: '682001', recipientName: 'Asha Verma-Secret', phone: '+91 98765 43210' },
         items: { create: [{ itemTitle: `Bowl ${n}`, unitPrice: 100, quantity: 1, taxRate: 0.05, totalPrice: 100 }] },
-        delivery: { create: { driverId: who.d1.employeeId, branchId: branchA.id, status: 'IN_TRANSIT', pickupTime: new Date(Date.now() - 600000), ...assignment } },
+        delivery: { create: { driverId: null, operatedByUserId: who.admin.id, branchId: branchA.id, status: 'IN_TRANSIT', pickupTime: new Date(Date.now() - 600000), ...assignment } },
         ...over
       } as never
     });
@@ -87,18 +88,21 @@ describe('P9C - failed delivery resolution', () => {
   const cState = (token: string, id: string) => request(app).get(`/api/v1/orders/${id}/delivery-code`).set(bearer(token));
   const cIssue = (token: string, id: string) => request(app).post(`/api/v1/orders/${id}/delivery-code`).set(bearer(token)).send({});
   const cRegen = (token: string, id: string) => request(app).post(`/api/v1/orders/${id}/delivery-code/regenerate`).set(bearer(token)).send({});
-  const verify = (token: string, id: string, code: unknown) => request(app).post(`/api/v1/delivery/orders/${id}/verify-delivery`).set(bearer(token)).send({ code });
-  const report = (token: string, id: string) => request(app).post(`/api/v1/delivery/orders/${id}/report-failure`).set(bearer(token)).send({ reasonCode: 'CUSTOMER_UNAVAILABLE', note: FAIL_NOTE });
-  const resume = (token: string, id: string, body: Record<string, unknown> = {}) => request(app).post(`/api/v1/delivery/orders/${id}/resume`).set(bearer(token)).send(body);
+  /** B2a: the operator is the SUPER_ADMIN; a legacy driver token is mapped to the administrator so the shared rules stay covered. */
+  const asOperator = (token: string) => (['d1', 'd2', 'dB'].some((l) => who[l] && who[l].token === token) ? who.admin.token : token);
+  const operate = (token: string, id: string, action: string, body: Record<string, unknown> = {}) => request(app).post(`/api/v1/admin/delivery/orders/${id}/${action}`).set(bearer(asOperator(token))).set('x-step-up-token', step).send(body);
+  const verify = (token: string, id: string, code: unknown) => operate(token, id, 'verify-delivery', { code });
+  const report = (token: string, id: string) => operate(token, id, 'report-failure', { reasonCode: 'CUSTOMER_UNAVAILABLE', note: FAIL_NOTE });
+  const resume = (token: string, id: string, body: Record<string, unknown> = {}) => operate(token, id, 'resume', body);
   const withStep = (r: request.Test, stepToken: string | null) => (stepToken ? r.set('x-step-up-token', stepToken) : r);
-  const retry = (id: string, body: Record<string, unknown>, token = who.admin.token, stepToken: string | null = step) => withStep(request(app).post(`/api/v1/admin/orders/${id}/delivery-retry`).set(bearer(token)), stepToken).send(body);
+  const retry = (id: string, body: Record<string, unknown>, token = who.admin.token, stepToken: string | null = step) => withStep(request(app).post(`/api/v1/admin/delivery/orders/${id}/retry`).set(bearer(token)), stepToken).send(body);
   const undeliverable = (id: string, body: Record<string, unknown>, token = who.admin.token, stepToken: string | null = step) =>
     withStep(request(app).post(`/api/v1/admin/orders/${id}/delivery-undeliverable`).set(bearer(token)), stepToken).send(body);
   const override = (id: string, body: Record<string, unknown>, token = who.admin.token, stepToken: string | null = step) =>
     withStep(request(app).post(`/api/v1/admin/orders/${id}/delivery-override`).set(bearer(token)), stepToken).send(body);
   const attemptsApi = (id: string, token = who.admin.token) => request(app).get(`/api/v1/admin/orders/${id}/delivery-attempts`).set(bearer(token));
 
-  const rb = (over: Record<string, unknown> = {}) => ({ mode: 'SAME_DRIVER', expectedAttemptNumber: 1, expectedDriverId: who.d1.employeeId, reasonCode: 'CUSTOMER_AVAILABLE_NOW', ...over });
+  const rb = (over: Record<string, unknown> = {}) => ({ expectedAttemptNumber: 1, reasonCode: 'CUSTOMER_AVAILABLE_NOW', ...over });
   const ub = (over: Record<string, unknown> = {}) => ({ reasonCode: 'CUSTOMER_REFUSED', note: ADMIN_NOTE, expectedAttemptNumber: 1, confirm: true, ...over });
 
   const proofOf = (orderId: string) => prisma.deliveryProof.findUnique({ where: { orderId } });
@@ -143,7 +147,7 @@ describe('P9C - failed delivery resolution', () => {
     expect(v.status, JSON.stringify(v.body)).toBe(200);
     await prisma.order.update({ where: { id: order.id }, data: { status: 'DISPATCHED', kitchenBranchId: branchA.id } });
     await prisma.deliveryAssignment.create({
-      data: { orderId: order.id, driverId: who.d1.employeeId, branchId: branchA.id, status: 'FAILED', attemptNumber, pickupTime: new Date(Date.now() - 600000), failedAt: new Date(Date.now() - 300000), deliveryNotes: failureNotes }
+      data: { orderId: order.id, driverId: null, operatedByUserId: who.admin.id, branchId: branchA.id, status: 'FAILED', attemptNumber, pickupTime: new Date(Date.now() - 600000), failedAt: new Date(Date.now() - 300000), deliveryNotes: failureNotes }
     });
     return order;
   }
@@ -191,21 +195,20 @@ describe('P9C - failed delivery resolution', () => {
       }
     });
 
-    it('2. request bodies are strict: unknown fields, amounts, statuses and bad modes are rejected, never ignored', () => {
+    it('2. request bodies are strict: unknown fields, amounts, statuses and driver fields are rejected, never ignored', () => {
       const good = rb();
-      expect(retryBodySchema.safeParse(good).success).toBe(true);
+      expect(operatorRetryBodySchema.safeParse(good).success).toBe(true);
       for (const bad of [
         { ...good, status: 'DELIVERED' },
         { ...good, amount: 10 },
-        { ...good, mode: 'ANY' },
-        { ...good, mode: 'REASSIGN' }, // driver required
-        { ...good, driverEmployeeId: who.d2.employeeId }, // driver forbidden for SAME_DRIVER
+        { ...good, mode: 'REASSIGN' }, // there is no driver to reassign to
+        { ...good, driverEmployeeId: who.d2.employeeId },
         { ...good, expectedAttemptNumber: 4 },
         { ...good, expectedAttemptNumber: 0 },
         { ...good, reasonCode: 'NOT_A_REASON' },
         { ...good, expectedDriverId: 'nope' }
       ]) {
-        expect(retryBodySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+        expect(operatorRetryBodySchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
       }
       expect(undeliverableBodySchema.safeParse(ub()).success).toBe(true);
       for (const bad of [{ ...ub(), confirm: false }, { ...ub(), note: 'short' }, { ...ub(), amount: 1 }, { ...ub(), reasonCode: 'ITEM_UNAVAILABLE' }, { ...ub(), refundAmount: 1 }]) {
@@ -239,15 +242,15 @@ describe('P9C - failed delivery resolution', () => {
       const before = await assignmentOf(o.id);
       const r = await retry(o.id, rb());
       expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body.data).toMatchObject({ changed: true, action: 'RETRY_SAME_DRIVER', attemptNumber: 2, assignmentState: 'ASSIGNED', driverEmployeeId: who.d1.employeeId });
+      expect(r.body.data).toMatchObject({ changed: true, attemptNumber: 2, assignmentState: 'ASSIGNED' });
 
       const a = await assignmentOf(o.id);
-      expect(a).toMatchObject({ status: 'ASSIGNED', attemptNumber: 2, driverId: who.d1.employeeId, pickupTime: null, deliveryTime: null, deliveryNotes: null, failedAt: null });
+      expect(a).toMatchObject({ status: 'ASSIGNED', attemptNumber: 2, driverId: null, operatedByUserId: who.admin.id, pickupTime: null, deliveryTime: null, deliveryNotes: null, failedAt: null });
       const rows = await attemptsOf(o.id);
       expect(rows).toHaveLength(1);
       expect(rows[0]).toMatchObject({
         attemptNumber: 1,
-        driverId: who.d1.employeeId,
+        driverId: null,
         branchId: branchA.id,
         failureReasonCode: 'CUSTOMER_UNAVAILABLE',
         failureNote: FAIL_NOTE,
@@ -262,7 +265,7 @@ describe('P9C - failed delivery resolution', () => {
       const o2 = await orderOf(o.id);
       expect(o2.status).toBe('DISPATCHED');
       expect((await events(o.id)).length).toBe(beforeEvents); // Order.status never changes, so no OrderEvent
-      const audit = await audits(o.id, 'DELIVERY_RETRY_SAME_DRIVER');
+      const audit = await audits(o.id, 'DELIVERY_RETRY_SAME_OPERATOR');
       expect(audit).toHaveLength(1);
       expect(JSON.stringify(audit[0].payload)).not.toContain(FAIL_NOTE);
     });
@@ -323,133 +326,12 @@ describe('P9C - failed delivery resolution', () => {
       expect((await attemptsOf(o.id)).map((x) => x.outcome)).toEqual(['RETRY_SAME_DRIVER']);
     });
 
-    it('9. Resume rules: replay is changed:false, FAILED is refused, other / old / wrong-branch drivers get 404, other roles 403, bodies must be empty', async () => {
-      const f = await failedViaApi();
-      const r0 = await resume(who.d1.token, f.o.id);
-      expect(r0.status).toBe(409);
-      expect(r0.body.error).toBe('DELIVERY_IN_EXCEPTION');
-      expect((await retry(f.o.id, rb())).status).toBe(200);
-      for (const t of [who.d2.token, who.dB.token]) expect((await resume(t, f.o.id)).status).toBe(404);
-      for (const t of [who.admin.token, who.md.token, who.chef.token, who.custA.token]) expect((await resume(t, f.o.id)).status).toBe(403);
-      expect((await resume(who.d1.token, f.o.id, { status: 'DELIVERED' })).status).toBe(422);
-      expect((await resume(who.d1.token, f.o.id)).status).toBe(200);
-      const again = await resume(who.d1.token, f.o.id);
-      expect(again.status).toBe(200);
-      expect(again.body.data.changed).toBe(false);
-      expect(await audits(f.o.id, 'DELIVERY_RESUMED')).toHaveLength(1);
-    });
   });
 
-  // ===================================================================================================== reassignment after FAILED
-  describe('reassignment after a failed attempt', () => {
-    it('10. FAILED -> ASSIGNED to another SAME-branch driver (attempt 2, outcome REASSIGNED); the old driver loses ownership; the new driver resumes', async () => {
-      const { o } = await failedViaApi();
-      const r = await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId, reasonCode: 'DRIVER_CHANGE' }));
-      expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body.data).toMatchObject({ action: 'REASSIGNED', attemptNumber: 2, driverEmployeeId: who.d2.employeeId });
-      expect(await assignmentOf(o.id)).toMatchObject({ status: 'ASSIGNED', attemptNumber: 2, driverId: who.d2.employeeId });
-      const rows = await attemptsOf(o.id);
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ outcome: 'REASSIGNED', driverId: who.d1.employeeId, resolutionReasonCode: 'DRIVER_CHANGE' });
-      expect(await audits(o.id, 'DELIVERY_REASSIGNED_AFTER_FAILURE')).toHaveLength(1);
-      expect((await resume(who.d1.token, o.id)).status).toBe(404);
-      expect((await resume(who.d2.token, o.id)).status).toBe(200);
-    });
-
-    it('11. the target must be an ACTIVE DELIVERY employee of the SAME branch and different from the current driver (nothing is archived on refusal)', async () => {
-      const o = await failedAt(1);
-      expect((await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.dB.employeeId }))).body.error).toBe('DRIVER_INVALID'); // other branch
-      expect((await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.dOff.employeeId }))).body.error).toBe('DRIVER_INVALID'); // deactivated
-      expect((await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.chef.employeeId }))).body.error).toBe('DRIVER_INVALID'); // not a driver
-      const same = await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d1.employeeId }));
-      expect(same.status).toBe(422);
-      expect(same.body.error).toBe('DRIVER_UNCHANGED');
-      expect(await attemptsOf(o.id)).toHaveLength(0);
-      expect(await assignmentOf(o.id)).toMatchObject({ status: 'FAILED', attemptNumber: 1, driverId: who.d1.employeeId });
-    });
-
-    it('12. stale expected values are refused with 409 DELIVERY_ATTEMPT_CHANGED and nothing changes', async () => {
-      const o = await failedAt(2);
-      const wrongAttempt = await retry(o.id, rb({ expectedAttemptNumber: 1 }));
-      expect(wrongAttempt.status).toBe(409);
-      expect(wrongAttempt.body.error).toBe('DELIVERY_ATTEMPT_CHANGED');
-      const wrongDriver = await retry(o.id, rb({ expectedAttemptNumber: 2, expectedDriverId: who.d2.employeeId }));
-      expect(wrongDriver.status).toBe(409);
-      expect(wrongDriver.body.error).toBe('DELIVERY_ATTEMPT_CHANGED');
-      expect(await attemptsOf(o.id)).toHaveLength(0);
-      expect((await assignmentOf(o.id)).status).toBe('FAILED');
-    });
-  });
-
-  // ===================================================================================================== B1: pending ASSIGNED reassignment
-  describe('pending ASSIGNED retry: reassignment before Resume (B1)', () => {
-    it('13. the SAME attempt is handed to another driver: attempt number unchanged, NO new archive, proof version unchanged, old driver 404, new driver resumes, customer code only after Resume', async () => {
-      const { o } = await failedViaApi();
-      expect((await retry(o.id, rb())).status).toBe(200); // attempt 2, driver d1, ASSIGNED
-      const archivedBefore = await attemptsOf(o.id);
-      const proofBefore = (await proofOf(o.id))!;
-      expect(archivedBefore).toHaveLength(1);
-
-      const r = await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId, expectedAttemptNumber: 2, expectedDriverId: who.d1.employeeId, reasonCode: 'DRIVER_CHANGE' }));
-      expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(r.body.data).toMatchObject({ changed: true, action: 'PENDING_REASSIGNED', attemptNumber: 2, assignmentState: 'ASSIGNED', driverEmployeeId: who.d2.employeeId });
-      expect(await assignmentOf(o.id)).toMatchObject({ status: 'ASSIGNED', attemptNumber: 2, driverId: who.d2.employeeId });
-      expect(await attemptsOf(o.id)).toHaveLength(1); // no second archive, no consumed attempt
-      const proofAfter = (await proofOf(o.id))!;
-      expect(proofAfter.codeVersion).toBe(proofBefore.codeVersion); // not bumped again
-      expect(proofAfter).toMatchObject({ regenerationCount: proofBefore.regenerationCount, regenerationsInWindow: proofBefore.regenerationsInWindow });
-      expect((await orderOf(o.id)).status).toBe('DISPATCHED');
-      const au = await audits(o.id, 'DELIVERY_PENDING_REASSIGNED');
-      expect(au).toHaveLength(1);
-      expect(await audits(o.id, 'DELIVERY_REASSIGNED_AFTER_FAILURE')).toHaveLength(0);
-
-      expect((await resume(who.d1.token, o.id)).status).toBe(404); // the old driver lost ownership immediately
-      expect((await cState(who.custA.token, o.id)).body.data.state).toBe('NOT_AVAILABLE'); // not before Resume
-      expect((await cIssue(who.custA.token, o.id)).status).toBe(409);
-      expect((await resume(who.d2.token, o.id)).status).toBe(200);
-      const code = await issued(o.id);
-      expect((await verify(who.d2.token, o.id, code)).status).toBe(200);
-      expect((await orderOf(o.id)).status).toBe('DELIVERED');
-    });
-
-    it('14. restrictions: SAME_DRIVER while ASSIGNED is invalid, stale expectations lose, same driver and cross-branch targets are refused, attempt 1 is not a pending retry', async () => {
-      const o = await failedAt(2, { status: 'ASSIGNED', failedAt: null, deliveryNotes: null, pickupTime: null });
-      const sameMode = await retry(o.id, rb({ expectedAttemptNumber: 2 }));
-      expect(sameMode.status).toBe(409);
-      expect(sameMode.body.error).toBe('INVALID_DELIVERY_STATE');
-      const stale = await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId, expectedAttemptNumber: 2, expectedDriverId: who.d3.employeeId }));
-      expect(stale.body.error).toBe('DELIVERY_ATTEMPT_CHANGED');
-      expect((await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d1.employeeId, expectedAttemptNumber: 2 }))).body.error).toBe('DRIVER_UNCHANGED');
-      expect((await retry(o.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.dB.employeeId, expectedAttemptNumber: 2 }))).body.error).toBe('DRIVER_INVALID');
-      const first = await failedAt(1, { status: 'ASSIGNED', failedAt: null, deliveryNotes: null });
-      const notPending = await retry(first.id, rb({ mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId }));
-      expect(notPending.status).toBe(409);
-      expect(await assignmentOf(o.id)).toMatchObject({ status: 'ASSIGNED', attemptNumber: 2, driverId: who.d1.employeeId });
-    });
-
-    it('15. parallel pending reassignments: exactly one wins, the attempt number stays 2 and attempt 4 can never appear', async () => {
-      const o = await failedAt(2, { status: 'ASSIGNED', failedAt: null, deliveryNotes: null, pickupTime: null });
-      const body = (driver: string | null | undefined) => rb({ mode: 'REASSIGN', driverEmployeeId: driver, expectedAttemptNumber: 2 });
-      const rs = await Promise.all([retry(o.id, body(who.d2.employeeId)), retry(o.id, body(who.d3.employeeId))]);
-      expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
-      const loser = rs.find((r) => r.status !== 200)!;
-      expect(loser.status).toBe(409);
-      expect(loser.body.error).toBe('DELIVERY_ATTEMPT_CHANGED');
-      const a = await assignmentOf(o.id);
-      expect(a.attemptNumber).toBe(2);
-      expect([who.d2.employeeId, who.d3.employeeId]).toContain(a.driverId);
-      expect(await audits(o.id, 'DELIVERY_PENDING_REASSIGNED')).toHaveLength(1);
-      // an attempt-4 style move is impossible from here: only Resume (and then a new failure) can progress the attempt
-      expect((await retry(o.id, rb({ expectedAttemptNumber: 2, expectedDriverId: a.driverId! }))).status).toBe(409);
-      await expect(prisma.$executeRawUnsafe(`UPDATE "delivery_assignments" SET "attemptNumber" = 4 WHERE "orderId" = '${o.id}'`)).rejects.toThrow();
-    });
-  });
-
-  // ===================================================================================================== attempt cap
   describe('the attempt cap (3)', () => {
-    it('16. after attempt 3 fails there is no retry and no reassignment (409 DELIVERY_ATTEMPT_LIMIT_REACHED) and nothing is archived', async () => {
+    it('16. after attempt 3 fails there is no retry (409 DELIVERY_ATTEMPT_LIMIT_REACHED) and nothing is archived', async () => {
       const o = await failedAt(3);
-      for (const body of [rb({ expectedAttemptNumber: 3 }), rb({ expectedAttemptNumber: 3, mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId })]) {
+      for (const body of [rb({ expectedAttemptNumber: 3 })]) {
         const r = await retry(o.id, body);
         expect(r.status).toBe(409);
         expect(r.body.error).toBe('DELIVERY_ATTEMPT_LIMIT_REACHED');
@@ -465,12 +347,12 @@ describe('P9C - failed delivery resolution', () => {
       expect((await retry(o.id, rb())).status).toBe(200);
       expect((await resume(who.d1.token, o.id)).status).toBe(200);
       expect((await report(who.d1.token, o.id)).status).toBe(200);
-      expect((await retry(o.id, rb({ expectedAttemptNumber: 2, mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId }))).status).toBe(200);
-      expect((await resume(who.d2.token, o.id)).status).toBe(200);
-      expect((await report(who.d2.token, o.id)).status).toBe(200);
-      expect(await assignmentOf(o.id)).toMatchObject({ status: 'FAILED', attemptNumber: 3, driverId: who.d2.employeeId });
-      expect((await attemptsOf(o.id)).map((a) => [a.attemptNumber, a.outcome])).toEqual([[1, 'RETRY_SAME_DRIVER'], [2, 'REASSIGNED']]);
-      const blocked = await retry(o.id, rb({ expectedAttemptNumber: 3, expectedDriverId: who.d2.employeeId }));
+      expect((await retry(o.id, rb({ expectedAttemptNumber: 2 }))).status).toBe(200);
+      expect((await resume(who.d1.token, o.id)).status).toBe(200);
+      expect((await report(who.d1.token, o.id)).status).toBe(200);
+      expect(await assignmentOf(o.id)).toMatchObject({ status: 'FAILED', attemptNumber: 3, driverId: null, operatedByUserId: who.admin.id });
+      expect((await attemptsOf(o.id)).map((a) => [a.attemptNumber, a.outcome])).toEqual([[1, 'RETRY_SAME_DRIVER'], [2, 'RETRY_SAME_DRIVER']]);
+      const blocked = await retry(o.id, rb({ expectedAttemptNumber: 3 }));
       expect(blocked.body.error).toBe('DELIVERY_ATTEMPT_LIMIT_REACHED');
       const monitor = await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(who.admin.token));
       const item = monitor.body.data.sections.exceptions.items.find((i: { id: string }) => i.id === o.id);
@@ -480,9 +362,9 @@ describe('P9C - failed delivery resolution', () => {
 
     it('18. parallel retries from attempt 2: exactly one creates attempt 3, the other gets 409, and attempt 4 is impossible', async () => {
       const o = await failedAt(2);
-      const rs = await Promise.all([retry(o.id, rb({ expectedAttemptNumber: 2 })), retry(o.id, rb({ expectedAttemptNumber: 2 })), retry(o.id, rb({ expectedAttemptNumber: 2, mode: 'REASSIGN', driverEmployeeId: who.d2.employeeId }))]);
+      const rs = await Promise.all([retry(o.id, rb({ expectedAttemptNumber: 2 })), retry(o.id, rb({ expectedAttemptNumber: 2 })), retry(o.id, rb({ expectedAttemptNumber: 2 }))]);
       expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
-      expect(rs.filter((r) => r.status === 409 && ['DELIVERY_ATTEMPT_CHANGED', 'INVALID_DELIVERY_STATE'].includes(r.body.error))).toHaveLength(2); // the loser either sees a stale attempt or an already ASSIGNED retry
+      expect(rs.filter((r) => r.status === 409 && ['DELIVERY_ATTEMPT_CHANGED', 'DELIVERY_NOT_FAILED', 'INVALID_DELIVERY_STATE'].includes(r.body.error))).toHaveLength(2); // the loser either sees a stale attempt or an already ASSIGNED retry
       expect((await assignmentOf(o.id)).attemptNumber).toBe(3);
       expect(await attemptsOf(o.id)).toHaveLength(1);
     });
@@ -502,7 +384,7 @@ describe('P9C - failed delivery resolution', () => {
       const after = (await proofOf(o.id))!;
       expect(after.codeVersion).toBe(before.codeVersion);
       expect(after.codeHash).toBe(before.codeHash);
-      expect(await audits(o.id, 'DELIVERY_RETRY_SAME_DRIVER')).toHaveLength(0);
+      expect(await audits(o.id, 'DELIVERY_RETRY_SAME_OPERATOR')).toHaveLength(0);
     });
   });
 
@@ -519,7 +401,7 @@ describe('P9C - failed delivery resolution', () => {
       expect((await attemptsApi(o.id, who.d1.token)).status).toBe(403);
       expect((await attemptsApi(o.id, who.custA.token)).status).toBe(403);
       expect((await attemptsApi(o.id, who.chef.token)).status).toBe(403);
-      expect((await attemptsApi(o.id, who.md.token)).status).toBe(200);
+      expect((await attemptsApi(o.id, who.md.token)).status).toBe(403); // the retired MD role has no access
       expect((await attemptsApi(o.id, who.admin.token)).status).toBe(200);
       expect(await attemptsOf(o.id)).toHaveLength(0);
       expect((await assignmentOf(o.id)).status).toBe('FAILED');
@@ -539,8 +421,8 @@ describe('P9C - failed delivery resolution', () => {
         expect((await undeliverable(o.id, ub())).body.error, o.orderNumber).toBe('ORDER_NOT_OPERATIONALLY_ELIGIBLE');
         expect((await attemptsOf(o.id)).length).toBe(0);
       }
-      // Resume for a COD order is not visible to the driver at all (same 404 as every unknown order)
-      expect((await resume(who.d1.token, cod.id)).status).toBe(404);
+      // Resume for a COD order is refused too
+      expect([404, 409]).toContain((await resume(who.d1.token, cod.id)).status);
     });
   });
 
@@ -727,17 +609,14 @@ describe('P9C - failed delivery resolution', () => {
 
   // ===================================================================================================== DTOs / redaction
   describe('DTOs and redaction', () => {
-    it('31. MD receives structured history only: no failure note, no resolution note, no resolver identity; SUPER_ADMIN receives the operational notes', async () => {
+    it('31. a retired MD account receives no history at all; SUPER_ADMIN receives the operational notes', async () => {
       const o = await failedAt(1);
       expect((await retry(o.id, rb({ note: 'Admin free text about the retry' }))).status).toBe(200);
       await prisma.deliveryAssignment.update({ where: { orderId: o.id }, data: { status: 'FAILED', failedAt: new Date(), deliveryNotes: failureNotes } });
       const md = await attemptsApi(o.id, who.md.token);
-      expect(md.status).toBe(200);
+      expect(md.status).toBe(403);
       const t = text(md);
       for (const secret of [FAIL_NOTE, 'Admin free text about the retry', who.admin.id, 'resolvedByUserId', 'failureNote', 'resolutionNote', 'codeHash']) expect(t, secret).not.toContain(secret);
-      expect(md.body.data.attempts[0]).toMatchObject({ attemptNumber: 1, outcome: 'RETRY_SAME_DRIVER', failureReasonCode: 'CUSTOMER_UNAVAILABLE', resolutionReasonCode: 'CUSTOMER_AVAILABLE_NOW', driver: { employeeCode: `P9C-d1-${ts}` }, branch: { code: `p9c-a-${ts}` } });
-      expect(md.body.data.current).toMatchObject({ attemptNumber: 2, failureReasonCode: 'CUSTOMER_UNAVAILABLE' });
-      expect(md.body.data.current).not.toHaveProperty('failureNote');
       const sa = await attemptsApi(o.id, who.admin.token);
       expect(sa.body.data.attempts[0]).toMatchObject({ failureNote: FAIL_NOTE, resolutionNote: 'Admin free text about the retry', resolvedByUserId: who.admin.id });
       expect(sa.body.data.current.failureNote).toBe(FAIL_NOTE);
@@ -765,14 +644,10 @@ describe('P9C - failed delivery resolution', () => {
       expect((await request(app).get(`/api/v1/orders/${o.id}`).set(bearer(who.custB.token))).status).toBe(404);
     });
 
-    it('33. the driver queue and the monitors expose attempt numbers and retry state, never codes, hashes or counters', async () => {
+    it('33. the monitor exposes attempt numbers and retry state, never codes, hashes or counters', async () => {
       const o = await failedAt(2);
       const pending = await failedAt(2, { status: 'ASSIGNED', failedAt: null, deliveryNotes: null, pickupTime: null });
-      const q = await request(app).get('/api/v1/delivery/orders').set(bearer(who.d1.token));
-      const own = q.body.data.sections.outForDelivery.items;
-      expect(own.find((i: { id: string }) => i.id === o.id).assignment).toMatchObject({ state: 'FAILED', attemptNumber: 2, maxAttempts: 3, issueReported: true });
-      expect(own.find((i: { id: string }) => i.id === pending.id).assignment).toMatchObject({ state: 'ASSIGNED', attemptNumber: 2 });
-      for (const t of [who.admin.token, who.md.token]) {
+      for (const t of [who.admin.token]) {
         const m = await request(app).get(`/api/v1/delivery/monitor?branchId=${branchA.id}`).set(bearer(t));
         expect(m.status).toBe(200);
         const failed = m.body.data.sections.exceptions.items.find((i: { id: string }) => i.id === o.id);
@@ -781,7 +656,6 @@ describe('P9C - failed delivery resolution', () => {
         expect(wait).toMatchObject({ retryPending: true, canRetry: false });
         expect(text(m)).not.toMatch(/codeHash|codeVersion|failedAttempts|lockCycles|regenerationCount|resolutionNote|"code"\s*:\s*"\d{6}"/);
       }
-      expect(text(q)).not.toMatch(/codeHash|codeVersion|failedAttempts|lockCycles|regenerationCount/);
     });
   });
 

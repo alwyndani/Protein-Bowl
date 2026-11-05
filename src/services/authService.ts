@@ -39,23 +39,22 @@ export class AuthService {
     return res;
   }
 
-  public static async refresh() {
-    const res = await ApiClient.request('/auth/refresh', {
-      method: 'POST'
-    });
-
-    if (res.success && res.data?.accessToken) {
-      ApiClient.setAccessToken(res.data.accessToken);
-    }
-    return res;
+  /** Session restore. Shares the single in-flight refresh with every other caller (see ApiClient.refreshAccessToken). */
+  public static async refresh(): Promise<{ success: boolean; data?: { accessToken: string } }> {
+    const ok = await ApiClient.refreshAccessToken();
+    const accessToken = ApiClient.getAccessToken();
+    return ok && accessToken ? { success: true, data: { accessToken } } : { success: false };
   }
 
   public static async logout() {
-    const res = await ApiClient.request('/auth/logout', {
-      method: 'POST'
-    });
-    ApiClient.setAccessToken(null);
-    return res;
+    ApiClient.endSession(); // first: a refresh already in flight must not bring the session back
+    try {
+      return await ApiClient.request('/auth/logout', {
+        method: 'POST'
+      });
+    } finally {
+      ApiClient.endSession();
+    }
   }
 
   public static async getMe() {

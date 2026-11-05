@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { FMCG_PACKAGED_PRODUCTS } from '../../src/data/mockBakeryFMCGData.js';
+import { FMCG_PACKAGED_PRODUCTS } from './seedData/fmcgPackagedProducts.js';
 
 const prisma = new PrismaClient();
 

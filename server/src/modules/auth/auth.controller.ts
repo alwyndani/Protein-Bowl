@@ -4,6 +4,7 @@ import { ApiResponse } from '../../utils/apiResponse.js';
 import { env } from '../../config/env.js';
 import { AuditService } from '../audit/audit.service.js';
 import { InvitationService } from '../admin/invitation.service.js';
+import { PasswordResetService } from './passwordReset.service.js';
 
 const REFRESH_COOKIE_NAME = 'pb_refresh_token';
 
@@ -85,6 +86,24 @@ export class AuthController {
     try {
       await InvitationService.accept(req.body.token, req.body.password, AuditService.contextFromRequest(req));
       return ApiResponse.success(res, { activated: true }, 'Your staff account is now active. You can sign in with your new password.');
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async forgotPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      await PasswordResetService.request(req.body.email, AuditService.contextFromRequest(req));
+      return ApiResponse.success(res, { accepted: true }, 'If an account exists for that address, a reset link has been sent.', 202);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async resetPassword(req: Request, res: Response, next: NextFunction) {
+    try {
+      await PasswordResetService.complete(req.body.token, req.body.password, AuditService.contextFromRequest(req));
+      return ApiResponse.success(res, { reset: true }, 'Your password has been changed. Please sign in with your new password.');
     } catch (error) {
       next(error);
     }

@@ -4,7 +4,9 @@ import app from '../app.js';
 import { PrismaClient, RoleEnum } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { resolveSeedPlan, DEV_SEED_DEFAULT_PASSWORD } from '../../prisma/seedGuard.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { resolveSeedPlan, isProductionEnv, DEV_SEED_DEFAULT_PASSWORD } from '../../prisma/seedGuard.js';
 
 const prisma = new PrismaClient({
   datasources: { db: { url: process.env.DATABASE_URL } },
@@ -187,10 +189,10 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       expect(res.status).toBe(200);
     });
 
-    it('legacy MESS_CUSTOMER is NOT accepted by the new Mess architecture (specific 403, backend-only compatibility)', async () => {
+    it('a retired MESS_CUSTOMER account has no approved role and is refused everywhere (403 NO_APPROVED_ROLE)', async () => {
       const res = await request(app).get('/api/v1/mess/account').set(auth('messlegacy'));
       expect(res.status).toBe(403);
-      expect(res.body.error).toBe('MESS_CUSTOMER_LEGACY_ROLE');
+      expect(res.body.error).toBe('NO_APPROVED_ROLE');
     });
 
     it('mess plans stay public', async () => {
@@ -290,11 +292,20 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       const savedInvite = process.env.INVITE_DELIVERY;
       vi.resetModules();
       process.env.NODE_ENV = 'production';
+      const savedEmail = process.env.EMAIL_PROVIDER;
       process.env.INVITE_DELIVERY = 'manual'; // an otherwise valid production configuration
+      process.env.EMAIL_PROVIDER = 'none';
       delete process.env.CORS_ALLOWED_ORIGINS;
+      const savedJwt = { a: process.env.JWT_ACCESS_SECRET, r: process.env.JWT_REFRESH_SECRET };
+      process.env.JWT_ACCESS_SECRET = 'k9Qm2vXz7LpR4tYw8NbC5dFh3JsGa6Ue'; // a production configuration needs non-placeholder secrets
+      process.env.JWT_REFRESH_SECRET = 'Zt4Hn8Vb1KxQ6mWe3RyP9cLd5SgJa2Uf';
       try {
         await expect(import('../config/env.js')).rejects.toThrow(/CORS_ALLOWED_ORIGINS/);
       } finally {
+        process.env.JWT_ACCESS_SECRET = savedJwt.a;
+        process.env.JWT_REFRESH_SECRET = savedJwt.r;
+        if (savedEmail === undefined) delete process.env.EMAIL_PROVIDER;
+        else process.env.EMAIL_PROVIDER = savedEmail;
         process.env.NODE_ENV = savedNodeEnv;
         process.env.CORS_ALLOWED_ORIGINS = savedCors;
         if (savedInvite === undefined) delete process.env.INVITE_DELIVERY;
@@ -385,11 +396,84 @@ describe('Phase 4C — Security & Commerce Hardening', () => {
       expect(plan.demoPassword).toBeNull();
     });
 
-    it('development uses the documented dev default unless overridden', () => {
-      expect(resolveSeedPlan({ NODE_ENV: 'development' } as NodeJS.ProcessEnv).demoPassword).toBe(DEV_SEED_DEFAULT_PASSWORD);
-      const custom = resolveSeedPlan({ NODE_ENV: 'development', SEED_DEFAULT_PASSWORD: 'Custom#Dev1' } as NodeJS.ProcessEnv);
+    const LOCAL = 'postgresql://u:p@localhost:5432/pb_dev?schema=public';
+    it('a LOCAL development database uses the documented dev default unless overridden by a strong value', () => {
+      expect(resolveSeedPlan({ NODE_ENV: 'development', DATABASE_URL: LOCAL } as NodeJS.ProcessEnv).demoPassword).toBe(DEV_SEED_DEFAULT_PASSWORD);
+      expect(resolveSeedPlan({ DATABASE_URL: 'postgresql://u:p@127.0.0.1:5432/x' } as NodeJS.ProcessEnv).seedDemoData).toBe(true); // NODE_ENV unset, local
+      const custom = resolveSeedPlan({ NODE_ENV: 'development', DATABASE_URL: LOCAL, SEED_DEFAULT_PASSWORD: 'Custom#Dev1-long' } as NodeJS.ProcessEnv);
       expect(custom.seedDemoData).toBe(true);
-      expect(custom.demoPassword).toBe('Custom#Dev1');
+      expect(custom.demoPassword).toBe('Custom#Dev1-long');
+    });
+
+    it('a NON-local database never receives demo users, even with NODE_ENV unset; only an explicit ALLOW_DEMO_SEED=true opts in', () => {
+      const remote = 'postgresql://u:p@db.internal.example:5432/prod?schema=public';
+      for (const env of [{ DATABASE_URL: remote }, { NODE_ENV: 'development', DATABASE_URL: remote }, { NODE_ENV: 'test', DATABASE_URL: remote }, {}, { DATABASE_URL: 'not a url' }]) {
+        const plan = resolveSeedPlan(env as NodeJS.ProcessEnv);
+        expect(plan.seedDemoData, JSON.stringify(Object.keys(env))).toBe(false);
+        expect(plan.demoPassword).toBeNull();
+      }
+      expect(resolveSeedPlan({ DATABASE_URL: remote, ALLOW_DEMO_SEED: 'true' } as NodeJS.ProcessEnv).seedDemoData).toBe(true);
+      // production still wins over the opt-in
+      expect(resolveSeedPlan({ NODE_ENV: 'production', DATABASE_URL: LOCAL, ALLOW_DEMO_SEED: 'true' } as NodeJS.ProcessEnv).seedDemoData).toBe(false);
+    });
+
+    it('NODE_ENV=production NEVER seeds demo users, even with ALLOW_DEMO_SEED=true, a local OR remote OR missing database URL, any spelling of "production", and any password override', () => {
+      const urls = [LOCAL, 'postgresql://u:p@127.0.0.1:5432/x', 'postgresql://u:p@[::1]:5432/x', 'postgresql://u:p@db.internal.example:5432/prod', 'not a url', undefined];
+      for (const nodeEnv of ['production', 'Production', 'PRODUCTION', ' production ', 'production\n']) {
+        for (const url of urls) {
+          for (const allow of ['true', 'TRUE', '1', undefined]) {
+            for (const pw of [undefined, 'Sup3r-Long-Override-Pass!']) {
+              const plan = resolveSeedPlan({ NODE_ENV: nodeEnv, DATABASE_URL: url, ALLOW_DEMO_SEED: allow, SEED_DEFAULT_PASSWORD: pw } as NodeJS.ProcessEnv);
+              expect(plan.seedDemoData, `${JSON.stringify(nodeEnv)} ${url ?? 'no-url'} allow=${allow} pw=${pw ? 'set' : 'unset'}`).toBe(false);
+              expect(plan.demoPassword).toBeNull();
+            }
+          }
+        }
+      }
+      expect(isProductionEnv({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe(true);
+      expect(isProductionEnv({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBe(false);
+    });
+
+    it('remote databases: only the exact opt-in ALLOW_DEMO_SEED=true seeds; "TRUE", "1", "yes", empty and unset do not', () => {
+      const remote = 'postgresql://u:p@db.internal.example:5432/test';
+      for (const allow of ['TRUE', 'True', '1', 'yes', '', ' true', undefined]) {
+        expect(resolveSeedPlan({ NODE_ENV: 'test', DATABASE_URL: remote, ALLOW_DEMO_SEED: allow } as NodeJS.ProcessEnv).seedDemoData, String(allow)).toBe(false);
+      }
+      for (const host of ['db.localhost.example.com', 'localhost.evil.example', '10.0.0.5', '192.168.1.20', '0.0.0.0', 'host.docker.internal']) {
+        expect(resolveSeedPlan({ NODE_ENV: 'development', DATABASE_URL: `postgresql://u:p@${host}:5432/x` } as NodeJS.ProcessEnv).seedDemoData, host).toBe(false);
+      }
+    });
+
+    it('the seed script re-checks production on its own (defence in depth) before any user is created', () => {
+      const seed = readFileSync(join(__dirname, '../../prisma/seed.ts'), 'utf8');
+      const check = seed.indexOf('if (isProductionEnv())');
+      expect(check).toBeGreaterThan(0);
+      expect(check).toBeLessThan(seed.indexOf('prisma.user.upsert')); // the first user is created only after the refusal
+      expect(seed).toMatch(/throw new Error\('Refusing to create demo users: NODE_ENV is production'\)/);
+    });
+
+    it('a weak SEED_DEFAULT_PASSWORD override disables demo users; the reason never contains the password or the connection string', () => {
+      const weak = resolveSeedPlan({ NODE_ENV: 'development', DATABASE_URL: LOCAL, SEED_DEFAULT_PASSWORD: 'short1!' } as NodeJS.ProcessEnv);
+      expect(weak.seedDemoData).toBe(false);
+      const reasons = [weak.reason, resolveSeedPlan({ NODE_ENV: 'production', DATABASE_URL: LOCAL, SEED_DEFAULT_PASSWORD: 'Sup3r-Secret-Pass!' } as NodeJS.ProcessEnv).reason, resolveSeedPlan({ DATABASE_URL: 'postgresql://user:hunter2pw@db.example:5432/x' } as NodeJS.ProcessEnv).reason].join(' ');
+      expect(reasons).not.toMatch(/short1|Sup3r-Secret|hunter2pw|postgresql:/);
+    });
+
+    it('the isolated E2E API is pinned: refuses production, fixed to localhost/pb_ci_test, mock payments, log mailer, development mode', () => {
+      const s = readFileSync(join(__dirname, '../../scripts/startIsolatedApi.ts'), 'utf8');
+      expect(s).toMatch(/NODE_ENV === 'production'[\s\S]{0,200}process\.exit\(1\)/);
+      expect(s).toContain("@localhost:${port}/pb_ci_test");
+      expect(s).toMatch(/PAYMENT_PROVIDER = 'mock'/);
+      expect(s).toMatch(/EMAIL_PROVIDER = 'log'/);
+      expect(s).toMatch(/NODE_ENV = 'development'/);
+      expect(s).not.toMatch(/process\.env\.DATABASE_URL\s*=\s*process\.env/); // never derives the target from the ambient environment
+    });
+
+    it('the seed script itself only creates users through the plan and the default password is not used outside the guard', () => {
+      const seed = readFileSync(join(__dirname, '../../prisma/seed.ts'), 'utf8');
+      expect(seed).toMatch(/resolveSeedPlan\(\)/);
+      expect(seed).toMatch(/if \(!plan\.seedDemoData\)/);
+      expect(seed).not.toContain(DEV_SEED_DEFAULT_PASSWORD);
     });
   });
 });

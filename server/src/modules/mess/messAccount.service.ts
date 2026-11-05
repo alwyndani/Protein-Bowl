@@ -97,7 +97,7 @@ export class MessAccountService {
   }
 
   // ================================================================================================ staff
-  public static async listForStaff(viewer: 'ADMIN' | 'MD', query: { status?: string; servicePointId?: string; limit: number }) {
+  public static async listForStaff(viewer: 'ADMIN', query: { status?: string; servicePointId?: string; limit: number }) {
     const where = { ...(query.status ? { approvalStatus: query.status } : {}), ...(query.servicePointId ? { servicePointId: query.servicePointId } : {}) };
     const [rows, total] = await Promise.all([
       prisma.messAccount.findMany({

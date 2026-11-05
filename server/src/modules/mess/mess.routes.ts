@@ -17,8 +17,8 @@ import { accountWriteSchema, calendarQuerySchema, customerCancelSchema, emptyBod
 
 /**
  * Kerala Mess customer API (P10A). CUSTOMER is the canonical identity; Mess entitlement = an APPROVED MessAccount.
- * Every endpoint (except the public plan list) needs the literal CUSTOMER role: staff, SUPER_ADMIN and MD have no customer-context access, and the
- * legacy MESS_CUSTOMER role is NOT accepted by the new architecture (it gets a specific 403 so the UI can explain it).
+ * Every endpoint (except the public plan list) needs the literal CUSTOMER role: staff and SUPER_ADMIN have no customer-context access, and the
+ * retired MESS_CUSTOMER role is dropped at authentication (such an account has no approved role: 403 NO_APPROVED_ROLE).
  */
 const router = Router();
 
@@ -26,9 +26,6 @@ function requireMessCustomer(req: Request, _res: Response, next: NextFunction) {
   const roles = req.user?.roles ?? [];
   if (!req.user) return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
   if (roles.includes(RoleEnum.CUSTOMER)) return next();
-  if (roles.includes(RoleEnum.MESS_CUSTOMER)) {
-    return next(new AppError('This account uses a legacy Kerala Mess role. Please contact Protein Bowl support to move it to a customer account.', 403, 'MESS_CUSTOMER_LEGACY_ROLE'));
-  }
   return next(new AppError('Access denied. CUSTOMER role required.', 403, 'FORBIDDEN'));
 }
 const customer = [authenticateToken, requireMessCustomer] as const;

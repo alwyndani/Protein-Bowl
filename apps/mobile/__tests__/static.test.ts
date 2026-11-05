@@ -23,9 +23,13 @@ const isTestSupport = (p: string) => p.includes(`${path.sep}src${path.sep}test${
 const productionFiles = walk(ROOT).filter((p) => /\.(ts|tsx|js|json)$/.test(p) && !/package(-lock)?\.json$|tsconfig\.json$/.test(p) && !isTestSupport(p));
 const code = productionFiles.map((p) => ({ p: path.relative(ROOT, p), s: /\.(ts|tsx)$/.test(p) ? stripComments(fs.readFileSync(p, 'utf8')) : fs.readFileSync(p, 'utf8') }));
 
-function offenders(re: RegExp) {
-  return code.filter((f) => re.test(f.s)).map((f) => f.p);
+function offenders(re: RegExp, allowed: RegExp[] = []) {
+  return code.filter((f) => re.test(f.s) && !allowed.some((a) => a.test(f.p.replace(/\\/g, '/')))).map((f) => f.p);
 }
+
+// Feature slices (customer Mess, health profile + diet, workouts) own their endpoint strings in their own folders; the commerce API stays strictly bounded.
+const MESS_FILES = [/^src\/mess\//, /^src\/screens\/mess\//, /^src\/navigation\/MessNavigator\.tsx$/];
+const WELLNESS_FILES = [/^src\/wellness\//, /^src\/screens\/wellness\//, /^src\/navigation\/WellnessNavigator\.tsx$/];
 
 describe('P11A static guards (production mobile source)', () => {
   it('scans the real source (sanity)', () => {
@@ -93,8 +97,10 @@ describe('P11A static guards (production mobile source)', () => {
   it('P11B boundary: the commerce API is EXACTLY the approved endpoint set - no payment, verify, cancel, refund, delivery-code, Mess, diet or health request', () => {
     // P11C-2 step 3: the payment-attempt endpoints are allowed in EXACTLY one module (the payment API); everything else stays forbidden.
     expect(offenders(/payment-attempts|\/verify\b/).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/payments/paymentApi.ts']);
-    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code|handover-code|\/mess\b|\/diets?\b|\/kds\b|\/delivery\b|\/admin\b|\/staff\b/i)).toEqual([]);
-    expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i)).toEqual([]);
+    // Customer cancellation / refund status / Delivery Code endpoints exist in EXACTLY one module (src/orders/orderActionsApi.ts).
+    expect(offenders(/\/cancel\b|\/refunds?\b|delivery-code/i, MESS_FILES).map((p) => p.replace(/\\/g, '/'))).toEqual(['src/orders/orderActionsApi.ts']);
+    expect(offenders(/handover-code|\/mess\b|\/diets?\b|\/kds\b|\/admin\b|\/staff\b/i, [...MESS_FILES, ...WELLNESS_FILES])).toEqual([]);
+    expect(offenders(/biometrics|health[-_ ]?profile|labReport|dietPlan/i, WELLNESS_FILES)).toEqual([]);
     expect(offenders(/expo-screen-capture/)).toEqual([]);
     const api = code.find((c) => c.p.replace(/\\/g, '/') === 'src/commerce/api.ts')!.s;
     const paths = [...api.matchAll(/request\(\s*[`'"]([^`'"?$]*)/g)].map((m) => m[1]).sort();
@@ -147,12 +153,18 @@ describe('P11A static guards (production mobile source)', () => {
     expect(pkg.dependencies['expo-dev-client']).toMatch(/^~5\.0\./);
   });
 
-  it('native projects are generated, never committed: no android/ios directory, no app.json, only a development-only eas.json without credentials; no missing-asset references, no web target', () => {
+  it('native projects are generated, never committed: no android/ios directory, no app.json, only an eas.json (development / preview / production profiles) without credentials, API URL or submit config; no missing-asset references, no web target', () => {
     for (const forbidden of ['android', 'ios', 'app.json']) expect(fs.existsSync(path.join(ROOT, forbidden))).toBe(false);
     const eas = JSON.parse(fs.readFileSync(path.join(ROOT, 'eas.json'), 'utf8'));
-    expect(Object.keys(eas.build)).toEqual(['development']);
+    expect(Object.keys(eas.build)).toEqual(['development', 'preview', 'production']);
     expect(eas.build.development.developmentClient).toBe(true);
-    expect(JSON.stringify(eas)).not.toMatch(/secret|password|token|keystore|credentials|serviceAccount|rzp_|submit|production/i);
+    expect(eas.build.preview.developmentClient).toBeUndefined();
+    expect(eas.build.production.developmentClient).toBeUndefined();
+    expect(eas.build.preview.env.EXPO_PUBLIC_APP_ENV).toBe('production');
+    expect(eas.build.production.env.EXPO_PUBLIC_APP_ENV).toBe('production');
+    expect(eas.submit).toBeUndefined();
+    // the API URL is supplied through EAS environment variables, never committed (a committed placeholder would pass the https check)
+    expect(JSON.stringify(eas)).not.toMatch(/secret|password|token|keystore|credentials|serviceAccount|rzp_|EXPO_PUBLIC_API_URL|https?:\/\//i);
     const cfg = stripComments(fs.readFileSync(path.join(ROOT, 'app.config.ts'), 'utf8'));
     expect(cfg).not.toMatch(/assets\/|icon:|splash|adaptiveIcon|favicon|newArchEnabled|plugins:/);
     expect(cfg).toMatch(/platforms: \['ios', 'android'\]/);

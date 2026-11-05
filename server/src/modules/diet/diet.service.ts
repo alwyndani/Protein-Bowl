@@ -1,6 +1,7 @@
 import { prisma } from '../../config/database.js';
 import { AppError } from '../../middleware/error.middleware.js';
 import { AuditService, AuditContext } from '../audit/audit.service.js';
+import { presentBiometrics, ageFromDob } from '../health/biometricsPresentation.js';
 
 export class DietService {
   /**
@@ -160,7 +161,7 @@ export class DietService {
    * 5. Nutritionist fetches own claimed requests queue
    */
   public static async getClaimedQueue(nutritionistUserId: string) {
-    return await prisma.dietPlanRequest.findMany({
+    const rows = await prisma.dietPlanRequest.findMany({
       where: {
         nutritionistId: nutritionistUserId
       },
@@ -169,6 +170,9 @@ export class DietService {
           select: {
             id: true,
             fullName: true,
+            // dob/gender feed the shared calculation only; the date of birth itself is not sent in the queue (the age is).
+            dob: true,
+            gender: true,
             user: { select: { email: true, phone: true } },
             healthBiometrics: true
           }
@@ -184,6 +188,20 @@ export class DietService {
         }
       },
       orderBy: { updatedAt: 'desc' }
+    });
+    // Stored derived figures are never sent: every figure is recalculated from the customer's CURRENT saved inputs (shared function).
+    return rows.map((row) => {
+      const { dob, gender, healthBiometrics, ...profile } = row.customerProfile;
+      const presented = presentBiometrics(healthBiometrics as Record<string, unknown> | null, { dob, gender });
+      return {
+        ...row,
+        customerProfile: {
+          ...profile,
+          gender,
+          age: ageFromDob(dob),
+          healthBiometrics: presented
+        }
+      };
     });
   }
 
@@ -263,7 +281,13 @@ export class DietService {
       payload: { customerProfileId: req.customerProfileId },
       context
     });
-    return req.customerProfile;
+    // The assigned nutritionist sees the saved inputs, with every derived figure recalculated from them (never the stored derived columns).
+    const profile = req.customerProfile;
+    return {
+      ...profile,
+      age: ageFromDob(profile.dob),
+      healthBiometrics: presentBiometrics(profile.healthBiometrics as Record<string, unknown> | null, { dob: profile.dob, gender: profile.gender })
+    };
   }
 
   /**

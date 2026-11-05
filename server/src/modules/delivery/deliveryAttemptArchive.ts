@@ -17,6 +17,8 @@ export interface ArchiveAssignment {
   pickupTime: Date | null;
   failedAt: Date | null;
   deliveryNotes: string | null;
+  /** Role simplification: the SUPER_ADMIN operating the attempt (null for a driver-run attempt). */
+  operatedByUserId?: string | null;
 }
 
 export async function archiveFailedAttempt(
@@ -40,6 +42,7 @@ export async function archiveFailedAttempt(
         orderId: p.orderId,
         attemptNumber: p.assignment.attemptNumber,
         driverId: p.assignment.driverId,
+        operatedByUserId: p.assignment.operatedByUserId ?? null,
         branchId: p.assignment.branchId ?? p.kitchenBranchId,
         startedAt: p.assignment.pickupTime,
         failedAt: p.assignment.failedAt, // null for legacy FAILED rows: never fabricated

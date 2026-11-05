@@ -75,6 +75,7 @@ export const DELIVERY_ORDER_SELECT = Prisma.validator<Prisma.OrderSelect>()({
     select: {
       id: true,
       driverId: true,
+      operatedByUserId: true,
       status: true,
       pickupTime: true,
       deliveryNotes: true,
@@ -126,6 +127,8 @@ export interface DeliveryMonitorOrderDto extends DeliveryAreaOrderDto {
   assignment: {
     state: AssignmentState | null;
     driver: { employeeId: string; employeeCode: string; fullName: string } | null;
+    /** Role simplification: the job is operated by a SUPER_ADMIN (no driver). */
+    operator: 'ADMIN' | null;
     pickupTime: string | null;
     attemptNumber: number;
   };
@@ -189,7 +192,8 @@ export function toMonitorDto(row: DeliveryOrderRow, readyAt: Date | undefined): 
   return {
     ...toAreaBase(row, readyAt),
     assignment: {
-      state: a?.driverId ? state ?? 'ASSIGNED' : null,
+      state: a?.driverId || a?.operatedByUserId ? state ?? 'ASSIGNED' : null,
+      operator: a?.operatedByUserId ? ('ADMIN' as const) : null,
       driver: a?.driver ? { employeeId: a.driver.id, employeeCode: a.driver.employeeCode, fullName: a.driver.fullName } : null,
       pickupTime: a?.pickupTime ? a.pickupTime.toISOString() : null,
       attemptNumber: a?.attemptNumber ?? 1

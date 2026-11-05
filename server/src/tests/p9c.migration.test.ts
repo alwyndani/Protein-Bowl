@@ -4,6 +4,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync, mkdtempSync, rmSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { ADMIN_URL, urlOf } from './migrationDb.js';
 import { ATTEMPT_OUTCOMES, MAX_DELIVERY_ATTEMPTS } from '../modules/delivery/deliveryAttemptPolicy.js';
 
 /**
@@ -17,9 +18,8 @@ import { ATTEMPT_OUTCOMES, MAX_DELIVERY_ATTEMPTS } from '../modules/delivery/del
  */
 const SERVER_ROOT = join(__dirname, '..', '..');
 const PRISMA_CLI = join(SERVER_ROOT, 'node_modules', 'prisma', 'build', 'index.js');
-const ADMIN_URL = 'postgresql://postgres:postgres@localhost:5432/postgres?schema=public';
 const dbName = `pb_p9c_mig_${Date.now()}`;
-const dbUrl = `postgresql://postgres:postgres@localhost:5432/${dbName}?schema=public`;
+const dbUrl = urlOf(dbName);
 
 const migrations = readdirSync(join(SERVER_ROOT, 'prisma', 'migrations'), { withFileTypes: true })
   .filter((d) => d.isDirectory())

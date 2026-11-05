@@ -7,49 +7,20 @@
  * Safe to run on several machines at once (rows are claimed with FOR UPDATE SKIP LOCKED + leases) and to repeat at any time
  * (settlement is idempotent). Exit code: 0 = nothing needs attention, 2 = review items exist (failed events, flagged
  * payments/sessions), 1 = the run itself failed. It prints counts only - never secrets, signatures or provider payloads.
+ *
+ * TEMPORARY-H1-DO-NOT-MERGE: this entry point is wrapped in a temporary guard that REFUSES (exit 3) unless the PROCESS environment
+ * (not a .env file) holds PAYMENTS_RECONCILE_EXPECT_DATABASE and a DATABASE_URL for the one disposable reconciliation-test database,
+ * and the connected server proves the same identity. Configuration and Prisma are imported dynamically, only after those pre-checks.
+ * See src/modules/payment/reconcileCli.ts. Never merge this version.
  */
-import { prisma } from '../src/config/database.js';
-import { PaymentReconciliationService } from '../src/modules/payment/paymentReconciliation.service.js';
+// The FIRST import must stay the CLI module (it loads the guard, which snapshots the process environment before config/env.ts runs dotenv).
+import { bootstrapReconcile } from '../src/modules/payment/reconcileCli.js';
 
-function arg(name: string): string | undefined {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
-}
-const flag = (name: string) => process.argv.includes(`--${name}`);
-
-let stopping = false;
-for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => { stopping = true; });
-
-async function sleepInterruptible(ms: number) {
-  const end = Date.now() + ms;
-  while (!stopping && Date.now() < end) await new Promise((r) => setTimeout(r, Math.min(500, end - Date.now())));
-}
-
-async function main(): Promise<number> {
-  const workerId = arg('worker') ?? `cli-${process.pid}`;
-  const limit = arg('limit') ? Number(arg('limit')) : undefined;
-  const loop = flag('loop');
-  const intervalMs = Math.max(5, Number(arg('interval') ?? 60)) * 1000;
-  let exit = 0;
-
-  do {
-    const stats = await PaymentReconciliationService.runOnce({ workerId, limit });
-    const report = await PaymentReconciliationService.reviewReport();
-    console.log(JSON.stringify({ at: new Date().toISOString(), stats, review: report }));
-    if (report.total > 0) exit = 2;
-    if (!loop) break;
-    await sleepInterruptible(intervalMs);
-  } while (!stopping);
-  return exit;
-}
-
-main()
-  .then(async (code) => {
-    await prisma.$disconnect();
-    process.exit(code);
+void bootstrapReconcile({
+  proc: process,
+  console,
+  load: async () => ({
+    db: (await import('../src/config/database.js')).prisma,
+    service: (await import('../src/modules/payment/paymentReconciliation.service.js')).PaymentReconciliationService
   })
-  .catch(async (err) => {
-    console.error('payments:reconcile failed:', (err as Error).message);
-    await prisma.$disconnect().catch(() => undefined);
-    process.exit(1);
-  });
+});

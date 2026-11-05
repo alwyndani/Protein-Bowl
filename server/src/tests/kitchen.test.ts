@@ -178,15 +178,16 @@ describe('P8 - kitchen routing, Chef queue and Chef transitions', () => {
       expect(await statusOf(o.id)).toBe('CONFIRMED');
     });
 
-    it('3. MD is read-only: explicit branchId required to read, no Chef action, no routing', async () => {
+    it('3. the explicit-branch kitchen read belongs to SUPER_ADMIN; a retired MD account has no access, no Chef action and no routing', async () => {
       const o = await mkOrder();
-      expect((await queue(who.md.token)).status).toBe(400);
-      expect((await queue(who.md.token)).body.error).toBe('BRANCH_REQUIRED');
-      const read = await queue(who.md.token, `?branchId=${branchA.id}`);
+      expect((await queue(who.admin.token)).status).toBe(400);
+      expect((await queue(who.admin.token)).body.error).toBe('BRANCH_REQUIRED');
+      const read = await queue(who.admin.token, `?branchId=${branchA.id}`);
       expect(read.status).toBe(200);
       expect(ids(read)).toContain(o.id);
-      expect((await detail(who.md.token, o.id, `?branchId=${branchA.id}`)).status).toBe(200);
-      expect((await detail(who.md.token, o.id)).status).toBe(400);
+      expect((await detail(who.admin.token, o.id, `?branchId=${branchA.id}`)).status).toBe(200);
+      expect((await detail(who.admin.token, o.id)).status).toBe(400);
+      expect((await queue(who.md.token, `?branchId=${branchA.id}`)).status).toBe(403);
       for (const a of ['accept', 'start-preparing', 'mark-ready'] as const) expect((await act(who.md.token, o.id, a)).status).toBe(403);
       expect((await routingList(who.md.token)).status).toBe(403);
       expect((await route(o.id, { branchId: branchB.id, expectedBranchId: branchA.id, reason: 'md reroute' }, who.md.token)).status).toBe(403);
@@ -222,7 +223,7 @@ describe('P8 - kitchen routing, Chef queue and Chef transitions', () => {
       expect(TRANSITION_PARTIES['ACCEPTED->CANCELLED']).toEqual([RoleEnum.SUPER_ADMIN]);
       expect(TRANSITION_PARTIES['CONFIRMED->CANCELLED']).toEqual(['CUSTOMER_OWNER', RoleEnum.SUPER_ADMIN]);
       // P9A: dispatch is DELIVERY-only; the DELIVERED edge exists in the graph but no party may perform it yet
-      expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.DELIVERY]);
+      expect(TRANSITION_PARTIES['READY->DISPATCHED']).toEqual([RoleEnum.SUPER_ADMIN]); // B2a: only the SUPER_ADMIN operator
       expect(TRANSITION_PARTIES['DISPATCHED->DELIVERED']).toEqual(['DELIVERY_PROOF']); // P9B: proof-backed internal party only
     });
 

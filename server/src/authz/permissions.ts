@@ -2,7 +2,7 @@ import { RoleEnum } from '@prisma/client';
 
 /**
  * Typed static permission catalogue for the operational modules hardened in P6A.
- * SUPER_ADMIN is listed explicitly (there is no implicit bypass). MD holds READ permissions only (decision D2).
+ * SUPER_ADMIN is listed explicitly (there is no implicit bypass) and holds every READ permission the retired MD role had (monitoring views).
  */
 export type Permission =
   | 'kds:read'
@@ -10,13 +10,12 @@ export type Permission =
   | 'kitchen:assign'
   | 'procurement:read'
   | 'procurement:write'
-  | 'pos:read'
-  | 'pos:write'
+  | 'trainer:write'
+  | 'trainer:assign'
   | 'delivery:read'
-  | 'delivery:write'
-  | 'delivery:assign'
   | 'delivery:override'
   | 'delivery:resolve'
+  | 'delivery:operate'
   | 'staff:admin'
   | 'audit:read'
   | 'branch:read'
@@ -29,30 +28,31 @@ export type Permission =
   | 'mess:kitchen:read'
   | 'mess:kitchen:write'
   | 'mess:delivery:read'
-  | 'mess:delivery:write'
-  | 'mess:delivery:override';
+  | 'mess:delivery:override'
+  | 'mess:delivery:operate';
 
 export const ROLE_PERMISSIONS: Readonly<Partial<Record<RoleEnum, readonly Permission[]>>> = {
   [RoleEnum.SUPER_ADMIN]: [
     // P8: SUPER_ADMIN is READ-ONLY for kitchen operations (no 'kds:write' = no Chef actions); it owns kitchen ROUTING ('kitchen:assign').
-    'kds:read', 'kitchen:assign', 'procurement:read', 'procurement:write', 'pos:read', 'pos:write', 'delivery:read', 'delivery:assign', 'delivery:override', 'delivery:resolve',
-    // P9A: SUPER_ADMIN reads and ASSIGNS delivery work but never claims, dispatches or reports as a driver ('delivery:write' is DELIVERY only).
-    // Platform administration (decision D10: audit history is SUPER_ADMIN-only; MD gets branch READ only)
+    'kds:read', 'kitchen:assign', 'procurement:read', 'procurement:write', 'delivery:read', 'delivery:override', 'delivery:resolve',
+    // Role simplification: SUPER_ADMIN operates delivery itself (dispatch, verify the customer's code, report, resume, retry, take over) - every action needs a fresh step-up proof
+    'delivery:operate',
+    // Platform administration (decision D10: audit history is SUPER_ADMIN-only)
     'staff:admin', 'audit:read', 'branch:read', 'branch:write',
+    // Trainer coaching assignments (which customers a trainer may coach)
+    'trainer:assign',
     // Payments (P7B): READ-ONLY operational visibility; nobody can mark an order paid through the API
     'payments:read',
-    // Refunds / financial cancellation (P7C): SUPER_ADMIN only for mutation; MD read-only
+    // Refunds / financial cancellation (P7C): SUPER_ADMIN only
     'refunds:read', 'refunds:write',
-    // Kerala Mess (P10A): SUPER_ADMIN administers service points, plans, account approvals and exceptional cancellation; MD reads only
+    // Kerala Mess (P10A): SUPER_ADMIN administers service points, plans, account approvals and exceptional cancellation
     'mess:read', 'mess:admin',
     // P10B: read-only visibility of the Mess kitchen (explicit branch); preparation transitions belong to CHEF only
-    'mess:kitchen:read', 'mess:delivery:read', 'mess:delivery:override'
+    'mess:kitchen:read', 'mess:delivery:read', 'mess:delivery:override', 'mess:delivery:operate'
   ],
-  [RoleEnum.MD]: ['kds:read', 'procurement:read', 'pos:read', 'delivery:read', 'branch:read', 'payments:read', 'refunds:read', 'mess:read', 'mess:kitchen:read', 'mess:delivery:read'],
   [RoleEnum.CHEF]: ['kds:read', 'kds:write', 'mess:kitchen:read', 'mess:kitchen:write'],
   [RoleEnum.PROCUREMENT]: ['procurement:read', 'procurement:write'],
-  [RoleEnum.POS]: ['pos:read', 'pos:write'],
-  [RoleEnum.DELIVERY]: ['delivery:read', 'delivery:write', 'mess:delivery:read', 'mess:delivery:write']
+  [RoleEnum.TRAINER]: ['trainer:write']
 };
 
 export function roleHasPermission(role: RoleEnum, permission: Permission): boolean {

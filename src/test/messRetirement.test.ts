@@ -51,7 +51,8 @@ describe('P10A web: retired mock Mess experience', () => {
 
   it('P10B: the Mess kitchen is a REAL production Chef tab (not dev-only), has no delivery / fulfilment / money code, and imports no mock data', () => {
     const chef = readFileSync(join(SRC, 'components', 'erp', 'ChefDashboard.tsx'), 'utf8');
-    expect(chef).toContain("{ id: 'mess_kitchen', label: 'Kerala Mess kitchen', icon: ChefHat }"); // outside the isDev spread
+    expect(chef).toContain("{ id: 'mess_kitchen', label: 'Kerala Mess kitchen', icon: ChefHat }");
+    expect(chef).not.toMatch(/import\.meta\.env\.DEV|mockData|mockKeralaMessData/);
     expect(chef).toMatch(/activeTab === 'mess_kitchen' && \(/);
     const panel = readFileSync(join(SRC, 'components', 'erp', 'kitchen', 'MessKitchenPanel.tsx'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     expect(panel).not.toMatch(/mockKeralaMessData|mockData|wallet|refund|\bCOD\b|cash|deliveryService|DeliveryWorkspace/i); // P10C: it may only RELEASE a ready batch: no handover, code or fulfilment control
@@ -71,19 +72,16 @@ describe('P10A web: retired mock Mess experience', () => {
     expect(app).toContain('<KeralaMessSection');
     expect(app).not.toMatch(/INITIAL_MESS_ACCOUNTS|INITIAL_MESS_DAILY_ORDERS|handlePauseMeal/);
   });
-  it('P10C: the delivery and handover UI has no money / cash / COD / gate-pass control, never stores the code, never reads it from a driver API and imports no mock data', () => {
+  it('P10C: the delivery and handover UI has no money / cash / COD / gate-pass control, never stores the code, (B2a) has no driver API and imports no mock data', () => {
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-    const panel = strip(readFileSync(join(SRC, 'components', 'erp', 'delivery', 'MessDeliveryPanel.tsx'), 'utf8'));
-    const code = strip(readFileSync(join(SRC, 'components', 'mess', 'HandoverCodePanel.tsx'), 'utf8'));
-    for (const [name, text] of [['MessDeliveryPanel', panel], ['HandoverCodePanel', code]] as const) {
+        const code = strip(readFileSync(join(SRC, 'components', 'mess', 'HandoverCodePanel.tsx'), 'utf8'));
+    for (const [name, text] of [['HandoverCodePanel', code]] as const) {
       expect(text, name).not.toMatch(/mockKeralaMessData|mockData|wallet|refund|\bCOD\b|cash|payment|gate\s*pass|hostelGatePass|cash_at_gate/i);
       expect(text, name).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie|console\./);
     }
-    // the driver panel can send a code but has no way to RECEIVE or display one
-    expect(panel).not.toMatch(/handoverState|issueHandoverCode|regenerateHandoverCode/);
     const svc = strip(readFileSync(join(SRC, 'services', 'messService.ts'), 'utf8'));
     expect(svc).not.toMatch(/gatepass|gate-pass|cash|\bCOD\b/i);
-    expect(svc).toContain('/mess/delivery/runs/');
+    expect(svc).not.toContain('/mess/delivery/runs/'); // B2a: the driver run calls were removed
   });
 
 });

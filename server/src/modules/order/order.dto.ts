@@ -55,6 +55,8 @@ export interface CustomerOrderDto {
   /** P7C (additive): whether the owner may cancel, and the derived refund state. Never provider ids, flags or internal detail. */
   cancellation?: DerivedOrderState['cancellation'];
   refund?: DerivedOrderState['refund'];
+  /** Staff-reviewed cancellation of a paid order the kitchen has started (additive; absent when not applicable). */
+  cancellationRequest?: DerivedOrderState['cancellationRequest'];
   /** P7D-G1: derived payment summary; canStartPayment is authoritative for the web UI. */
   payment?: DerivedOrderState['payment'];
   /** P9C: derived delivery label (ON_THE_WAY / DELIVERY_ISSUE / RETRY_PLANNED / UNDELIVERABLE_REFUND_PENDING / DELIVERED). Not an OrderStatus. */
@@ -105,6 +107,7 @@ export function toCustomerOrderDto(
   if (derived) {
     dto.cancellation = derived.cancellation;
     dto.refund = derived.refund;
+    if (derived.cancellationRequest) dto.cancellationRequest = derived.cancellationRequest;
     dto.payment = derived.payment;
     if (derived.delivery) dto.delivery = derived.delivery;
   }

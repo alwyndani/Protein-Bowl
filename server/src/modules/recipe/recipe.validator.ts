@@ -43,7 +43,8 @@ export const createRecipeSchema = z.object({
   flourGrainPreference: z.string().optional().nullable(),
   spiceLevel: z.string().optional().nullable(),
   image: z.string().optional().nullable(),
-  rating: z.number().default(4.8),
+  // No invented rating: an absent rating stays absent (never defaulted here). When supplied it must be a 0-5 score.
+  rating: z.number().min(0).max(5).optional(),
   prepSteps: z.array(z.string()).optional().default([]),
   ingredientsList: z.array(recipeIngredientInputSchema).optional().default([]),
   isPublished: z.boolean().optional().default(false),

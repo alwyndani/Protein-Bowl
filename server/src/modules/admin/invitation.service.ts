@@ -5,6 +5,7 @@ import { AppError } from '../../middleware/error.middleware.js';
 import { generateRandomToken, hashPassword, hashToken } from '../../utils/hash.js';
 import { validateStaffPassword } from '../../utils/staffPassword.js';
 import { hasMixedIdentity, isStaffRole } from '../../authz/roleScopes.js';
+import { isApprovedRole } from '../../authz/approvedRoles.js';
 import { AuditContext, AuditService } from '../audit/audit.service.js';
 import crypto from 'crypto';
 
@@ -76,7 +77,7 @@ export class InvitationService {
     else if (invitation.user.status !== 'PENDING') rejection = 'account_not_pending';
     else {
       const roles = invitation.user.roles.map((r) => r.role) as RoleEnum[];
-      if (roles.length === 0 || !roles.some(isStaffRole) || hasMixedIdentity(roles)) rejection = 'not_a_staff_identity';
+      if (roles.length === 0 || !roles.some(isStaffRole) || !roles.some(isApprovedRole) || hasMixedIdentity(roles)) rejection = 'not_a_staff_identity';
     }
 
     if (rejection || !invitation) {

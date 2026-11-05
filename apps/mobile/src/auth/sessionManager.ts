@@ -26,6 +26,7 @@ const REASON_BY_CODE: Record<string, SignedOutReason> = {
   TOKEN_REQUIRED: 'session_expired',
   ACCOUNT_INACTIVE: 'account_inactive',
   CUSTOMER_APP_ONLY: 'customer_only',
+  NO_APPROVED_ROLE: 'no_approved_role',
   APP_VERSION_UNSUPPORTED: 'update_required'
 };
 
@@ -187,6 +188,15 @@ export class SessionManager {
       auth: false
     });
     await this.establish(data);
+  }
+
+  /**
+   * Asks the server to email a password-reset link. The answer is identical for known and unknown addresses (no account enumeration), so this
+   * method resolves on any 2xx and says nothing about whether the account exists. The link opens the web reset page in the phone's browser.
+   * Never retried automatically.
+   */
+  async requestPasswordReset(email: string): Promise<void> {
+    await this.api.request<unknown>('/auth/forgot-password', { method: 'POST', body: { email }, auth: false });
   }
 
   private async establish(data: unknown): Promise<void> {

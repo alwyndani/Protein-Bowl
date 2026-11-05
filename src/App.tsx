@@ -13,67 +13,46 @@ import {
   ClientWorkoutPlan,
   ProgressPhoto,
   OneOnOneVideoSession,
-  OmnichannelOrder,
   KitchenBranchId,
-  StaffUserAccount,
   CloudKitchenBranch,
-  DirectGuestOrder,
   MessCustomerAccount,
   MessDailyOrder,
   MessMealSlot
 } from './types';
-import { 
-  INITIAL_CUSTOMER_PROFILE, 
-  INITIAL_DIET_PLAN_REQUESTS, 
-  INITIAL_ORDERS
-} from './data/mockData';
-import { INITIAL_OMNICHANNEL_ORDERS } from './data/mockOmnichannelData';
-import { CLOUD_KITCHEN_BRANCHES } from './data/cloudKitchensData';
-import { 
-  INITIAL_WORKOUT_PLAN, 
-  INITIAL_PROGRESS_PHOTOS, 
-  INITIAL_VIDEO_SESSIONS 
-} from './data/mockFitnessData';
-import { INITIAL_DIRECT_ORDERS } from './data/mockDirectOrdersData';
-import { ALL_RECIPES } from './data/recipeDatabase';
+import { BLANK_CUSTOMER_PROFILE } from './data/blankProfile';
+import { mapCustomerRequests } from './utils/dietMapping';
+import { DietService } from './services/dietService';
+import { usePublishedRecipes } from './hooks/usePublishedRecipes';
 
 // Shared Layout Components
 import { BrandHeader } from './components/common/BrandHeader';
 import { BrandFooter } from './components/common/BrandFooter';
 import { MenuCardModal } from './components/common/MenuCardModal';
-import { SRSDownloadModal } from './components/common/SRSDownloadModal';
 
 // Customer Components
-import { CustomerHome, CHEF_MENU_12_CATEGORIES } from './components/customer/CustomerHome';
+import { CustomerHome, CHEF_MENU_12_CATEGORIES, dishCount } from './components/customer/CustomerHome';
 import { HealthProfileWizard } from './components/customer/HealthProfileWizard';
 import { DietPlanBuilder } from './components/customer/DietPlanBuilder';
 import { CustomerPlanReview } from './components/customer/CustomerPlanReview';
 import { CustomerDashboard } from './components/customer/CustomerDashboard';
-import { CheckoutModal } from './components/customer/CheckoutModal';
 import { AuthModal } from './components/customer/AuthModal';
 import { DirectCartCheckoutModal } from './components/customer/DirectCartCheckoutModal';
 import { useOrderDeepLink } from './hooks/useOrderDeepLink';
 import { DirectOrderTrackingModal } from './components/customer/DirectOrderTrackingModal';
 
-// Kerala Mess & Swiggy/Zomato Aggregator Portals
+// Kerala Mess
 import { KeralaMessSection } from './components/mess/KeralaMessSection';
-import { SwiggyZomatoAggregatorPortal } from './components/mess/SwiggyZomatoAggregatorPortal';
 
-// ERP Staff Dashboards
-import { MDDashboard } from './components/erp/MDDashboard';
+// Staff dashboards (the six approved roles: CUSTOMER views above, then Super Admin, Nutritionist, Trainer, Chef, Procurement)
 import { AdminWorkspace } from './components/admin/AdminWorkspace';
-import { NutritionistDashboard } from './components/erp/NutritionistDashboard';
-import { TrainerDashboard } from './components/erp/TrainerDashboard';
+import { NutritionistWorkspace } from './components/erp/NutritionistWorkspace';
+import { TrainerWorkspace } from './components/staff/TrainerWorkspace';
 import { ChefDashboard } from './components/erp/ChefDashboard';
-import { ProcurementDashboard } from './components/erp/ProcurementDashboard';
-import { DeliveryDashboard } from './components/erp/DeliveryDashboard';
-import { DeliveryHome } from './components/erp/delivery/DeliveryHome';
-import { POSDashboard } from './components/erp/POSDashboard';
-import { BakeryFMCGDashboard } from './components/erp/BakeryFMCGDashboard';
-import { TepacheBreweryDashboard } from './components/erp/TepacheBreweryDashboard';
+import { ProcurementWorkspace } from './components/staff/ProcurementWorkspace';
 
 export function App() {
   const auth = useAuth();
+  const published = usePublishedRecipes(); // the customer menu = recipes a Super Admin published
   const cart = useCart();
 
   // Role & Navigation State
@@ -84,22 +63,18 @@ export function App() {
   const currentRole: UserRole = isUiRoleAllowed(requestedRole, auth.user?.roles, import.meta.env.DEV) ? requestedRole : 'customer';
   const [activeTab, setActiveTab] = useState<string>('home');
   const [selectedMenuFilter, setSelectedMenuFilter] = useState<string>('All');
-  const [currentBranchId, setCurrentBranchId] = useState<KitchenBranchId>('all');
-  const [branches, setBranches] = useState<CloudKitchenBranch[]>(CLOUD_KITCHEN_BRANCHES);
 
-  // Direct FMCG & Tepache checkout / order-tracking modals. The cart itself lives on the SERVER (CartContext).
+  // Direct (storefront) checkout / order-tracking modals. The cart itself lives on the SERVER (CartContext).
   const [isCartCheckoutOpen, setIsCartCheckoutOpen] = useState<boolean>(false);
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState<boolean>(false);
   const [trackingLookupOrderNumber, setTrackingLookupOrderNumber] = useState<string>('');
-  const [guestOrders, setGuestOrders] = useState<DirectGuestOrder[]>(INITIAL_DIRECT_ORDERS);
-  const [isSRSModalOpen, setIsSRSModalOpen] = useState<boolean>(false);
 
   // Customer Profile & Authentication State
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
-  const [profile, setProfile] = useState<CustomerProfile>(INITIAL_CUSTOMER_PROFILE);
-  const [requests, setRequests] = useState<DietPlanRequest[]>(INITIAL_DIET_PLAN_REQUESTS);
-  const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
-  const [omnichannelOrders, setOmnichannelOrders] = useState<OmnichannelOrder[]>(INITIAL_OMNICHANNEL_ORDERS);
+  // No demo data: the profile, diet requests and orders start EMPTY and are filled only from the signed-in customer's own server data.
+  const [profile, setProfile] = useState<CustomerProfile>(BLANK_CUSTOMER_PROFILE);
+  const [requests, setRequests] = useState<DietPlanRequest[]>([]);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
 
   // Synchronize authenticated backend user with app state and load real customer biometrics
   useEffect(() => {
@@ -108,16 +83,28 @@ export function App() {
       const mappedRole = mapBackendRoleToUserRole(auth.user.roles);
       setCurrentRole(mappedRole);
 
-      // Fetch real persisted customer profile & biometrics from backend API
-      CustomerService.getMyProfile().then((res) => {
-        if (res.success && res.data) {
+      if (mappedRole !== 'customer') return; // staff sessions have no customer profile or diet requests
+      let cancelled = false;
+      // Fetch the real persisted customer profile & biometrics, then the customer's own diet requests, from the backend API
+      (async () => {
+        try {
+          const res = await CustomerService.getMyProfile();
+          if (cancelled || !res.success || !res.data) return;
           setProfile(res.data);
+          const mine = await DietService.getMyRequests();
+          if (!cancelled) setRequests(mapCustomerRequests(mine, res.data));
+        } catch {
+          // The screens simply show their empty state; nothing is invented.
         }
-      }).catch((_err) => {
-        // Fallback to local profile if API call fails
-      });
+      })();
+      return () => {
+        cancelled = true;
+      };
     } else if (!auth.isLoading && !auth.isAuthenticated) {
       setIsLoggedIn(false);
+      // A signed-out browser must never keep the previous person's data in memory.
+      setProfile(BLANK_CUSTOMER_PROFILE);
+      setRequests([]);
     }
   }, [auth.isAuthenticated, auth.user, auth.isLoading]);
 
@@ -148,42 +135,13 @@ export function App() {
     setActiveTab('home');
   };
 
-  // Add new branch outlet
-  const handleAddBranch = (newBranch: CloudKitchenBranch) => {
-    setBranches((prev) => [...prev, newBranch]);
-  };
-
-  // Switch to specific staff account & kitchen branch
-  const handleSwitchStaffAccount = (staff: StaffUserAccount) => {
-    setCurrentRole(staff.role as UserRole);
-    setCurrentBranchId(staff.assignedBranchId);
-  };
-
-  // Omnichannel Handlers
-  const handleAddOmnichannelOrder = (newOrder: OmnichannelOrder) => {
-    setOmnichannelOrders((prev) => [newOrder, ...prev]);
-  };
-
-  const handleUpdateOmnichannelOrder = (updatedOrder: OmnichannelOrder) => {
-    setOmnichannelOrders((prev) =>
-      prev.map((o) => (o.id === updatedOrder.id ? updatedOrder : o))
-    );
-  };
-
-  const handleDeleteOmnichannelOrder = (orderId: string) => {
-    setOmnichannelOrders((prev) => prev.filter((o) => o.id !== orderId));
-  };
-
-  // Fitness Module State
-  const [workoutPlan, setWorkoutPlan] = useState<ClientWorkoutPlan>(INITIAL_WORKOUT_PLAN);
-  const [progressPhotos, setProgressPhotos] = useState<ProgressPhoto[]>(INITIAL_PROGRESS_PHOTOS);
-  const [videoSessions, setVideoSessions] = useState<OneOnOneVideoSession[]>(INITIAL_VIDEO_SESSIONS);
+  // Workout plans are real data now (trainer API, shown by CustomerWorkouts); no fitness demo state exists here.
 
   // Modals State
   const [selectedRecipeModal, setSelectedRecipeModal] = useState<RecipeItem | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
-  const [authModalInitialMode, setAuthModalInitialMode] = useState<'signin' | 'signup' | 'employee_login'>('signin');
-  const [checkoutModalOpen, setCheckoutModalOpen] = useState<boolean>(false);
+  const [authModalInitialMode, setAuthModalInitialMode] = useState<'signin' | 'signup' | 'employee_login' | 'health_capture'>('signin');
+  const [authModalKey, setAuthModalKey] = useState(0); // bumping it re-opens the modal with a freshly loaded profile
   const [pendingCustomerAction, setPendingCustomerAction] = useState<(() => void) | null>(null);
 
   /**
@@ -250,16 +208,18 @@ export function App() {
   ) || requests[0];
 
   // Callback when user updates health profile
-  const handleUpdateProfile = (updatedProfile: CustomerProfile) => {
-    setProfile(updatedProfile);
-    CustomerService.updateMyProfile(updatedProfile).then((res) => {
-      if (res.success && res.data) {
-        setProfile(res.data);
-      }
-    }).catch((_err) => {
-      // Retain optimistic UI state if offline
-    });
-    setActiveTab('plan_builder');
+  // The profile feeds the diet request, so the customer moves on only after the server stored it; a failure is shown, never hidden.
+  const handleUpdateProfile = async (updatedProfile: CustomerProfile): Promise<boolean> => {
+    setProfileSaveError(null);
+    try {
+      const res = await CustomerService.updateMyProfile(updatedProfile);
+      if (!res.success || !res.data) throw new Error('profile not saved');
+      setProfile(res.data);
+      return true;
+    } catch {
+      setProfileSaveError('Your health profile could not be saved. Please check your connection and try again.');
+      return false;
+    }
   };
 
   // Callback when user submits new diet subscription request
@@ -297,21 +257,9 @@ export function App() {
     setActiveTab('home');
   };
 
-  // Callback when Customer approves & completes payment in CheckoutModal
-  const handleOrderSuccess = (newOrder: Order) => {
-    setOrders([newOrder, ...orders]);
-    // Update request status to approved
-    setRequests((prev) =>
-      prev.map((r) => (r.id === newOrder.planId ? { ...r, status: 'approved' as const } : r))
-    );
-    setActiveTab('dashboard');
-  };
-
-  // Callback when Delivery status is updated
-  const handleUpdateOrderStatus = (orderId: string, status: Order['orderStatus']) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, orderStatus: status } : o))
-    );
+  // Callback after the SERVER accepted the customer's approval of a plan. There is no diet-plan payment/checkout: approval is only an approval.
+  const handlePlanApproved = (req: DietPlanRequest) => {
+    setRequests((prev) => prev.map((r) => (r.id === req.id ? { ...r, status: 'approved' as const } : r)));
   };
 
   // Storefront cart handlers: every add goes to the SERVER cart; unauthenticated users are asked to log in first.
@@ -381,23 +329,24 @@ export function App() {
             setAuthModalOpen(true);
           }}
           onLogout={handleLogout}
-          activeOrdersCount={orders.length}
           hideRoleDemo={currentRole === 'customer' || activeTab === 'health_profile'}
-          selectedBranchId={currentBranchId}
-          onSelectBranch={(b) => setCurrentBranchId(b)}
-          branches={branches}
           cartItemsCount={cartItemsCount}
           cartTotal={cartTotal}
           onOpenCart={() => requireCustomerAuth(() => setIsCartCheckoutOpen(true))}
           onOpenDirectTracking={() => requireCustomerAuth(() => setIsTrackingModalOpen(true))}
-          onOpenSRS={() => setIsSRSModalOpen(true)}
           onOpenKeralaMessPortal={handleOpenKeralaMessPortal}
         />
       )}
 
       {/* Main Screen Content Router */}
       <main className="flex-1">
-        
+        {profileSaveError && (
+          <div role="alert" className="max-w-3xl mx-auto mt-4 px-4 py-3 rounded-xl bg-rose-50 border border-rose-200 text-sm font-bold text-rose-800 flex items-center justify-between gap-3">
+            <span>{profileSaveError}</span>
+            <button type="button" onClick={() => setProfileSaveError(null)} className="underline text-xs">Dismiss</button>
+          </div>
+        )}
+
         {/* CUSTOMER PORTAL VIEWS */}
         {currentRole === 'customer' && (
           <>
@@ -424,8 +373,7 @@ export function App() {
                 <HealthProfileWizard
                   initialProfile={profile}
                   onSaveProfile={handleUpdateProfile}
-                  onProceedToCustomerModule={(updatedProfile) => {
-                    setProfile(updatedProfile);
+                  onProceedToCustomerModule={() => {
                     setIsLoggedIn(true);
                     setActiveTab('dashboard');
                   }}
@@ -437,7 +385,7 @@ export function App() {
               <div className="max-w-5xl mx-auto px-4 py-8">
                 <DietPlanBuilder
                   profile={profile}
-                  onSubmitPlanRequest={handleSubmitDietRequest}
+                  onSubmitRequest={handleSubmitDietRequest}
                 />
               </div>
             )}
@@ -446,7 +394,7 @@ export function App() {
               <CustomerPlanReview
                 request={pendingCustomerRequest}
                 profile={profile}
-                onApproveAndCheckout={() => setCheckoutModalOpen(true)}
+                onApproved={handlePlanApproved}
                 onRequestRevision={handleRequestRevision}
                 onRejectPlan={handleRejectPlan}
                 onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)}
@@ -456,16 +404,8 @@ export function App() {
             {activeTab === 'dashboard' && (
               <CustomerDashboard
                 profile={profile}
-                orders={orders}
-                onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)}
-                workoutPlan={workoutPlan}
-                onUpdateWorkoutPlanRequest={(level, split, reqs) => {
-                  setWorkoutPlan(prev => ({ ...prev, fitnessLevel: level, splitType: split, specificRequirements: reqs }));
-                }}
-                progressPhotos={progressPhotos}
-                onUploadProgressPhoto={(newPhoto) => setProgressPhotos(prev => [newPhoto, ...prev])}
-                videoSessions={videoSessions}
-                onBookVideoSession={(newSession) => setVideoSessions(prev => [newSession, ...prev])}
+                onNavigate={handleSelectCustomerTab}
+                onOpenOrders={() => { setTrackingLookupOrderNumber(''); setIsTrackingModalOpen(true); }}
               />
             )}
 
@@ -500,7 +440,7 @@ export function App() {
                           : 'bg-stone-900 text-stone-300 border-stone-800 hover:bg-stone-800'
                       }`}
                     >
-                      Show All Categories ({ALL_RECIPES.length} Dishes)
+                      Show All Categories ({published.status === 'ready' ? published.recipes.length : '…'} Dishes)
                     </button>
                   </div>
 
@@ -523,7 +463,7 @@ export function App() {
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                               active ? 'bg-emerald-400 text-stone-950 font-black' : 'bg-stone-800 text-stone-400'
                             }`}>
-                              {cat.count}
+                              {published.status === 'ready' ? dishCount(published.recipes, cat.id) : '…'}
                             </span>
                           </div>
                           <div>
@@ -540,11 +480,17 @@ export function App() {
                   </div>
                 </div>
 
+                {published.status === 'error' && (
+                  <div role="alert" className="flex items-center justify-between gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/50 px-4 py-3 text-sm text-rose-200">
+                    <span>The menu could not be loaded.</span>
+                    <button type="button" onClick={published.reload} className="font-black underline">Retry</button>
+                  </div>
+                )}
                 {/* Filtered Recipe Cards */}
                 {(() => {
                   const filtered = selectedMenuFilter === 'All'
-                    ? ALL_RECIPES
-                    : ALL_RECIPES.filter((r) => {
+                    ? published.recipes
+                    : published.recipes.filter((r) => {
                         if (selectedMenuFilter === 'Desserts, Snacks & Bites') {
                           return r.category.includes('Dessert') || r.category.includes('Snacks') || r.category.includes('Bites') || r.category.includes('Beverage');
                         }
@@ -608,110 +554,24 @@ export function App() {
         {/* SUPER ADMIN WORKSPACE (platform administration; separate from the MD experience) */}
         {currentRole === 'super_admin' && <AdminWorkspace />}
 
-        {/* ERP STAFF PORTAL VIEWS */}
-        {currentRole === 'md' && (
-          <MDDashboard 
-            requests={requests} 
-            orders={orders} 
-            omnichannelOrders={omnichannelOrders}
-            onAddOmnichannelOrder={handleAddOmnichannelOrder}
-            onUpdateOmnichannelOrder={handleUpdateOmnichannelOrder}
-            onDeleteOmnichannelOrder={handleDeleteOmnichannelOrder}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-            onSwitchStaffAccount={handleSwitchStaffAccount}
-            branches={branches}
-            onAddBranch={handleAddBranch}
-            onOpenSRS={() => setIsSRSModalOpen(true)}
-          />
-        )}
-
-        {/* STANDALONE POS CASHIER & STATEWIDE OUTLET BILLING PORTAL */}
-        {currentRole === 'pos' && (
-          <POSDashboard
-            branches={branches}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-          />
-        )}
-
+        {/* STAFF DASHBOARDS (approved staff roles only) */}
         {currentRole === 'nutritionist' && (
-          <NutritionistDashboard
-            requests={requests}
-            customerProfile={profile}
-            onUpdatePlan={handleUpdatePlanByNutritionist}
-            onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)}
-          />
+          <NutritionistWorkspace onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)} />
         )}
 
         {currentRole === 'trainer' && (
-          <TrainerDashboard
-            clientProfile={profile}
-            workoutPlan={workoutPlan}
-            onUpdateWorkoutPlan={(updatedPlan) => setWorkoutPlan(updatedPlan)}
-            progressPhotos={progressPhotos}
-            videoSessions={videoSessions}
-            onUpdateVideoSessions={(sessions) => setVideoSessions(sessions)}
-          />
+          <TrainerWorkspace />
         )}
 
         {currentRole === 'chef' && (
-          <ChefDashboard
-            orders={orders}
-            onOpenMenuModal={(recipe) => setSelectedRecipeModal(recipe)}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-            onSessionExpired={handleSessionExpired}
-          />
+          <ChefDashboard onSessionExpired={handleSessionExpired} />
         )}
 
         {currentRole === 'procurement' && (
-          <ProcurementDashboard 
-            orders={orders}
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-          />
+          <ProcurementWorkspace />
         )}
 
-        {/* P9A: production = the real, backend-derived delivery workspace. The mock dashboard is kept for development only. */}
-        {currentRole === 'delivery' && (
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-            <DeliveryHome onSessionExpired={handleSessionExpired} />
-            {import.meta.env.DEV && (
-              <section aria-label="Demo (mock data)" data-testid="delivery-demo">
-                <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-amber-700">Demo (mock data), development only</p>
-                <DeliveryDashboard
-                  orders={orders}
-                  onUpdateOrderStatus={handleUpdateOrderStatus}
-                  selectedBranchId={currentBranchId}
-                  onSelectBranch={(b) => setCurrentBranchId(b)}
-                />
-              </section>
-            )}
-          </div>
-        )}
-
-        {/* SWIGGY & ZOMATO AGGREGATOR BUFFER MANAGER */}
-        {currentRole === 'swiggy_zomato' && (
-          <SwiggyZomatoAggregatorPortal
-            selectedBranchId={currentBranchId}
-            onSelectBranch={(b) => setCurrentBranchId(b)}
-            onSwitchToChef={() => setCurrentRole('chef')}
-          />
-        )}
-
-        {currentRole === 'bakery_fmcg' && (
-          <BakeryFMCGDashboard
-            onSwitchRole={(r) => setCurrentRole(r as UserRole)}
-          />
-        )}
-
-        {currentRole === 'tepache_erp' && (
-          <TepacheBreweryDashboard
-            onBackToHome={() => setCurrentRole('customer')}
-            guestOrders={guestOrders}
-          />
-        )}
+        {/* Delivery is operated by a SUPER_ADMIN from the admin workspace; there is no driver, POS, MD, FMCG, Tepache or aggregator workspace. */}
 
       </main>
 
@@ -726,14 +586,12 @@ export function App() {
           setAuthModalInitialMode('employee_login');
           setAuthModalOpen(true);
         }}
-        onOpenSRS={() => setIsSRSModalOpen(true)}
       />
 
       {/* Modals */}
       {selectedRecipeModal && (
         <MenuCardModal
           recipe={selectedRecipeModal}
-          isOpen={!!selectedRecipeModal}
           onClose={() => setSelectedRecipeModal(null)}
           userRole={currentRole}
         />
@@ -741,10 +599,17 @@ export function App() {
 
       {authModalOpen && (
         <AuthModal
+          key={authModalKey}
           isOpen={authModalOpen}
-          onClose={() => setAuthModalOpen(false)}
+          onClose={() => { setAuthModalOpen(false); setAuthModalInitialMode('signin'); }}
           initialProfile={profile}
           initialMode={authModalInitialMode}
+          onProfileLoaded={(stored) => {
+            // Signed in, profile incomplete: re-open the modal on the health step, prefilled from what the server holds.
+            setProfile(stored);
+            setAuthModalInitialMode('health_capture');
+            setAuthModalKey((k) => k + 1);
+          }}
           onSuccessLogin={(authenticatedUser) => {
             setProfile(authenticatedUser);
             setIsLoggedIn(true);
@@ -760,16 +625,6 @@ export function App() {
             setCurrentRole(role);
             setAuthModalOpen(false);
           }}
-        />
-      )}
-
-      {checkoutModalOpen && pendingCustomerRequest && (
-        <CheckoutModal
-          isOpen={checkoutModalOpen}
-          onClose={() => setCheckoutModalOpen(false)}
-          request={pendingCustomerRequest}
-          profile={profile}
-          onOrderSuccess={handleOrderSuccess}
         />
       )}
 
@@ -794,12 +649,6 @@ export function App() {
         }}
         onSessionExpired={handleSessionExpired}
         initialOrderNumber={trackingLookupOrderNumber}
-      />
-
-      {/* Software Requirements Specification (SRS) Modal */}
-      <SRSDownloadModal
-        isOpen={isSRSModalOpen}
-        onClose={() => setIsSRSModalOpen(false)}
       />
 
     </div>

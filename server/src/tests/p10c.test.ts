@@ -19,7 +19,7 @@ import { hashCode as p9HashCode } from '../modules/delivery/deliveryProof.servic
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 const mock = getPaymentProvider() as MockPaymentProvider;
 const PASSWORD = 'P10c#Admin-Pass-2026-xyz';
-const sign = (userId: string, email: string, roles: RoleEnum[]) => jwt.sign({ userId, email, roles }, process.env.JWT_ACCESS_SECRET!, { expiresIn: '2d' });
+const sign = (userId: string, email: string, roles: RoleEnum[]) => jwt.sign({ userId, email, roles }, process.env.JWT_ACCESS_SECRET!, { expiresIn: '30d' });
 const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
 
 describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment and completion', () => {
@@ -46,13 +46,21 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       vi.useRealTimers();
     }
   };
+  // A step-up proof lives 5 minutes. Tests that move the clock hours away from the real time must hold a proof that is valid AT THAT CLOCK
+  // (otherwise they would pass or fail depending on the real time of day), so one is minted inside the moved clock and again after it.
+  const mintStep = async () => {
+    const r = await request(app).post('/api/v1/admin/step-up').set(bearer(who.admin.token)).send({ password: PASSWORD });
+    step = r.body.data.stepUpToken;
+  };
   const atInstant = async <T>(iso: string, fn: () => Promise<T>): Promise<T> => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(iso));
     try {
+      await mintStep();
       return await fn();
     } finally {
       vi.useRealTimers();
+      await mintStep();
     }
   };
 
@@ -144,11 +152,13 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
   const releaseReq = (label: string, id: string, body: unknown = {}) => send('post', `/api/v1/mess/kitchen/batches/${id}/release`, who[label].token, body);
   const dget = (label: string, path: string) => get(`/api/v1/mess/delivery${path}`, who[label].token);
   const dpost = (label: string, path: string, body: unknown = {}) => send('post', `/api/v1/mess/delivery${path}`, who[label].token, body);
-  const claim = (label: string, runId: string) => dpost(label, `/runs/${runId}/claim`);
-  const dispatch = (label: string, runId: string) => dpost(label, `/runs/${runId}/dispatch`);
-  const verify = (label: string, runId: string, stopId: string, code: string) => dpost(label, `/runs/${runId}/stops/${stopId}/verify`, { code });
-  const failStop = (label: string, runId: string, stopId: string, body: unknown = { reasonCode: 'RECIPIENT_UNAVAILABLE' }) => dpost(label, `/runs/${runId}/stops/${stopId}/fail`, body);
-  const retryStop = (label: string, runId: string, stopId: string) => dpost(label, `/runs/${runId}/stops/${stopId}/retry`);
+  const isLegacyDriver = (label: string) => /^(wd[12]\d+|driverX)$/.test(label);
+  const apost = (label: string, path: string, body: unknown = {}) => send('post', `/api/v1/admin/mess/delivery${path}`, who[isLegacyDriver(label) ? 'admin' : label].token, body, { step });
+  const claim = (label: string, runId: string) => apost(label, `/runs/${runId}/claim`);
+  const dispatch = (label: string, runId: string) => apost(label, `/runs/${runId}/dispatch`);
+  const verify = (label: string, runId: string, stopId: string, code: string) => apost(label, `/runs/${runId}/stops/${stopId}/verify`, { code });
+  const failStop = (label: string, runId: string, stopId: string, body: unknown = { reasonCode: 'RECIPIENT_UNAVAILABLE' }) => apost(label, `/runs/${runId}/stops/${stopId}/fail`, body);
+  const retryStop = (label: string, runId: string, stopId: string) => apost(label, `/runs/${runId}/stops/${stopId}/retry`);
   const codeUrl = (subId: string, mealId: string) => `/api/v1/mess/subscriptions/${subId}/meals/${mealId}/handover-code`;
   const issue = (label: string, subId: string, mealId: string) => send('post', codeUrl(subId, mealId), who[label].token, {});
   const regen = (label: string, subId: string, mealId: string) => send('post', `${codeUrl(subId, mealId)}/regenerate`, who[label].token, {});
@@ -306,62 +316,58 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
   });
 
   // =============================================================================================== B. claim / dispatch / privacy
-  describe('B. claim and dispatch (one DELIVERY employee owns the run)', () => {
-    it('6. two drivers race to claim: exactly one wins, the loser gets 409 and can no longer see the run', async () => {
+  describe('B. claim and dispatch (operated by the SUPER_ADMIN; the driver surface is gone)', () => {
+    it('6. every former driver route answers 404 for every role, and a legacy DELIVERY account is refused on the administrator routes', async () => {
       const w = await world();
       const r = await released(w);
-      const [x, y] = await Promise.all([claim(w.d1, r.runId), claim(w.d2, r.runId)]);
-      expect([x.status, y.status].sort()).toEqual([200, 409]);
-      const winner = x.status === 200 ? w.d1 : w.d2;
-      const loser = x.status === 200 ? w.d2 : w.d1;
-      expect((x.status === 409 ? x : y).body.error).toBe('ALREADY_CLAIMED');
-      expect((await runRow(r.runId)).claimedByEmployeeId).toBe(who[winner].employeeId);
-      expect((await dget(loser, `/runs/${r.runId}`)).status).toBe(404);
-      expect((await dget(winner, `/runs/${r.runId}`)).status).toBe(200);
-      expect((await dget(loser, '/runs')).body.data.available.find((x2: { id: string }) => x2.id === r.runId)).toBeUndefined();
+      const paths: Array<['get' | 'post', string]> = [['get', '/runs'], ['get', `/runs/${r.runId}`], ['post', `/runs/${r.runId}/claim`], ['post', `/runs/${r.runId}/dispatch`], ['post', `/runs/${r.runId}/stops/${r.stopA.id}/verify`], ['post', `/runs/${r.runId}/stops/${r.stopA.id}/fail`], ['post', `/runs/${r.runId}/stops/${r.stopA.id}/retry`]];
+      for (const [method, p] of paths) {
+        for (const l of [w.d1, 'driverX', 'admin', w.chef]) {
+          const res = method === 'get' ? await dget(l, p) : await dpost(l, p, { code: '123456', reasonCode: 'OTHER' });
+          expect([method, p, l, res.status]).toEqual([method, p, l, 404]);
+        }
+      }
+      for (const l of [w.d1, w.d2, 'driverX']) {
+        const res = await send('post', `/api/v1/admin/mess/delivery/runs/${r.runId}/claim`, who[l].token, {}, { step });
+        expect([l, res.status]).toEqual([l, 403]);
+      }
+      expect(await runRow(r.runId)).toMatchObject({ status: 'AVAILABLE', claimedByEmployeeId: null, claimedByUserId: null });
     });
 
-    it('7. claim is branch-scoped and DELIVERY-only: foreign driver 404, CHEF / SUPER_ADMIN / MD / customer 403; replay by the owner is a no-op', async () => {
+    it('7. the administrator claims and dispatches: only SUPER_ADMIN may, replays are a no-op, an unknown run is 404', async () => {
       const w = await world();
       const r = await released(w);
-      expect((await claim('driverX', r.runId)).status).toBe(404);
-      for (const l of [w.chef, 'admin', 'md', w.a1]) expect((await claim(l, r.runId)).status, l).toBe(403);
-      expect((await claim(w.d1, r.runId)).status).toBe(200);
-      const replay = await claim(w.d1, r.runId);
-      expect(replay.status).toBe(200);
-      expect(replay.body.data.changed).toBe(false);
-      expect((await audits('MESS_RUN_CLAIMED', r.runId)).length).toBe(1);
-      expect((await claim(w.d1, randomUUID())).status).toBe(404);
-    });
-
-    it('8. dispatch: owner only, CLAIMED -> IN_TRANSIT, replay is idempotent; another driver and unclaimed dispatch are refused', async () => {
-      const w = await world();
-      const r = await released(w);
-      expect((await dispatch(w.d1, r.runId)).status).toBe(404); // not the owner (nobody owns it yet)
-      expect((await claim(w.d1, r.runId)).status).toBe(200);
-      expect((await dispatch(w.d2, r.runId)).status).toBe(404);
-      for (const l of [w.chef, 'admin', 'md']) expect((await dispatch(l, r.runId)).status, l).toBe(403);
-      const d = await dispatch(w.d1, r.runId);
-      expect(d.status).toBe(200);
-      expect(d.body.data.changed).toBe(true);
+      for (const l of [w.chef, 'md', w.a1, w.d1]) expect((await send('post', `/api/v1/admin/mess/delivery/runs/${r.runId}/claim`, who[l].token, {}, { step })).status, l).toBe(403);
+      expect((await dispatch('admin', r.runId)).body.error).toBe('RUN_NOT_OPERATED'); // nothing is claimed yet
+      expect((await claim('admin', r.runId)).status).toBe(200);
+      const replay = await claim('admin', r.runId);
+      expect([replay.status, replay.body.data.changed]).toEqual([200, false]);
+      const d = await dispatch('admin', r.runId);
+      expect([d.status, d.body.data.changed]).toEqual([200, true]);
       expect((await runRow(r.runId)).status).toBe('IN_TRANSIT');
-      const again = await dispatch(w.d1, r.runId);
-      expect(again.body.data.changed).toBe(false);
+      expect((await dispatch('admin', r.runId)).body.data.changed).toBe(false);
+      expect((await audits('MESS_RUN_CLAIMED', r.runId)).length).toBe(1);
       expect((await audits('MESS_RUN_DISPATCHED', r.runId)).length).toBe(1);
-      expect((await claim(w.d2, r.runId)).status).toBe(409);
+      expect((await claim('admin', randomUUID())).status).toBe(404);
     });
 
-    it('9. the DELIVERY DTO has service-point data and quantities only: no customer, room, phone, student id, payment, recipient or proof data', async () => {
+    it('8. the Mess delivery driver router holds only the SUPER_ADMIN monitor (static)', () => {
+      const code = readFileSync(join(__dirname, '..', 'modules', 'mess', 'messDelivery.routes.ts'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      expect(code.match(/router\.(get|post|put|patch|delete)\(/g)).toHaveLength(1);
+      expect(code).not.toMatch(/DELIVERY/);
+    });
+
+    it('9. the monitor shows service-point data and quantities only: no customer, room, phone, student id, payment, recipient or proof data', async () => {
       const w = await world();
       const r = await dispatched(w);
       await codeFor(w, r);
-      const list = await dget(w.d1, '/runs');
-      const one = await dget(w.d1, `/runs/${r.runId}`);
-      const text = JSON.stringify([list.body, one.body]);
+      const mon = await get(`/api/v1/mess/delivery/monitor?branchId=${w.branch.id}`, who.admin.token);
+      expect(mon.status, JSON.stringify(mon.body)).toBe(200);
+      const text = JSON.stringify(mon.body);
       expect(text).not.toMatch(/@test\.com|P10C wa|P10C wb|roomNumber|phone|studentId|amount|wallet|refund|payment|recipient|codeHash|codeVersion|failedCodeAttempts|customer/i);
-      const stop = one.body.data.run.stops.find((s: { id: string }) => s.id === r.stopA.id);
-      expect(Object.keys(stop).sort()).toEqual(['attempt', 'closedAt', 'expectedQuantity', 'failureCode', 'handedOverAt', 'handoverMethod', 'id', 'proof', 'servicePoint', 'status'].sort());
-      expect(stop.servicePoint).toEqual({ name: w.sp1.name, gateLabel: 'Gate 1', addressLine: `${w.n} Campus Road`, city: 'Kochi', postalCode: '682001', deliveryInstructions: 'Ring the bell twice' });
+      const run = mon.body.data.runs.find((x: { id: string }) => x.id === r.runId);
+      const stop = run.stops.find((x: { id: string }) => x.id === r.stopA.id);
+      expect(stop.servicePoint).toMatchObject({ name: w.sp1.name, gateLabel: 'Gate 1', city: 'Kochi', postalCode: '682001', deliveryInstructions: 'Ring the bell twice' });
       expect(stop.proof.state).toBe('READY_FOR_VERIFICATION');
     });
   });
@@ -507,7 +513,7 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect(v.status, JSON.stringify(v.body)).toBe(200);
       expect(v.body.data.changed).toBe(true);
       const stop = await stopRow(r.stopA.id);
-      expect(stop).toMatchObject({ status: 'HANDED_OVER', handoverMethod: 'CODE', handedOverByEmployeeId: who[w.d1].employeeId });
+      expect(stop).toMatchObject({ status: 'HANDED_OVER', handoverMethod: 'CODE', handedOverByEmployeeId: null, handedOverByUserId: who.admin.id });
       expect(stop.handedOverAt).toBeTruthy();
       const meals = await prisma.messMeal.findMany({ where: { batchId: r.batchId } });
       for (const m of meals) {
@@ -526,17 +532,15 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect((await audits('MESS_STOP_HANDED_OVER', r.stopA.id)).length).toBe(1);
     });
 
-    it('17. only the OWNER can verify: another driver / foreign driver 404; CHEF, SUPER_ADMIN, MD and customers 403; the code cannot be used on another stop', async () => {
+    it('17. only a SUPER_ADMIN enters the code: CHEF, MD, customers and a legacy driver token are refused; the code cannot be used on another stop', async () => {
       const w = await world();
       const r = await dispatched(w);
       const { code } = await codeFor(w, r);
-      expect((await verify(w.d2, r.runId, r.stopA.id, code)).status).toBe(404);
-      expect((await verify('driverX', r.runId, r.stopA.id, code)).status).toBe(404);
-      for (const l of [w.chef, 'admin', 'md', w.a1]) expect((await verify(l, r.runId, r.stopA.id, code)).status, l).toBe(403);
-      expect((await verify(w.d1, r.runId, randomUUID(), code)).status).toBe(404);
+      for (const l of [w.chef, 'md', w.a1, w.d2, 'driverX']) expect((await send('post', `/api/v1/admin/mess/delivery/runs/${r.runId}/stops/${r.stopA.id}/verify`, who[l].token, { code }, { step })).status, l).toBe(403);
+      expect((await verify('admin', r.runId, randomUUID(), code)).status).toBe(404);
       const mB = await mealAt(r.subs[w.b1].id, today);
       await issue(w.b1, r.subs[w.b1].id, mB.id);
-      const cross = await verify(w.d1, r.runId, r.stopB.id, code); // stop A's code on stop B
+      const cross = await verify('admin', r.runId, r.stopB.id, code); // stop A's code on stop B
       expect(cross.status).toBe(422);
       expect((await stopRow(r.stopA.id)).status).toBe('PENDING');
     });
@@ -578,7 +582,7 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
     it('19. no code can be verified before one was issued; and not for a run that is not on the road', async () => {
       const w = await world();
       const r = await released(w);
-      expect((await verify(w.d1, r.runId, r.stopA.id, '123456')).status).toBe(404); // not claimed yet: invisible
+      expect((await verify(w.d1, r.runId, r.stopA.id, '123456')).status).toBe(409); // not claimed yet (RUN_NOT_OPERATED)
       expect((await claim(w.d1, r.runId)).status).toBe(200);
       const notRoad = await verify(w.d1, r.runId, r.stopA.id, '123456');
       expect(notRoad.status).toBe(409);
@@ -637,8 +641,8 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect((await failStop(w.d1, r.runId, r.stopA.id, { reasonCode: 'LOST_KEYS' })).status).toBe(422);
       expect((await failStop(w.d1, r.runId, r.stopA.id, { reasonCode: 'OTHER' })).status).toBe(422);
       expect((await failStop(w.d1, r.runId, r.stopA.id, { reasonCode: 'VEHICLE_ISSUE', amount: 5 })).status).toBe(422);
-      for (const l of [w.chef, 'admin', 'md', w.a1]) expect((await failStop(l, r.runId, r.stopA.id)).status, l).toBe(403);
-      expect((await failStop(w.d2, r.runId, r.stopA.id)).status).toBe(404);
+      for (const l of [w.chef, 'md', w.a1]) expect((await failStop(l, r.runId, r.stopA.id)).status, l).toBe(403);
+      expect((await send('post', `/api/v1/admin/mess/delivery/runs/${r.runId}/stops/${r.stopA.id}/fail`, who[w.d2].token, { reasonCode: 'VEHICLE_ISSUE' }, { step })).status).toBe(403); // a retired driver token
       const f = await failStop(w.d1, r.runId, r.stopA.id, { reasonCode: 'OTHER', note: 'Gate was locked after repeated calls' });
       expect(f.status, JSON.stringify(f.body)).toBe(200);
       const stop = await stopRow(r.stopA.id);
@@ -759,8 +763,6 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect(run.status).toBe('COMPLETED');
       expect(run.completedAt).toBeTruthy();
       expect((await audits('MESS_RUN_COMPLETED', r.runId)).length).toBe(1);
-      const mine = await dget(w.d1, '/runs');
-      expect(mine.body.data.mine.find((x: { id: string }) => x.id === r.runId).status).toBe('COMPLETED');
     });
 
     it('30. the last two stops handed over in parallel complete the run exactly once', async () => {
@@ -815,7 +817,7 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect([409]).toContain(v.status);
       expect((await stopRow(r.stopA.id)).status).toBe('CLOSED_UNDELIVERED');
       expect(await prisma.messMeal.count({ where: { deliveryStopId: r.stopA.id, status: 'FULFILLED' } })).toBe(0);
-      expect((await dpost(w.d1, `/runs/${r.runId}/stops/${r.stopB.id}/fail`, { reasonCode: 'VEHICLE_ISSUE' })).status).toBeGreaterThanOrEqual(409);
+      expect((await failStop('admin', r.runId, r.stopB.id, { reasonCode: 'VEHICLE_ISSUE' })).status).toBeGreaterThanOrEqual(409);
     });
 
     it('33. expired unreleased meals: exactly (SCHEDULED, no delivery stop, date < today) become NOT_DELIVERED; future, PAUSED, CANCELLED, FULFILLED and today are untouched', async () => {
@@ -1004,23 +1006,22 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
       expect(nd.find((m: { status: string }) => m.status === 'NOT_DELIVERED')).toBeTruthy();
     });
 
-    it('44. monitors: SUPER_ADMIN and MD read ONE explicit branch; MD never sees free-text failure notes; DELIVERY / CHEF / customers are refused', async () => {
+    it('44. the monitor is SUPER_ADMIN-only and needs ONE explicit branch; a retired MD account, DELIVERY, CHEF and customers are refused', async () => {
       const w = await world();
       const r = await dispatched(w);
       expect((await failStop(w.d1, r.runId, r.stopB.id, { reasonCode: 'OTHER', note: 'Sensitive operational free text' })).status).toBe(200);
       const adminView = await get(`/api/v1/mess/delivery/monitor?branchId=${w.branch.id}`, who.admin.token);
       const mdView = await get(`/api/v1/mess/delivery/monitor?branchId=${w.branch.id}`, who.md.token);
       expect(adminView.status).toBe(200);
-      expect(mdView.status).toBe(200);
+      expect(mdView.status).toBe(403);
       expect(JSON.stringify(adminView.body)).toContain('Sensitive operational free text');
-      expect(JSON.stringify(mdView.body)).not.toContain('Sensitive operational free text');
-      expect(JSON.stringify(mdView.body)).not.toMatch(/failureNote|codeHash|recipient/);
-      const runDto = mdView.body.data.runs.find((x: { id: string }) => x.id === r.runId);
-      expect(runDto.driver).toMatchObject({ name: expect.any(String) });
-      expect((await get('/api/v1/mess/delivery/monitor', who.md.token)).status).toBe(400);
+      expect(JSON.stringify(adminView.body)).not.toMatch(/codeHash|recipient/);
+      const runDto = adminView.body.data.runs.find((x: { id: string }) => x.id === r.runId);
+      expect(runDto).toMatchObject({ operator: 'ADMIN', driver: null });
+      expect((await get('/api/v1/mess/delivery/monitor', who.admin.token)).status).toBe(400);
       for (const l of [w.d1, w.chef, w.a1]) expect((await get(`/api/v1/mess/delivery/monitor?branchId=${w.branch.id}`, who[l].token)).status, l).toBe(403);
-      expect((await get(`/api/v1/mess/delivery/runs`, who.admin.token)).status).toBe(403); // the driver API is DELIVERY-only
-      expect((await get(`/api/v1/mess/delivery/runs`)).status).toBe(401);
+      expect((await get(`/api/v1/mess/delivery/runs`, who.admin.token)).status).toBe(404); // the driver API is gone
+      expect((await get(`/api/v1/mess/delivery/runs`)).status).toBe(404);
     });
   });
 
@@ -1100,10 +1101,10 @@ describe('P10C - Kerala Mess bulk delivery, service-point handover, fulfilment a
     it('49. the legacy gate-pass endpoint is still retired (410); the permission matrix is exact', async () => {
       expect((await send('post', '/api/v1/mess/verify-gatepass', who.admin.token, {})).status).toBe(410);
       const perms = readFileSync(join(root, 'authz', 'permissions.ts'), 'utf8');
-      expect(perms).toMatch(/\[RoleEnum\.DELIVERY\]: \[[^\]]*'mess:delivery:read', 'mess:delivery:write'/);
-      expect(perms.match(/mess:delivery:write/g)).toHaveLength(2); // the type + DELIVERY only
+      expect(perms).not.toMatch(/\[RoleEnum\.DELIVERY\]/); // B2a: the driver role holds nothing
+      expect(perms).not.toMatch(/mess:delivery:write/);
       expect(perms.match(/mess:delivery:override/g)).toHaveLength(2); // the type + SUPER_ADMIN only
-      expect(perms).toMatch(/\[RoleEnum\.MD\]: \[[^\]]*'mess:delivery:read'\]/);
+      expect(perms).not.toMatch(/\[RoleEnum\.MD\]/); // the retired MD role holds no permission at all
     });
 
     it('50. DELIVERY, CHEF, SUPER_ADMIN and MD hold no customer-context access to the handover code', async () => {

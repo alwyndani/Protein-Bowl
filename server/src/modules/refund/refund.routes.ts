@@ -6,7 +6,8 @@ import { cancelRateLimiter } from '../../middleware/rateLimiter.middleware.js';
 import { ApiResponse } from '../../utils/apiResponse.js';
 import { AuditService } from '../audit/audit.service.js';
 import { CancellationService } from './cancellation.service.js';
-import { customerCancelBodySchema } from './cancellationPolicy.js';
+import { cancellationRequestBodySchema, customerCancelBodySchema } from './cancellationPolicy.js';
+import { CancellationReviewService } from './cancellationReview.service.js';
 import { RefundViewService } from './refundView.service.js';
 
 const orderParams = z.object({ orderId: z.string().min(1).max(64) });
@@ -21,6 +22,19 @@ router.post('/:orderId/cancel', authenticateToken, requireCustomerRole, cancelRa
   try {
     const data = await CancellationService.customerCancel(req.user!.userId, req.params.orderId, req.body, AuditService.contextFromRequest(req));
     return ApiResponse.success(res, data, data.alreadyCancelled ? 'Order was already cancelled' : 'Order cancelled', 200);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /api/v1/orders/:orderId/cancellation-request  { reasonCode, note? }
+ * For a PAID order the kitchen has already accepted/started. Creates a request for STAFF REVIEW; it promises nothing (no cancellation, no refund).
+ */
+router.post('/:orderId/cancellation-request', authenticateToken, requireCustomerRole, cancelRateLimiter, validateParams(orderParams), validateBody(cancellationRequestBodySchema), async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const data = await CancellationReviewService.request(req.user!.userId, req.params.orderId, req.body, AuditService.contextFromRequest(req));
+    return ApiResponse.success(res, data, data.alreadyRequested ? 'A request is already waiting for review' : 'Your request was sent for review', data.alreadyRequested ? 200 : 201);
   } catch (err) {
     next(err);
   }

@@ -31,11 +31,14 @@ export function messageForError(error: unknown, context: AuthContext = 'generic'
     case 403:
       if (error.code === 'CUSTOMER_APP_ONLY') return 'This app is for customer accounts only.';
       if (error.code === 'ACCOUNT_INACTIVE') return 'This account is not active. Please contact Protein Bowl support.';
+      if (error.code === 'NO_APPROVED_ROLE') return 'This account can no longer be used with the app. Please contact Protein Bowl support.';
       return 'This is not available for your account.';
     case 404:
       return 'We could not find that. It may have changed - please refresh.';
     case 409:
-      return error.code === 'EMAIL_EXISTS' ? 'An account with this email already exists. Try signing in instead.' : 'That conflicts with the current state. Please refresh and try again.';
+      if (error.code === 'EMAIL_EXISTS') return 'An account with this email already exists. Try signing in instead.';
+      if (error.code === 'PHONE_IN_USE') return 'This phone number is already registered to another account. Use a different number or leave it empty.';
+      return 'That conflicts with the current state. Please refresh and try again.';
     case 410:
       return 'This feature is no longer available.';
     case 422:
@@ -45,7 +48,7 @@ export function messageForError(error: unknown, context: AuthContext = 'generic'
     case 429:
       return 'Too many attempts. Please wait a little and try again.';
     default:
-      if (error.status >= 500 && context === 'register' && extra.phoneProvided) return 'We could not create your account. If the phone number is already registered, try again without it.';
+      void extra; // a duplicate phone is now a clear 409 (PHONE_IN_USE); a 5xx is just a service problem
       return error.status >= 500 ? 'Our service is having trouble right now. Please try again shortly.' : 'Something went wrong. Please try again.';
   }
 }
@@ -60,6 +63,8 @@ export function messageForSignedOut(reason: SignedOutReason): string | null {
       return 'This account is not active. Please contact Protein Bowl support.';
     case 'customer_only':
       return 'This app is for customer accounts only.';
+    case 'no_approved_role':
+      return 'This account can no longer be used with the app. Please contact Protein Bowl support.';
     case 'update_required':
       return 'This version of the app is no longer supported. Please update the app.';
     case 'storage_unavailable':

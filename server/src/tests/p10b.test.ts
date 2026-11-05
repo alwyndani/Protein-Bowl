@@ -16,7 +16,7 @@ import { MessMealService, pauseDeadline, serviceInstant, withinPauseWindow } fro
 const prisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
 const mock = getPaymentProvider() as MockPaymentProvider;
 const PASSWORD = 'P10b#Admin-Pass-2026-xyz';
-const sign = (userId: string, email: string, roles: RoleEnum[]) => jwt.sign({ userId, email, roles }, process.env.JWT_ACCESS_SECRET!, { expiresIn: '15m' });
+const sign = (userId: string, email: string, roles: RoleEnum[]) => jwt.sign({ userId, email, roles }, process.env.JWT_ACCESS_SECRET!, { expiresIn: '30d' }); // tests move the clock hours ahead (atIst): a 15-minute token would expire depending on the real time of day
 const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
 
 describe('P10B - Kerala Mess meals: generation, calendar, pause/resume, kitchen demand and batches', () => {
@@ -609,9 +609,9 @@ describe('P10B - Kerala Mess meals: generation, calendar, pause/resume, kitchen 
       expect(own.status).toBe(200);
       expect(own.body.data.groups.every((g: { branch: { id: string } }) => g.branch.id === branchB.id)).toBe(true);
       expect((await chefDemand('admin')).status).toBe(400);
-      expect((await chefDemand('md')).status).toBe(400);
+      expect((await chefDemand('md')).status).toBe(403);
       expect((await chefDemand('admin', `?branchId=${branchA.id}`)).status).toBe(200);
-      expect((await chefDemand('md', `?branchId=${branchA.id}`)).status).toBe(200);
+      expect((await chefDemand('md', `?branchId=${branchA.id}`)).status).toBe(403);
       for (const l of ['c1', 'driver', 'legacy']) expect((await chefDemand(l, `?branchId=${branchA.id}`)).status, l).toBe(403);
       expect((await get('/api/v1/mess/kitchen/demand')).status).toBe(401);
     });
@@ -813,13 +813,20 @@ describe('P10B - Kerala Mess meals: generation, calendar, pause/resume, kitchen 
   // =============================================================================================== K. same-day purchase vs meal / batch eligibility
   describe('K. a same-day start must be fully serviceable at trusted activation (first entitlement date)', () => {
     let wseq = 0;
+    // A step-up proof lives 5 minutes: mint one valid AT the moved clock (and another after it) so results never depend on the real time of day.
+    const mintStep = async () => {
+      const r = await request(app).post('/api/v1/admin/step-up').set(bearer(who.admin.token)).send({ password: PASSWORD });
+      step = r.body.data.stepUpToken;
+    };
     const atInstant = async <T>(iso: string, fn: () => Promise<T>): Promise<T> => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date(iso));
       try {
+        await mintStep();
         return await fn();
       } finally {
         vi.useRealTimers();
+        await mintStep();
       }
     };
     /** Pins Date alone to a time of the business day in IST (timers stay real). The customers' tokens are long-lived, so a later clock never invalidates them. */
@@ -1198,8 +1205,8 @@ describe('P10B - Kerala Mess meals: generation, calendar, pause/resume, kitchen 
       await prisma.messMealBatch.delete({ where: { id: batch.id } });
     });
 
-    it('51. P10B never completes a subscription: nothing in the Mess meal/kitchen code sets COMPLETED, and no subscription became COMPLETED', async () => {
-      expect(await prisma.messSubscription.count({ where: { status: 'COMPLETED', messAccount: { customerProfile: { fullName: { startsWith: 'P10B ' } } } } })).toBe(0);
+    it('51. P10B never completes a subscription: nothing in the Mess meal/kitchen code sets COMPLETED, and no subscription CREATED BY THIS RUN became COMPLETED (scoped by the per-run referral-code suffix: fixtures of earlier runs may be completed legitimately by the system)', async () => {
+      expect(await prisma.messSubscription.count({ where: { status: 'COMPLETED', messAccount: { customerProfile: { fullName: { startsWith: 'P10B ' }, referralCode: { endsWith: `${ts}` } } } } })).toBe(0);
     });
   });
 

@@ -184,13 +184,13 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       }
     });
 
-    it('3. a legacy MESS_CUSTOMER gets the explicit legacy-role 403 on every customer Mess route and cannot buy or pay (backend-only compatibility)', async () => {
+    it('3. a retired MESS_CUSTOMER account has no approved role: 403 NO_APPROVED_ROLE on every customer Mess route, and it cannot buy or pay', async () => {
       const a = await get('/api/v1/mess/account', who.legacy.token);
       expect(a.status).toBe(403);
-      expect(a.body.error).toBe('MESS_CUSTOMER_LEGACY_ROLE');
+      expect(a.body.error).toBe('NO_APPROVED_ROLE');
       const b = await buy('legacy', planId, tomorrow);
       expect(b.status).toBe(403);
-      expect(b.body.error).toBe('MESS_CUSTOMER_LEGACY_ROLE');
+      expect(b.body.error).toBe('NO_APPROVED_ROLE');
       expect(await prisma.messSubscription.count({ where: { messAccount: { customerProfileId: who.legacy.profileId } } })).toBe(0);
     });
 
@@ -226,7 +226,10 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
         expect((await get('/api/v1/admin/mess/plans', who[l].token)).status, l).toBe(403);
         expect((await get('/api/v1/admin/mess/accounts', who[l].token)).status, l).toBe(403);
       }
-      for (const p of ['/mess/plans', '/mess/service-points', '/mess/accounts', '/mess/subscriptions']) expect((await get(`/api/v1/admin${p}`, who.md.token)).status, p).toBe(200);
+      for (const p of ['/mess/plans', '/mess/service-points', '/mess/accounts', '/mess/subscriptions']) {
+        expect((await get(`/api/v1/admin${p}`, who.admin.token)).status, p).toBe(200);
+        expect((await get(`/api/v1/admin${p}`, who.md.token)).status, p).toBe(403);
+      }
       const attempts = [
         send('post', '/api/v1/admin/mess/plans', who.md.token, planBody(), { step }),
         send('post', '/api/v1/admin/mess/service-points', who.md.token, { code: 'X1', name: 'x', addressLine: 'x', city: 'x', postalCode: '1', branchId: branchA.id }, { step }),
@@ -388,12 +391,10 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       expect((await prisma.messAccount.findUniqueOrThrow({ where: { id: before.id } })).updatedAt.getTime()).toBe(before.updatedAt.getTime());
     });
 
-    it('21. MD reads accounts but without the student id or phone; SUPER_ADMIN sees them', async () => {
+    it('21. a retired MD account reads no accounts; SUPER_ADMIN sees the student id', async () => {
       const md = await get('/api/v1/admin/mess/accounts', who.md.token);
-      expect(md.status).toBe(200);
+      expect(md.status).toBe(403);
       expect(JSON.stringify(md.body)).not.toContain('NEW-ID');
-      expect(md.body.data.accounts[0]).not.toHaveProperty('studentIdCard');
-      expect(md.body.data.accounts[0]).not.toHaveProperty('phone');
       const ad = await get('/api/v1/admin/mess/accounts', who.admin.token);
       expect(ad.body.data.accounts.some((a: { studentIdCard?: string }) => a.studentIdCard === 'NEW-ID')).toBe(true);
     });
@@ -1073,14 +1074,13 @@ describe('P10A — Kerala Mess foundation (accounts, service points, plans, purc
       }
     });
 
-    it('72. staff views: SUPER_ADMIN and MD see the customer name; MD never sees phone / email / student id', async () => {
+    it('72. staff views: SUPER_ADMIN sees the customer name; a retired MD account sees nothing', async () => {
       const a = await get('/api/v1/admin/mess/subscriptions', who.admin.token);
       const md = await get('/api/v1/admin/mess/subscriptions', who.md.token);
       expect(a.status).toBe(200);
-      expect(md.status).toBe(200);
-      const row = md.body.data.subscriptions.find((s: { id: string }) => s.id === sub.id);
+      expect(md.status).toBe(403);
+      const row = a.body.data.subscriptions.find((s: { id: string }) => s.id === sub.id);
       expect(row.customerName).toBeTruthy();
-      expect(JSON.stringify(md.body)).not.toMatch(/@test\.com|studentIdCard|phone/);
       expect(JSON.stringify(a.body)).not.toContain('providerPaymentId');
     });
 

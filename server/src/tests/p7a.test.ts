@@ -678,7 +678,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
         ACCEPTED: chefActor([branchA.id]),
         PREPARING: chefActor([branchA.id]),
         READY: chefActor([branchA.id]),
-        DISPATCHED: driverActor([branchA.id])
+        DISPATCHED: adminActor() // B2a: READY -> DISPATCHED belongs to the SUPER_ADMIN operator
       };
       for (const to of Object.keys(predecessor)) {
         for (const paymentStatus of ['PENDING', 'FAILED', 'REFUNDED', 'PARTIALLY_REFUNDED']) {
@@ -715,7 +715,7 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
           if (transitionKey(from, to) === 'DISPATCHED->CANCELLED') continue; // P9C: evidence-gated (FAILED assignment + archived attempt + refund intent); covered by deliveryResolution.test.ts
           const isCancel = to === 'CANCELLED';
           const order = isCancel ? await mkOrder({ status: from, paymentStatus: 'PENDING', kitchenBranchId: branchA.id }) : await paidOrder(from);
-          const actor: TransitionActor = parties.includes('SYSTEM') ? sys : isCancel ? adminActor() : parties.includes(RoleEnum.CHEF) ? chefActor([branchA.id]) : driverActor([branchA.id]);
+          const actor: TransitionActor = parties.includes('SYSTEM') ? sys : isCancel ? adminActor() : parties.includes(RoleEnum.CHEF) ? chefActor([branchA.id]) : adminActor();
           const res = await OrderTransitionService.transition({ orderId: order.id, to, actor, reason: 'test reason' });
           expect(res.changed, `${from}->${to}`).toBe(true);
           const row = await prisma.order.findUnique({ where: { id: order.id } });
@@ -849,32 +849,24 @@ describe('P7A — commerce policy, idempotent checkout, order lifecycle foundati
       expect(await eventsOf(order.id)).toHaveLength(0);
     });
 
-    const dispatchApi = (orderId: string, token = users.driver1.token) => request(app).post(`/api/v1/delivery/orders/${orderId}/dispatch`).set(bearer(token)).send({});
-
-    it('63. delivery (P9A): dispatch moves a READY paid order to DISPATCHED atomically with the assignment (IN_TRANSIT + pickupTime), and nothing can reach DELIVERED', async () => {
+    it('63. delivery (B2a): the SUPER_ADMIN operator dispatches a READY paid order (one event), and nothing can reach DELIVERED through the transition service', async () => {
       const order = await paidOrder('READY');
-      const a = await mkAssign(order.id);
-      const transit = await dispatchApi(order.id);
-      expect(transit.status, JSON.stringify(transit.body)).toBe(200);
-      expect(transit.body.data.order.status).toBe('DISPATCHED');
-      const row = await prisma.deliveryAssignment.findUnique({ where: { id: a.id } });
-      expect(row!.status).toBe('IN_TRANSIT');
-      expect(row!.pickupTime).not.toBeNull();
+      const res = await OrderTransitionService.transition({ orderId: order.id, to: 'DISPATCHED', actor: adminActor() });
+      expect(res.changed).toBe(true);
       expect((await eventsOf(order.id)).map((e) => e.toStatus)).toEqual(['DISPATCHED']);
       // the transition service itself refuses DELIVERED for every human actor: P9B owns proof of delivery
-      for (const actor of [driverActor([branchA.id]), userActor('admin', [RoleEnum.SUPER_ADMIN], { isGlobal: true })]) {
+      for (const actor of [driverActor([branchA.id]), adminActor()]) {
         await expect(OrderTransitionService.transition({ orderId: order.id, to: 'DELIVERED', actor })).rejects.toMatchObject({ errorCode: 'ORDER_TRANSITION_FORBIDDEN' });
       }
       expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('DISPATCHED');
+      // a retired DELIVERY driver can no longer dispatch
+      const second = await paidOrder('READY');
+      await expect(OrderTransitionService.transition({ orderId: second.id, to: 'DISPATCHED', actor: driverActor([branchA.id]) })).rejects.toMatchObject({ errorCode: 'ORDER_TRANSITION_FORBIDDEN' });
     });
 
-    it('64. dispatch of an unpaid order is rejected and the assignment is left untouched', async () => {
+    it('64. dispatch of an unpaid order is rejected and the order is left untouched', async () => {
       const order = await mkOrder({ status: 'READY', paymentStatus: 'PENDING', kitchenBranchId: branchA.id });
-      const a = await mkAssign(order.id);
-      const res = await dispatchApi(order.id);
-      expect(res.status).toBe(409);
-      expect(res.body.error).toBe('ORDER_NOT_OPERATIONALLY_ELIGIBLE');
-      expect((await prisma.deliveryAssignment.findUnique({ where: { id: a.id } }))!.status).toBe('ASSIGNED');
+      await expect(OrderTransitionService.transition({ orderId: order.id, to: 'DISPATCHED', actor: adminActor() })).rejects.toMatchObject({ errorCode: 'ORDER_NOT_OPERATIONALLY_ELIGIBLE' });
       expect((await prisma.order.findUnique({ where: { id: order.id } }))!.status).toBe('READY');
     });
 

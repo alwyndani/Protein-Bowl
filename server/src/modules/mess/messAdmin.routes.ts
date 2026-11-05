@@ -27,8 +27,8 @@ import {
 } from './messPolicy.js';
 
 /**
- * Kerala Mess administration (mounted at /api/v1/admin). Reads need 'mess:read' (SUPER_ADMIN + MD); EVERY write needs 'mess:admin' (SUPER_ADMIN only)
- * AND a fresh password step-up proof. MD can never mutate anything here. Edits carry an expected version (compare-and-set).
+ * Kerala Mess administration (mounted at /api/v1/admin). Reads need 'mess:read' (SUPER_ADMIN); EVERY write needs 'mess:admin' (SUPER_ADMIN only)
+ * AND a fresh password step-up proof. Edits carry an expected version (compare-and-set).
  */
 const router = Router();
 const actorOf = (req: Request) => {
@@ -45,7 +45,7 @@ const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => async (r
   }
 };
 const ctx = (req: Request) => AuditService.contextFromRequest(req);
-const viewerOf = (req: Request): 'ADMIN' | 'MD' => (req.user?.roles.includes(RoleEnum.SUPER_ADMIN) ? 'ADMIN' : 'MD');
+const viewerOf = (_req: Request): 'ADMIN' => 'ADMIN';
 
 // ---- service points
 router.get('/mess/service-points', ...read, validateQuery(listQuerySchema), wrap(async (req, res) => ApiResponse.success(res, { servicePoints: await MessAdminService.listServicePoints(req.query as never) }, 'Service points retrieved')));

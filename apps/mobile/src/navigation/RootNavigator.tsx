@@ -1,7 +1,7 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthProvider';
-import { RegisterScreen, SignInScreen, WelcomeScreen } from '../screens/AuthScreens';
+import { ForgotPasswordScreen, RegisterScreen, SignInScreen, WelcomeScreen } from '../screens/AuthScreens';
 import { SessionRecoveryScreen, SessionRestoringScreen } from '../screens/SessionScreens';
 import { colors } from '../ui/components';
 import { MainTabs } from './MainTabs';
@@ -31,6 +31,7 @@ export function RootNavigator() {
           <AuthStack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} />
           <AuthStack.Screen name="SignIn" component={SignInScreen} options={{ title: 'Sign in' }} />
           <AuthStack.Screen name="Register" component={RegisterScreen} options={{ title: 'Create account' }} />
+          <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: 'Reset password' }} />
         </AuthStack.Navigator>
       );
   }

@@ -21,9 +21,11 @@ import { CartProvider, useCart } from '../../context/CartContext';
 import { useStorefrontActions } from '../../hooks/useStorefrontActions';
 import { PackagedFoodsSection } from './PackagedFoodsSection';
 import { TepacheDrinksSection } from './TepacheDrinksSection';
-import { FMCG_PACKAGED_PRODUCTS } from '../../data/mockBakeryFMCGData';
-import { TEPACHE_PRODUCTS } from '../../data/mockTepacheData';
 import { cartItem, product, serverCart, variant } from '../../test/fixtures';
+
+// Names of the removed mock catalogues: the storefront must never show them (it renders server products only).
+const OLD_MOCK_FMCG_NAME = 'Dark Chocolate Almond Crunch Granola Bar';
+const OLD_MOCK_TEPACHE_NAME = 'Wild Fermented Classic Pineapple & Ceylon Cinnamon Tepache';
 
 const getProducts = vi.mocked(ProductService.getProducts);
 const getCart = vi.mocked(CartService.getCart);
@@ -80,7 +82,7 @@ describe('storefront — server products', () => {
     expect(screen.getByTestId('product-price-prod-1')).toHaveTextContent('₹199');
     expect(getProducts).toHaveBeenCalledTimes(1);
     // none of the old mock FMCG catalog leaks into the UI
-    expect(screen.queryByText(FMCG_PACKAGED_PRODUCTS[0].name)).not.toBeInTheDocument();
+    expect(screen.queryByText(OLD_MOCK_FMCG_NAME)).not.toBeInTheDocument();
   });
 
   it('shows a loading state while the catalog request is pending', async () => {
@@ -100,8 +102,8 @@ describe('storefront — server products', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('We could not load products');
     expect(alert).toHaveTextContent('Server unreachable');
-    expect(screen.queryByText(FMCG_PACKAGED_PRODUCTS[0].name)).not.toBeInTheDocument();
-    expect(screen.queryByText(TEPACHE_PRODUCTS[0].name)).not.toBeInTheDocument();
+    expect(screen.queryByText(OLD_MOCK_FMCG_NAME)).not.toBeInTheDocument();
+    expect(screen.queryByText(OLD_MOCK_TEPACHE_NAME)).not.toBeInTheDocument();
 
     getProducts.mockResolvedValueOnce([product()]);
     await userEvent.click(screen.getByRole('button', { name: /try again/i }));
