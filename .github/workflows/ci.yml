@@ -34,6 +34,7 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/pb_ci_test?schema=public
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # the reconcile guard tests compare against a pinned historical revision (p11c2.reconcileGuard, section J)
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: server/package-lock.json }
       - run: npm ci
