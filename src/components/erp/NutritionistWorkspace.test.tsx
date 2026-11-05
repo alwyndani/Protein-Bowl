@@ -8,6 +8,15 @@ vi.mock('../../services/dietService', () => ({
   DietService: { getUnassignedQueue: vi.fn(), getClaimedQueue: vi.fn(), claimRequest: vi.fn(), getAuthorizedHealthProfile: vi.fn(), publishDietPlan: vi.fn() }
 }));
 
+vi.mock('../../services/recipeService', () => ({
+  RecipeService: {
+    getStaffRecipes: vi.fn().mockResolvedValue((() => {
+      const items = [{ id: 'rec1', name: 'Quinoa Bowl', category: 'Salads', cuisine: 'Indian', servingGrams: 250, calories: 300, protein: 20, carbs: 30, fat: 8, image: '', isPublished: true }];
+      return { items, recipes: items, total: 1, page: 1, limit: 100, totalPages: 1 };
+    })())
+  }
+}));
+
 import { DietService } from '../../services/dietService';
 import { NutritionistWorkspace, toProfile, toUiRequest } from './NutritionistWorkspace';
 

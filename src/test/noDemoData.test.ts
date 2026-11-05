@@ -50,6 +50,29 @@ describe('the customer menu is not the static seed list', () => {
   });
 });
 
+describe('no static recipe or inventory catalogue is used anywhere in the web app', () => {
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(path.join(process.cwd(), dir), { withFileTypes: true }).flatMap((e) => {
+      const rel = `${dir}/${e.name}`;
+      return e.isDirectory() ? walk(rel) : /\.(ts|tsx)$/.test(e.name) ? [rel] : [];
+    });
+  const STATIC_DATA = /data\/(recipeDatabase|inventoryDatabase|ingredientNutrition|recipes\/)|\bALL_RECIPES\b/;
+
+  it('no source file imports a static recipe/inventory module or ALL_RECIPES', () => {
+    const offenders = walk('src')
+      .filter((f) => !/^src\/data\/(recipeDatabase|inventoryDatabase|ingredientNutrition)\.ts$|^src\/data\/recipes\//.test(f))
+      .filter((f) => f !== 'src/test/noDemoData.test.ts' && f !== 'src/components/customer/CheckoutModal.test.tsx')
+      .filter((f) => STATIC_DATA.test(read(f)));
+    expect(offenders).toEqual([]);
+  });
+
+  it('the plan review and the nutritionist dish picker load recipes through the API hooks', () => {
+    expect(read('src/components/customer/CustomerPlanReview.tsx')).toContain('usePublishedRecipes');
+    expect(read('src/components/erp/NutritionistDashboard.tsx')).toContain('useStaffRecipes');
+    expect(read('src/hooks/useStaffRecipes.ts')).toContain('getStaffRecipes');
+  });
+});
+
 describe('the server never returns invented profile values', () => {
   it('formatProfileResponse has no fallback persona, measurements, conditions or lifestyle', () => {
     const svc = read('server/src/modules/customer/customer.service.ts');

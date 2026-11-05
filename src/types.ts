@@ -170,16 +170,32 @@ export interface RecipeItem {
 
 export type TimingSlotKey = 'breakfast' | 'morning_snack' | 'lunch' | 'evening_snack' | 'dinner' | string;
 
+/**
+ * The IMMUTABLE nutrition basis of a plan dish (client-side only; never sent to the server): the portion and the values the dish started from,
+ * taken from the catalogue recipe or from the saved record. Every portion change is calculated from this basis, never from the last rescaled values.
+ */
+export interface NutritionBasis {
+  source: 'catalogue' | 'recorded';
+  grams: number | null;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+}
+
 export interface MealSlotItem {
   id: string;
   recipeId: string;
   recipeName: string;
   portionSize: string; // e.g., "1 Portion (200g)", "2 Slices"
-  portionGrams: number;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fat: number;
+  /** null = not provided (never a default). Publishing requires every one of these to be a number. */
+  portionGrams: number | null;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  /** Client-side only (see NutritionBasis). Not part of the publish payload. */
+  basis?: NutritionBasis | null;
   customizationNote?: string; // e.g., "Less oil/salt for BP", "Stevia instead of sugar"
 }
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DietPlanRequest, CustomerProfile, RecipeItem, ComboOffer } from '../../types';
-import { ALL_RECIPES } from '../../data/recipeDatabase';
+import { usePublishedRecipes } from '../../hooks/usePublishedRecipes';
 import { DietService } from '../../services/dietService';
 import { Sparkles, Check, RefreshCw, X, Calendar, Utensils, Flame, ChevronRight, AlertCircle, ShoppingBag } from 'lucide-react';
 
@@ -26,6 +26,8 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
   const [revisionNote, setRevisionNote] = useState('');
   const [showRevisionBox, setShowRevisionBox] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Dish details (photo, macros) come from the published recipes on the server; there is no static catalogue.
+  const { recipes, status: recipeStatus, reload: reloadRecipes } = usePublishedRecipes();
 
   if (!request) {
     return (
@@ -39,7 +41,7 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
     );
   }
 
-  const recipeMap = new Map(ALL_RECIPES.map((r) => [r.id, r]));
+  const recipeMap = new Map(recipes.map((r) => [r.id, r]));
   const dayPlans = request.dayWisePlan || [];
   const activeDayPlan = dayPlans.find((d) => d.dayNumber === selectedDayTab) || dayPlans[0];
 
@@ -138,16 +140,34 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
                   Prescribed Meals for Day {activeDayPlan.dayNumber}
                 </h3>
 
+                {recipeStatus === 'loading' && (
+                  <p role="status" className="text-xs text-stone-500">Loading dish details...</p>
+                )}
+                {recipeStatus === 'error' && (
+                  <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                    We could not load the dish details (photos and nutrition).{' '}
+                    <button type="button" onClick={reloadRecipes} className="font-bold underline">Retry</button>
+                  </p>
+                )}
+                {activeDayPlan.meals.length === 0 && (
+                  <p className="text-xs text-stone-500">No meals have been added to this day yet.</p>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {activeDayPlan.meals.map((slot, idx) => {
-                    const recipe = recipeMap.get(slot.recipeId);
+                    const recipe = slot.recipeId ? recipeMap.get(slot.recipeId) : undefined;
+                    const calories = recipe?.calories ?? slot.calories;
+                    const protein = recipe?.protein ?? slot.protein;
+                    const carbs = recipe?.carbs ?? slot.carbs;
+                    const fat = recipe?.fat ?? slot.fat;
+                    const g = (v: number | undefined) => (v === undefined || v === null ? 'Not provided' : `${v}g`);
                     return (
                       <div
                         key={idx}
                         onClick={() => recipe && onOpenMenuModal(recipe)}
                         className="p-4 rounded-2xl border border-stone-200 bg-stone-50 hover:bg-emerald-50/50 hover:border-emerald-300 transition-all cursor-pointer flex gap-4 group"
                       >
-                        {recipe && (
+                        {recipe?.image && (
                           <img
                             src={recipe.image}
                             alt={recipe.name}
@@ -160,14 +180,14 @@ export const CustomerPlanReview: React.FC<CustomerPlanReviewProps> = ({
                               {slot.timingLabel || slot.mealType.replace('_', ' ')}
                             </span>
                             <span className="text-xs font-bold text-stone-600">
-                              {recipe?.calories || slot.calories || 200} kcal
+                              {calories === undefined ? 'Not provided' : `${calories} kcal`}
                             </span>
                           </div>
                           <h4 className="font-extrabold text-stone-900 text-sm mt-1 truncate">
                             {recipe?.name || slot.recipeName}
                           </h4>
                           <p className="text-[11px] text-stone-500 mt-0.5">
-                            P: {recipe?.protein}g • C: {recipe?.carbs}g • F: {recipe?.fat}g
+                            P: {g(protein)} • C: {g(carbs)} • F: {g(fat)}
                           </p>
                         </div>
                       </div>
